@@ -1049,9 +1049,13 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
                     Icons.Rounded.Schedule, "Сколько хранить", "Закреплённые записи хранятся всегда",
                     listOf("1H" to "Час", "1D" to "День", "7D" to "Неделю", "30D" to "Месяц", "FOREVER" to "Всегда"), settings.clipboardKeep
                 ) { v -> KeyboardPrefs.edit(context) { putString("clipboard_keep", v) } }
-                SliderItem(
+                val unlimited = settings.clipboardSize == Int.MAX_VALUE
+                ToggleItem(
+                    Icons.Rounded.AllInclusive, "Без ограничения записей", "Старые записи не удаляются, пока их не сотрёте сами", unlimited
+                ) { KeyboardPrefs.edit(context) { putInt("clipboard_size", if (it) 0 else 50) } }
+                if (!unlimited) SliderItem(
                     icon = Icons.Rounded.History, title = "Сколько записей",
-                    value = settings.clipboardSize.toFloat(), range = 5f..200f,
+                    value = settings.clipboardSize.toFloat(), range = 5f..1000f,
                     format = { "${it.roundToInt()}" },
                     onCommit = { v -> KeyboardPrefs.edit(context) { putInt("clipboard_size", v.roundToInt()) } }
                 )
@@ -1627,22 +1631,26 @@ internal fun AuthorLine() {
     fun open(url: String) {
         runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
     }
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(tr("Автор:"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(
-            "@Shahedeer", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = blue,
-            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { open("https://t.me/Shahedeer") }.padding(horizontal = 4.dp, vertical = 2.dp)
-        )
-        Text("·", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(tr("Канал:"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(
-            "@materialyouboss", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = blue,
-            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { open("https://t.me/materialyouboss") }.padding(horizontal = 4.dp, vertical = 2.dp)
-        )
+    val label = MaterialTheme.typography.bodyMedium
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    // две строки по центру: ник не переносится посреди слова, даже на узком экране и с крупным шрифтом
+    @Composable
+    fun Link(title: String, handle: String) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(tr(title), style = label, color = muted, maxLines = 1, softWrap = false)
+            Text(
+                "@$handle", style = label, fontWeight = FontWeight.Bold, color = blue, maxLines = 1, softWrap = false,
+                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { open("https://t.me/$handle") }.padding(horizontal = 6.dp, vertical = 4.dp)
+            )
+        }
+    }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Link("Автор:", "Shahedeer")
+        Link("Канал:", "materialyouboss")
     }
 }
 

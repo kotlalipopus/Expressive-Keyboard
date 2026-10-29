@@ -81,6 +81,7 @@ object ThemeOptions {
         }
         if (skin.usesGlass || skin.dark?.usesGlass == true) {
             val g = all.firstNotNullOfOrNull { it.glass } ?: GlassSpec()
+            add(SkinOption("glass.opacity", "Непрозрачность клавиш", OptionType.SLIDER, 1f, 0.1f, 1f, "glass.opacity"))
             add(SkinOption("glass.frost", "Размытие клавиш", OptionType.SLIDER, max(g.frost, 0.35f), 0f, 1f, "glass.frost"))
             add(SkinOption("glass.grain", "Зернистость стекла", OptionType.SLIDER, g.grain, 0f, 1f, "glass.grain"))
             add(SkinOption("glass.refraction", "Преломление", OptionType.SLIDER, g.refraction, 0f, 1f, "glass.refraction"))
@@ -200,10 +201,41 @@ object ThemeOptions {
             val a = settings.keyOpacity
             skin = skin.copy(styles = skin.styles.mapValues { (_, st) -> st.copy(fill = st.fill?.mapColors { c -> c.copy(alpha = c.alpha * a) }) })
         }
+        // «Непрозрачность клавиш» действует и на стеклянные клавиши (у них нет заливки, только тонировка)
+        if (settings.keyOpacity < 0.999f) {
+            val a = settings.keyOpacity
+            skin = skin.mapStyles { st -> st.glass?.let { st.copy(glass = it.copy(opacity = it.opacity * a)) } ?: st }
+        }
         // 4) акцент пользователя
         val follow = values["followAccent"]?.let { it == true || it.toString() == "true" } ?: true
         if (follow && settings.userAccent != 0) skin = recolor(skin, Color(settings.userAccent), settings.colorAccentText)
         return skin
+    }
+
+    /**
+     * «Жидкое стекло» поверх любой темы (и без темы): клавиши становятся стеклянными линзами. У тем с обычной
+     * заливкой заливка становится полупрозрачной, чтобы стекло было видно.
+     */
+    fun liquefy(skin: KeyboardSkin?, settings: KeyboardSettings): KeyboardSkin {
+        val a = settings.keyOpacity
+        fun liquid(st: KeyStyle?): KeyStyle {
+            val s = st ?: KeyStyle()
+            val g = s.glass ?: GlassSpec(refraction = 0.5f, dispersion = 0.08f, highlight = 0.6f, rim = 0.7f)
+            return if (s.material == SkinMaterial.GLASS) s.copy(glass = g.copy(liquid = 1f, opacity = g.opacity * a))
+            else s.copy(
+                material = SkinMaterial.GLASS,
+                glass = g.copy(liquid = 1f, opacity = a),
+                fill = s.fill?.mapColors { it.copy(alpha = it.alpha * 0.4f) },
+                pressedFill = s.pressedFill
+            )
+        }
+        if (skin == null) {
+            return KeyboardSkin(styles = mapOf("*" to liquid(null)), windowBlur = 36f)
+        }
+        val styles = LinkedHashMap(skin.styles)
+        styles["*"] = liquid(styles["*"])
+        for (k in styles.keys.toList()) if (k != "*") styles[k] = liquid(styles[k])
+        return skin.copy(styles = styles, windowBlur = skin.windowBlur ?: 36f)
     }
 
     private fun applyChoice(skin: KeyboardSkin, id: String, v: String): KeyboardSkin = when (id) {
@@ -249,6 +281,7 @@ object ThemeOptions {
                         "highlight" -> g.copy(highlight = v)
                         "rim" -> g.copy(rim = v)
                         "dispersion" -> g.copy(dispersion = v)
+                        "opacity" -> g.copy(opacity = v)
                         "blur" -> g.copy(blur = v)
                         else -> g
                     }

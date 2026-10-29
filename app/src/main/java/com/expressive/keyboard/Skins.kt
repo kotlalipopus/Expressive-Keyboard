@@ -194,7 +194,9 @@ data class GlassSpec(
     val rim: Float = 0.7f,          // 0..1, светлый ободок
     val frost: Float = 0f,          // 0..1, молочная дымка
     val tint: Color? = null,
-    val grain: Float = 0f           // 0..1, зерно матового стекла
+    val grain: Float = 0f,          // 0..1, зерно матового стекла
+    val liquid: Float = 0f,         // 0..1, «жидкое» стекло: линза, сглаживание фона, объёмные блики (Android 13+)
+    val opacity: Float = 1f         // 0..1, непрозрачность клавиши целиком
 )
 
 @Immutable
@@ -309,6 +311,7 @@ data class KeyboardSkin(
 
     val usesGlass: Boolean = styles.values.any { it.material == SkinMaterial.GLASS } ||
         popup?.material == SkinMaterial.GLASS || chips?.material == SkinMaterial.GLASS
+    val usesLiquid: Boolean = styles.values.any { (it.glass?.liquid ?: 0f) > 0f }
     val glassBlur: Float = styles.values.mapNotNull { it.glass?.blur }.maxOrNull() ?: GlassSpec().blur
     val hasBackground: Boolean get() = background != null || orbs.isNotEmpty()
 
@@ -442,7 +445,9 @@ object SkinParser {
             rim = o.f("rim")?.coerceIn(0f, 1f) ?: d.rim,
             frost = o.f("frost")?.coerceIn(0f, 1f) ?: d.frost,
             tint = color(o.optString("tint"), "glass.tint"),
-            grain = o.f("grain")?.coerceIn(0f, 1f) ?: d.grain
+            grain = o.f("grain")?.coerceIn(0f, 1f) ?: d.grain,
+            liquid = o.f("liquid")?.coerceIn(0f, 1f) ?: d.liquid,
+            opacity = o.f("opacity")?.coerceIn(0f, 1f) ?: d.opacity
         )
     }
 
@@ -533,6 +538,8 @@ class Backdrop {
     var bitmap by mutableStateOf<ImageBitmap?>(null)
     /** Пикселей подложки на пиксель клавиатуры. */
     var scale = 1f
+    /** Окно клавиатуры само размывает приложение: подложка тут только для линзы, клавиши остаются прозрачными. */
+    var overWindowBlur = false
 }
 
 internal fun DrawScope.drawSkinBackground(skin: KeyboardSkin, area: Size) {
@@ -632,6 +639,7 @@ internal class SkinKeyCache {
     val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
     val matrix = AndroidMatrix()
     var runtime: Any? = null
+    var liquid: Any? = null
     var bitmapShader: BitmapShader? = null
     var bitmapFor: ImageBitmap? = null
     /** Тени клавиши в покое — отрисованы один раз в картинку (размытие тени дорогое). */
@@ -925,12 +933,36 @@ private fun DrawScope.drawGlass(
     keyPos: () -> Offset?,
     dark: Boolean
 ) {
+    if (g.opacity >= 0.99f) return drawGlassBody(st, g, pressed, p, rect, r, c, backdrop, keyPos, dark)
+    // клавиша целиком полупрозрачная: рисуем в слой и накладываем с нужной непрозрачностью
+    val paint = Paint().apply { alpha = g.opacity.coerceIn(0f, 1f) }
+    drawIntoCanvas { cv ->
+        cv.saveLayer(rect.inflate(4f), paint)
+        drawGlassBody(st, g, pressed, p, rect, r, c, backdrop, keyPos, dark)
+        cv.restore()
+    }
+}
+
+private fun DrawScope.drawGlassBody(
+    st: KeyStyle,
+    g: GlassSpec,
+    pressed: SkinFill,
+    p: Float,
+    rect: Rect,
+    r: Float,
+    c: SkinKeyCache,
+    backdrop: Backdrop?,
+    keyPos: () -> Offset?,
+    dark: Boolean
+) {
     val bmp = backdrop?.bitmap
     val pos = if (bmp != null) keyPos() else null
     if (bmp != null && pos != null) {
         val s = backdrop.scale
         val zoom = 1f + 0.1f * g.refraction + 0.04f * p // линза чуть сильнее под пальцем
-        if (Build.VERSION.SDK_INT >= 33 && g.refraction > 0.01f) {
+        if (Build.VERSION.SDK_INT >= 33 && g.liquid > 0.01f && LiquidShader.draw(this, c, bmp, s, pos, rect, r, zoom, g, p, dark, backdrop.overWindowBlur)) {
+            // нарисовано жидким стеклом
+        } else if (Build.VERSION.SDK_INT >= 33 && g.refraction > 0.01f) {
             GlassShader.draw(this, c, bmp, s, pos, rect, r, zoom, g)
         } else {
             val sw = (rect.width * s / zoom).coerceIn(1f, bmp.width.toFloat())
@@ -954,7 +986,7 @@ private fun DrawScope.drawGlass(
     else drawPath(c.path, g.tint ?: Color.White.copy(alpha = if (dark) 0.08f else 0.22f))
     // без своей подложки (окно размывает приложение под клавиатурой) клавиша — матовое стекло:
     // молочная дымка сверху вниз и зерно делают её «размытее» фона вокруг
-    val frost = if (bmp == null) max(g.frost, 0.35f) else g.frost
+    val frost = if (g.liquid > 0.01f) g.frost * (1f - g.liquid) else if (bmp == null) max(g.frost, 0.35f) else g.frost
     if (frost > 0f) {
         drawPath(c.path, c.brush(Triple("frost", rect, frost to dark)) {
             val k = if (dark) 0.55f else 1f
@@ -965,7 +997,7 @@ private fun DrawScope.drawGlass(
             )
         })
     }
-    val grain = if (bmp == null) max(g.grain, 0.5f * frost) else g.grain
+    val grain = if (g.liquid > 0.01f) g.grain * (1f - g.liquid) else if (bmp == null) max(g.grain, 0.5f * frost) else g.grain
     if (grain > 0.01f) drawPath(c.path, PatternTiles.grain, alpha = (grain * if (dark) 0.5f else 0.7f).coerceAtMost(1f))
     if (p > 0.001f) drawPath(c.path, c.fill(pressed, rect), alpha = 0.55f * p)
     // жидкое стекло светится там, где палец: блик «перетекает» к точке нажатия
@@ -1013,6 +1045,107 @@ private fun DrawScope.drawGlass(
             },
             style = Stroke(1.25.dp.toPx())
         )
+    }
+}
+
+/**
+ * «Жидкое стекло» как на iPhone: линза гнёт и размазывает фон под клавишей, по краю идёт объёмная кромка
+ * (блик сверху-слева, тёмная кайма снизу-справа), цвета чуть насыщеннее. Если окно само размывает приложение
+ * (overWindowBlur), клавиша остаётся полупрозрачной, и размытое приложение видно сквозь неё.
+ */
+@RequiresApi(33)
+internal object LiquidShader {
+    private const val SRC = """
+uniform shader img;
+uniform float2 origin;
+uniform float2 size;
+uniform float radius;
+uniform float refr;
+uniform float disp;
+uniform float smear;
+uniform float alpha;
+uniform float press;
+uniform float amount;
+uniform float night;
+
+float sdf(float2 p, float2 b, float r) {
+    float2 q = abs(p) - b + r;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+
+half4 tap(float2 p) { return img.eval(p); }
+
+half4 main(float2 fc) {
+    float2 b = size * 0.5;
+    float2 p = fc - origin - b;
+    float d = sdf(p, b, radius);
+    float2 e = float2(1.0, 0.0);
+    float2 n = float2(sdf(p + e.xy, b, radius) - sdf(p - e.xy, b, radius),
+                      sdf(p + e.yx, b, radius) - sdf(p - e.yx, b, radius));
+    n = n / max(length(n), 0.0001);
+    float band = min(b.x, b.y);
+    float t = clamp(1.0 + d / (band * 0.9), 0.0, 1.0);
+    float lens = t * t * (3.0 - 2.0 * t);
+    float2 off = -n * refr * lens;
+    // размазывание: несколько выборок вокруг точки, у края шире
+    float sr = smear * (0.6 + 0.8 * lens);
+    float2 q = fc + off;
+    half4 c = tap(q) * 0.28;
+    c += tap(q + float2(sr, 0.0)) * 0.18;
+    c += tap(q - float2(sr, 0.0)) * 0.18;
+    c += tap(q + float2(0.0, sr)) * 0.18;
+    c += tap(q - float2(0.0, sr)) * 0.18;
+    if (disp > 0.0) {
+        c.r = (tap(q + off * disp * 2.0).r + c.r) * 0.5;
+        c.b = (tap(q - off * disp * 2.0).b + c.b) * 0.5;
+    }
+    float lum = dot(c.rgb, half3(0.299, 0.587, 0.114));
+    c.rgb = mix(half3(lum), c.rgb, 1.0 + 0.35 * amount);
+    float edge = smoothstep(-band * 0.55, 0.0, d);
+    float2 light = normalize(float2(-0.55, -0.83));
+    float facing = dot(-n, light);
+    float spec = pow(clamp(facing, 0.0, 1.0), 2.5) * edge;
+    float back = pow(clamp(-facing, 0.0, 1.0), 2.5) * edge;
+    float rimLine = smoothstep(-2.2, -0.4, d) * (1.0 - smoothstep(-0.4, 0.8, d));
+    half3 col = c.rgb;
+    col += half3(1.0) * (spec * (0.55 + 0.25 * press) * amount + rimLine * 0.30 * amount);
+    col += half3(1.0) * back * 0.14 * amount;
+    col *= 1.0 - 0.10 * edge * (1.0 - spec) * (0.5 + 0.5 * night);
+    float a = clamp(alpha + edge * 0.30 + spec * 0.25 + rimLine * 0.25, 0.0, 1.0);
+    return half4(col * a, a);
+}
+"""
+
+    /** false — шейдер не удалось собрать, рисуем обычным стеклом. */
+    fun draw(
+        ds: DrawScope, c: SkinKeyCache, bmp: ImageBitmap, s: Float, pos: Offset, rect: Rect, r: Float,
+        zoom: Float, g: GlassSpec, press: Float, dark: Boolean, overWindowBlur: Boolean
+    ): Boolean {
+        val rs = (c.liquid as? RuntimeShader) ?: runCatching { RuntimeShader(SRC) }.getOrNull()?.also { c.liquid = it } ?: return false
+        if (c.bitmapFor !== bmp) {
+            c.bitmapShader = BitmapShader(bmp.asAndroidBitmap(), AndroidShader.TileMode.CLAMP, AndroidShader.TileMode.CLAMP)
+            c.bitmapFor = bmp
+        }
+        val bs = c.bitmapShader ?: return false
+        c.matrix.reset()
+        c.matrix.setScale(1f / s, 1f / s)
+        c.matrix.postTranslate(-pos.x, -pos.y)
+        c.matrix.postScale(zoom, zoom, rect.center.x, rect.center.y)
+        bs.setLocalMatrix(c.matrix)
+        val m = min(rect.width, rect.height)
+        rs.setInputShader("img", bs)
+        rs.setFloatUniform("origin", rect.left, rect.top)
+        rs.setFloatUniform("size", rect.width, rect.height)
+        rs.setFloatUniform("radius", r)
+        rs.setFloatUniform("refr", g.refraction * m * 0.45f * (1f + 0.25f * press))
+        rs.setFloatUniform("disp", g.dispersion * 0.5f)
+        rs.setFloatUniform("smear", (1.5f + g.blur * 0.25f) * ds.density)
+        rs.setFloatUniform("alpha", if (overWindowBlur) 0.34f else 0.92f)
+        rs.setFloatUniform("press", press)
+        rs.setFloatUniform("amount", g.liquid)
+        rs.setFloatUniform("night", if (dark) 1f else 0f)
+        ds.drawPath(c.path, ShaderBrush(rs))
+        return true
     }
 }
 

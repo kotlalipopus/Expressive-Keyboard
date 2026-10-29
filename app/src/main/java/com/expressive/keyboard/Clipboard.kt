@@ -34,7 +34,7 @@ import java.io.File
 
 object ClipImages {
     private const val PREFIX = "\u0000img:"
-    private const val MAX_BYTES = 20L * 1024 * 1024
+    private const val MAX_BYTES = 256L * 1024 * 1024
 
     fun isImage(entry: String) = entry.startsWith(PREFIX)
 

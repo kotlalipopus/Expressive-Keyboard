@@ -1254,10 +1254,20 @@ internal fun rememberWindowBlurSupported(): Boolean {
     val context = LocalContext.current
     val wm = remember { context.getSystemService(android.view.WindowManager::class.java) }
     var enabled by remember { mutableStateOf(wm?.isCrossWindowBlurEnabled == true) }
+    val scope = rememberCoroutineScope()
     DisposableEffect(wm) {
-        val listener = java.util.function.Consumer<Boolean> { enabled = it }
+        var off: Job? = null
+        val listener = java.util.function.Consumer<Boolean> { on ->
+            off?.cancel()
+            if (on) enabled = true
+            else {
+                // система на миг выключает размытие (смена приложения, анимации, нагрев) — клавиатура не должна
+                // из-за этого мигать прозрачным фоном: выключаем, только если запрет держится дольше
+                off = scope.launch { delay(800L); enabled = false }
+            }
+        }
         runCatching { wm?.addCrossWindowBlurEnabledListener(listener) }
-        onDispose { runCatching { wm?.removeCrossWindowBlurEnabledListener(listener) } }
+        onDispose { off?.cancel(); runCatching { wm?.removeCrossWindowBlurEnabledListener(listener) } }
     }
     return enabled && !WindowBlur.overflow
 }
@@ -2003,7 +2013,7 @@ fun KeyboardRoot(
     val activePlugins = PluginRepository.active
     val scriptSkin = ScriptHost.skinOverride
     // тема с её настройками и в акцентном цвете пользователя; пересчёт — только когда что-то из этого меняется
-    val skin = remember(activePlugins, scriptSkin, raw.skinPlugin, raw.skinOptions, raw.userAccent, raw.colorAccentText, raw.keyOpacity, dark) {
+    val skin = remember(activePlugins, scriptSkin, raw.skinPlugin, raw.skinOptions, raw.userAccent, raw.colorAccentText, raw.keyOpacity, raw.liquidGlass, dark) {
         PluginRepository.resolvedSkin(raw, dark)
     }
     val configuration = LocalConfiguration.current
@@ -2045,7 +2055,9 @@ fun KeyboardRoot(
         }
         // подложку для стекла считаем в фоне и только когда оформление стеклянное (при размытии окна она не нужна)
         LaunchedEffect(skin, image, palette.background, settings.bgDim, rootSize, blurDp) {
-            if (skin == null || !skin.usesGlass || blurDp != null || rootSize.width == 0 || rootSize.height == 0) {
+            val needsBackdrop = skin != null && skin.usesGlass && (blurDp == null || (skin.usesLiquid && Build.VERSION.SDK_INT >= 33))
+            backdrop.overWindowBlur = blurDp != null
+            if (skin == null || !needsBackdrop || rootSize.width == 0 || rootSize.height == 0) {
                 backdrop.bitmap = null
                 return@LaunchedEffect
             }
@@ -2060,7 +2072,9 @@ fun KeyboardRoot(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(topStart = corner.dp, topEnd = corner.dp),
                 // при размытии окна фон рисует само окно (дымка поверх размытия)
-                color = if (blurDp != null) Color.Transparent else palette.background.copy(alpha = palette.background.alpha * bgAlpha)
+                // размытие просили, но система его не даёт — фон «матовый»: почти непрозрачный, а не прозрачный
+                color = if (blurDp != null) Color.Transparent
+                else palette.background.copy(alpha = palette.background.alpha * if (wantBlur != null && wantBlur > 0f && image == null) max(bgAlpha, 0.92f) else bgAlpha)
             ) {
                 Box(
                     Modifier.fillMaxWidth().onGloballyPositioned {

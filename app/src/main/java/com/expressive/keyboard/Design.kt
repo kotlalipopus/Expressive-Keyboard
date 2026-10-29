@@ -56,7 +56,7 @@ enum class DesignStyle(
     val weight: Int
 ) {
     EXPRESSIVE(
-        "EXPRESSIVE", "Material You Expressive", "Волнистые «печеньки» и морфинг формы",
+        "EXPRESSIVE", "Material 3 Expressive", "Волнистые «печеньки» и морфинг формы",
         "", ExpressiveShapePreset.COOKIE_12, "ROUNDED", 16f, 700
     ),
     MATERIAL(
@@ -118,7 +118,7 @@ internal fun DesignPicker(settings: KeyboardSettings) {
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (plugin?.skin != null) {
-                    val skin = remember(plugin, settings.skinOptions, settings.userAccent, settings.colorAccentText, settings.keyOpacity, dark) {
+                    val skin = remember(plugin, settings.skinOptions, settings.userAccent, settings.colorAccentText, settings.keyOpacity, settings.liquidGlass, dark) {
                         runCatching { ThemeOptions.build(plugin, plugin.skin, ThemeOptions.values(settings, plugin.id), settings, dark) }.getOrNull()
                     }
                     SkinMiniPreview(skin, settings, Modifier.fillMaxWidth().height(78.dp))

@@ -698,6 +698,11 @@ object WordPredictorEngine {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + BackgroundErrors)
     private var saveJob: Job? = null
     private val glideCache = ConcurrentHashMap<String, List<Pair<String, Float>>>()
+
+    /** Система просит память, а клавиатура скрыта: сбрасываем то, что пересчитается само. */
+    fun trimMemory() {
+        glideCache.clear()
+    }
     /** Вызывается в главном потоке, когда словарь загрузился — клавиатура обновляет подсказки. */
     @Volatile var onDictionaryLoaded: (() -> Unit)? = null
 

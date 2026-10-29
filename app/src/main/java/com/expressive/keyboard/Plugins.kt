@@ -863,6 +863,11 @@ object PluginRepository {
 
     /** Оформление для клавиатуры: светлое или тёмное, с настройками темы и в акцентном цвете пользователя. */
     fun resolvedSkin(settings: KeyboardSettings, dark: Boolean): KeyboardSkin? {
+        val base = baseSkin(settings, dark)
+        return if (settings.liquidGlass && android.os.Build.VERSION.SDK_INT >= 33) ThemeOptions.liquefy(base, settings) else base
+    }
+
+    private fun baseSkin(settings: KeyboardSettings, dark: Boolean): KeyboardSkin? {
         ScriptHost.skinOverride?.let { o ->
             val m = o.forMode(dark)
             return if (settings.userAccent != 0) ThemeOptions.recolor(m, androidx.compose.ui.graphics.Color(settings.userAccent), settings.colorAccentText) else m

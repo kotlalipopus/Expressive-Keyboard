@@ -169,6 +169,8 @@ private class Mod(val plugin: KeyboardPlugin) {
     val buttons = LinkedHashMap<String, Pair<ScriptButton, JsFunction?>>()
     val panels = LinkedHashMap<String, Pair<ScriptPanel, JsFunction?>>()
     val timers = HashMap<Int, Runnable>()
+    /** Таймеры, которые сработали, пока клавиатура скрыта: ждут показа, а не крутят процесс в фоне. */
+    val parked = ArrayList<Runnable>()
     var nextTimer = 1
     /** Что мод рисует поверх клавиатуры (kb.overlay). */
     var overlay: List<OverlayItem> = emptyList()
@@ -388,6 +390,21 @@ object ScriptHost {
         if (items.isNotEmpty() || overlayItems.isNotEmpty()) overlayItems = items
         val back = mods.values.flatMap { it.background }
         if (back.isNotEmpty() || backgroundItems.isNotEmpty()) backgroundItems = back
+    }
+
+    /** Клавиатура на экране. Пока скрыта, таймеры модов стоят: иначе мод с setInterval будит процесс каждый тик. */
+    @Volatile var visible = true
+        private set
+
+    fun setVisible(v: Boolean) {
+        if (visible == v) return
+        visible = v
+        if (!v) return
+        for (m in mods.values) {
+            val waiting = m.parked.toList()
+            m.parked.clear()
+            for (r in waiting) if (m.timers.containsValue(r)) main.post(r)
+        }
     }
 
     /** Кадр анимации для подписчиков "frame": dt — миллисекунды с прошлого кадра. */
@@ -1090,6 +1107,11 @@ object ScriptHost {
             val r = object : Runnable {
                 override fun run() {
                     if (mods[id] !== m) return
+                    if (!visible) {
+                        // клавиатура скрыта: не выполняем мод и не перезапускаем таймер — продолжит при показе
+                        if (m.timers.containsKey(tid)) m.parked += this
+                        return
+                    }
                     if (!repeat) m.timers.remove(tid)
                     exec(m, CALL_BUDGET_MS) { c -> fn.call(c, s, s, emptyArray()) }
                     if (repeat && m.timers.containsKey(tid)) main.postDelayed(this, delay)

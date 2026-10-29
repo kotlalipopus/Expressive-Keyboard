@@ -589,6 +589,19 @@ class ComposeKeyboardService : InputMethodService(),
     private var appliedBg: Any? = null
     private var appliedWindow: Window? = null
     private var appliedEco: Boolean? = null
+    /** Фон окна, который мы поставили для размытия: если система или прошивка его подменили, ставим заново. */
+    private var blurDrawable: android.graphics.drawable.Drawable? = null
+    private val blurWatch = object : Runnable {
+        override fun run() {
+            val v = inputView ?: return
+            if (!v.isAttachedToWindow) return
+            if (isInputViewShown) {
+                fitBlurToKeyboard()
+                restoreBlurIfLost()
+            }
+            v.postDelayed(this, 1500L)
+        }
+    }
 
     /** Режим энергосбережения системы: анимации нажатий отключаются. */
     private val powerReceiver = object : android.content.BroadcastReceiver() {
@@ -933,6 +946,10 @@ class ComposeKeyboardService : InputMethodService(),
         // перекладке, и посреди анимации ответ на миг менялся — размытие выключалось и включалось, вся клавиатура
         // перерисовывалась и «прыгала»
         inputView?.postDelayed({ fitBlurToKeyboard() }, 450L)
+        // проверка раз в полторы секунды, пока клавиатура на экране: размытие и подложка не должны пропадать
+        // «в случайный момент», а высота окна могла измениться уже после первой проверки
+        inputView?.let { it.removeCallbacks(blurWatch); it.postDelayed(blurWatch, 1500L) }
+        ScriptHost.setVisible(true)
         ScriptHost.emit("show")
         if (kb.instantUi) serviceScope.launch {
             delay(400L)
@@ -954,12 +971,19 @@ class ComposeKeyboardService : InputMethodService(),
 
     override fun onWindowHidden() {
         super.onWindowHidden()
+        inputView?.removeCallbacks(blurWatch)
         voice.stop()
         kb.panel = ActivePanel.KEYBOARD
         kb.toolbarOpen = false
         WordPredictorEngine.flush()
         moveLifecycle(Lifecycle.State.CREATED)
         ScriptHost.emit("hide")
+        ScriptHost.setVisible(false)
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND && !isInputViewShown) WordPredictorEngine.trimMemory()
     }
 
     override fun onConfigureWindow(win: Window, isFullscreen: Boolean, isCandidatesOnly: Boolean) {
@@ -1006,14 +1030,17 @@ class ComposeKeyboardService : InputMethodService(),
                 if (blur) {
                     // размытие повторяет форму фона окна: скруглённый сверху прямоугольник с дымкой
                     val r = blurCornerDp * resources.displayMetrics.density
-                    w.setBackgroundDrawable(android.graphics.drawable.GradientDrawable().apply {
+                    val shape = android.graphics.drawable.GradientDrawable().apply {
                         setColor(blurTint)
                         // одинаковый радиус у всех углов: только тогда контур фона — скруглённый прямоугольник,
                         // и система скругляет по нему размытие (иначе оно торчит за углами клавиатуры)
                         cornerRadius = r
-                    })
+                    }
+                    blurDrawable = shape
+                    w.setBackgroundDrawable(shape)
                     w.setBackgroundBlurRadius(blurRadius)
                 } else {
+                    blurDrawable = null
                     w.setBackgroundDrawable(ColorDrawable(AndroidColor.TRANSPARENT))
                     if (Build.VERSION.SDK_INT >= 31) w.setBackgroundBlurRadius(0)
                 }
@@ -1037,6 +1064,17 @@ class ComposeKeyboardService : InputMethodService(),
      * Размытие делает система по границам окна. На части прошивок окно клавиатуры выше самой клавиатуры —
      * тогда размытие легло бы на весь экран; в этом случае отключаем его и рисуем обычный фон темы.
      */
+    private fun restoreBlurIfLost() {
+        if (Build.VERSION.SDK_INT < 31 || blurRadius <= 0) return
+        val w = window?.window ?: return
+        // фон окна подменили (смена окна, конфигурации, прошивка) — размытие осталось бы без подложки и дымки:
+        // клавиатура выглядела бы просто прозрачной. Ставим всё заново.
+        if (w.decorView.background !== blurDrawable) {
+            appliedBg = null
+            applyWindowColors()
+        }
+    }
+
     private fun fitBlurToKeyboard() {
         if (Build.VERSION.SDK_INT < 31) return
         val decor = window?.window?.decorView ?: return
@@ -2838,7 +2876,7 @@ class ComposeKeyboardService : InputMethodService(),
 
     private fun savePinned() {
         val arr = JSONArray()
-        kb.pinnedClips.take(100).forEach { arr.put(it) }
+        kb.pinnedClips.forEach { arr.put(it) }
         dataPrefs().edit().putString("pinned_clips", arr.toString()).apply()
     }
 

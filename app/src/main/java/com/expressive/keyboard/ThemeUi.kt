@@ -361,6 +361,14 @@ internal fun ThemesPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -
         })
     }
 
+    if (Build.VERSION.SDK_INT >= 33) SettingsSection("Жидкое стекло") {
+        ToggleItem(
+            Icons.Rounded.BlurOn, "Жидкое стекло на любой теме",
+            "Клавиши — стеклянные линзы: гнут и размазывают фон, с объёмными бликами. Размытие приложения под клавиатурой включается само",
+            settings.liquidGlass
+        ) { KeyboardPrefs.edit(context) { putBoolean("liquid_glass", it) } }
+    }
+
     // настройки выбранной темы
     val current = PluginRepository.skinPlugin(settings)
     if (current?.skin != null) ThemeOptionsSections(current, settings, dark)
