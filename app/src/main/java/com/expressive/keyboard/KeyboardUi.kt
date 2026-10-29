@@ -2037,7 +2037,9 @@ fun KeyboardRoot(
         val blurTint = blurTint0.copy(alpha = blurTint0.alpha * bgAlpha)
         val decorated = image != null || skin?.hasBackground == true || blurDp != null || bgAlpha < 0.99f
         LaunchedEffect(palette.background, decorated) { onBackground(palette.background, decorated) }
-        val corner = skin?.corner ?: 28f
+        // без верхней панели скруглять верх фона нечем: первый ряд клавиш стоял бы впритык
+        // к вырезу, и углы выглядели обрезанными — делаем верх листа прямым
+        val corner = if (settings.showHeader) skin?.corner ?: 28f else 0f
         LaunchedEffect(blurDp, blurTint, corner) {
             onWindowBlur(if (blurDp == null) 0 else with(density) { blurDp.dp.roundToPx() }, blurTint, corner)
         }
@@ -2056,7 +2058,7 @@ fun KeyboardRoot(
         CompositionLocalProvider(LocalSkin provides skin, LocalBackdrop provides backdrop) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(topStart = (skin?.corner ?: 28f).dp, topEnd = (skin?.corner ?: 28f).dp),
+                shape = RoundedCornerShape(topStart = corner.dp, topEnd = corner.dp),
                 // при размытии окна фон рисует само окно (дымка поверх размытия)
                 color = if (blurDp != null) Color.Transparent else palette.background.copy(alpha = palette.background.alpha * bgAlpha)
             ) {
@@ -2147,7 +2149,11 @@ internal fun KeyboardScreen(
             verticalArrangement = Arrangement.spacedBy(gap)
         ) {
             if (settings.editBar && !settings.landscape) EditBar(state, actions, palette)
-            HeaderBar(state, actions, settings, palette, font, spec)
+            // верхнюю панель можно убрать совсем; в панелях она остаётся ради кнопки «назад»,
+            // а панель инструментов показывается, если её открыли вручную
+            if (settings.showHeader || panel != ActivePanel.KEYBOARD || state.toolbarOpen) {
+                HeaderBar(state, actions, settings, palette, font, spec)
+            }
             if (panel == ActivePanel.TRANSLATE) TranslatorBar(state, actions, settings, palette, font)
             if (panel == ActivePanel.EMOJI_SEARCH) EmojiSearchBar(state, actions, settings, palette, font)
             if (panel == ActivePanel.GIF_SEARCH) GifSearchBar(state, actions, palette, font)

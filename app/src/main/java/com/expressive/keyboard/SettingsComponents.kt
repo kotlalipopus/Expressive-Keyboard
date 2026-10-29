@@ -475,28 +475,30 @@ internal fun StylePreview(settings: KeyboardSettings, spec: WavySpec) {
             Box(Modifier.matchParentSize().background(palette.background.copy(alpha = settings.bgDim)))
         }
         Column(Modifier.fillMaxWidth().padding(8.dp), verticalArrangement = Arrangement.spacedBy(settings.rowSpacingDp.dp)) {
-            Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Box(Modifier.size(38.dp).wavyBackground(spec, palette.accent), contentAlignment = Alignment.Center) {
-                    GlyphIcon(Glyph.GRID, palette.onAccent, 18.dp)
-                }
-                if (settings.showSuggestions) {
-                    listOf("как", "привет", "дела").forEachIndexed { i, w ->
-                        Box(
-                            Modifier.weight(1f).height(34.dp).clip(CircleShape).background(if (i == 1) palette.accentSoft else palette.func),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                w, color = if (i == 1) palette.onAccentSoft else palette.onFunc, fontFamily = font,
-                                fontWeight = if (i == 1) FontWeight.ExtraBold else FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1
-                            )
-                        }
-                    }
-                } else {
-                    Box(Modifier.weight(1f).height(34.dp).clip(CircleShape).background(palette.func))
-                }
-                if (settings.showMicButton) {
+            if (settings.showHeader) {
+                Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Box(Modifier.size(38.dp).wavyBackground(spec, palette.accent), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Outlined.Mic, null, tint = palette.onAccent, modifier = Modifier.size(18.dp))
+                        GlyphIcon(Glyph.GRID, palette.onAccent, 18.dp)
+                    }
+                    if (settings.showSuggestions) {
+                        listOf("как", "привет", "дела").forEachIndexed { i, w ->
+                            Box(
+                                Modifier.weight(1f).height(34.dp).clip(CircleShape).background(if (i == 1) palette.accentSoft else palette.func),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    w, color = if (i == 1) palette.onAccentSoft else palette.onFunc, fontFamily = font,
+                                    fontWeight = if (i == 1) FontWeight.ExtraBold else FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1
+                                )
+                            }
+                        }
+                    } else {
+                        Box(Modifier.weight(1f).height(34.dp).clip(CircleShape).background(palette.func))
+                    }
+                    if (settings.showMicButton) {
+                        Box(Modifier.size(38.dp).wavyBackground(spec, palette.accent), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Outlined.Mic, null, tint = palette.onAccent, modifier = Modifier.size(18.dp))
+                        }
                     }
                 }
             }

@@ -473,7 +473,8 @@ internal fun ToolbarPage(settings: KeyboardSettings) {
     SettingsSection("Кнопка панели") {
         ToggleItem(
             Icons.Rounded.Apps, "Кнопка панели функций",
-            if (settings.toolsButton) "Кнопка с сеткой слева от подсказок"
+            if (!settings.showHeader) "Верхняя панель выключена"
+            else if (settings.toolsButton) "Кнопка с сеткой слева от подсказок"
             else if (settings.showSuggestions) "Скрыта: панель функций появляется, когда поле пустое"
             else "Скрыта: подсказки выключены, поэтому панель функций видна всегда",
             settings.toolsButton

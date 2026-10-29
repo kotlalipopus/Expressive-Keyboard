@@ -805,6 +805,11 @@ internal fun KeysPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         ToggleItem(Icons.Outlined.Mic, "Кнопка микрофона", null, settings.showMicButton) {
             KeyboardPrefs.edit(context) { putBoolean("show_mic_button", it) }
         }
+        ToggleItem(
+            Icons.Rounded.VerticalAlignTop, "Верхняя панель",
+            "Подсказки, микрофон и кнопки над клавиатурой. Если выключить, клавиатура станет ниже",
+            settings.showHeader
+        ) { KeyboardPrefs.edit(context) { putBoolean("show_header", it) } }
         ToggleItem(Icons.Rounded.Lightbulb, "Строка подсказок", "Если выключить, наверху всегда будут инструменты", settings.showSuggestions) {
             KeyboardPrefs.edit(context) { putBoolean("show_suggestions", it) }
         }

@@ -201,6 +201,8 @@ data class KeyboardSettings(
     val sidePaddingDp: Float = 6f,
     val oneHanded: String = "OFF",                // OFF | LEFT | RIGHT
     val oneHandedWidth: Float = 0.7f,
+    /** Верхняя панель над клавиатурой: подсказки, микрофон и кнопка меню. */
+    val showHeader: Boolean = true,
     val showSuggestions: Boolean = true,
     val showMicButton: Boolean = true,
     val showEmojiKey: Boolean = true,
@@ -439,6 +441,7 @@ object KeyboardPrefs {
             sidePaddingDp = p.getFloat("side_padding_dp", 6f).coerceIn(0f, 32f),
             oneHanded = p.getString("one_handed", "OFF") ?: "OFF",
             oneHandedWidth = p.getFloat("one_handed_w", 0.7f).coerceIn(0.55f, 0.9f),
+            showHeader = p.getBoolean("show_header", true),
             showSuggestions = p.getBoolean("show_suggestions", true),
             showMicButton = p.getBoolean("show_mic_button", true),
             showEmojiKey = p.getBoolean("show_emoji_key", true),
@@ -537,7 +540,7 @@ object KeyboardPrefs {
         listOf(
             "show_number_row", "show_key_borders", "key_preview", "auto_capitalize", "auto_correct_enabled",
             "double_space_period", "haptics_enabled", "vibrate_on_release", "strong_special_keys", "sound_enabled",
-            "show_hints", "show_suggestions", "show_mic_button", "show_emoji_key", "show_globe_key", "panel_animations",
+            "show_hints", "show_header", "show_suggestions", "show_mic_button", "show_emoji_key", "show_globe_key", "panel_animations",
             "backspace_swipe", "clipboard_history", "instant_input", "glide_typing", "glide_trail", "swipe_up_hint",
             "space_long_press", "auto_pair", "incognito", "dict_auto_download", "punctuation_keys", "smart_punctuation",
             "system_spellcheck", "edit_bar", "auto_space_punct", "eco_mode", "dash_merge", "clip_screenshots", "correct_everywhere", "dynamic_zones", "ai_voice_cleanup", "tools_button", "landscape_split"

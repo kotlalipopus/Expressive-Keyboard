@@ -210,6 +210,8 @@ internal val EN_STRINGS: Map<String, String> = hashMapOf(
     "Например, запятая вместо кнопки языка, если язык вы меняете свайпом по пробелу" to "For example, a comma instead of the language key if you switch language by swiping the space bar",
     "Удержание «,» и «.» — другие знаки, как в Gboard" to "Long press “,” and “.” for more symbols, like in Gboard",
     "Кнопка микрофона" to "Microphone button",
+    "Подсказки, микрофон и кнопки над клавиатурой. Если выключить, клавиатура станет ниже" to "Suggestions, microphone and buttons above the keyboard. Turn off to make the keyboard shorter",
+    "Верхняя панель выключена" to "Top bar is off",
     "Строка подсказок" to "Suggestion strip",
     "Если выключить, наверху всегда будут инструменты" to "When off, the toolbar is always shown on top",
     "Своя: «{0}»" to "Custom: “{0}”",
