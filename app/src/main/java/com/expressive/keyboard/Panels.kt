@@ -181,15 +181,55 @@ internal fun RepeatingBackspace(palette: KeyPalette, onDelete: () -> Unit) {
     }
 }
 
-/** Перевод с автоопределением языка; нажатие на чип — следующий язык перевода, удержание — список. */
+/** Язык в панели выбора перевода: код для настройки, название на самом языке и пояснение. */
+private class TranslateLang(val code: String, val name: String, val sub: String)
+
+/** Свои языки, потом разновидности английского, потом все остальные языки приложения по алфавиту. */
+private fun translateLanguages(settings: KeyboardSettings): Triple<List<TranslateLang>, List<TranslateLang>, List<TranslateLang>> {
+    fun of(l: KeyboardLanguage) = TranslateLang(l.id, l.spaceLabel.substringBefore(" · "), l.displayTitle().substringBefore(" ("))
+    val english = EnglishVariants.LIST.map { (code, name, sub) -> TranslateLang(code, name, tr(sub)) }
+    val mine = Languages.enabled(settings).filter { it.id != "en" }.map(::of)
+    val mineIds = mine.map { it.code }.toSet()
+    val rest = Languages.all.filter { it.id != "en" && it.id !in mineIds }.sortedBy { it.displayTitle() }.map(::of)
+    return Triple(mine, english, rest)
+}
+
+@Composable
+private fun TranslatePill(l: TranslateLang, target: String, palette: KeyPalette, font: FontFamily, onPick: (String) -> Unit) {
+    val sel = l.code == target
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+            .background(if (sel) palette.accent else palette.func)
+            .clickable { onPick(l.code) }
+            .padding(horizontal = 10.dp, vertical = 7.dp)
+    ) {
+        Text(
+            l.name, color = if (sel) palette.onAccent else palette.onFunc, fontFamily = font, fontWeight = FontWeight.ExtraBold,
+            fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            l.sub, color = (if (sel) palette.onAccent else palette.onFunc).copy(alpha = 0.65f), fontFamily = font,
+            fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun TranslateHeader(title: String, palette: KeyPalette, font: FontFamily) {
+    Text(title, color = palette.muted, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp, top = 4.dp))
+}
+
+/** Перевод с автоопределением языка; нажатие на чип языка открывает панель выбора. Текст виден целиком. */
 @Composable
 internal fun TranslatorBar(state: KeyboardState, actions: KeyboardActions, settings: KeyboardSettings, palette: KeyPalette, font: FontFamily) {
     val context = LocalContext.current
     val input = state.translatorInput
     val target = settings.translateTarget
-    val targets = remember(settings.languages) {
-        (Languages.enabled(settings).map { it.id } + listOf("en", "ru", "de", "fr", "es", "it", "zh", "ja", "ko", "tr", "uk", "ar"))
-            .map { it.substringBefore('-') }.distinct()
+    val groups = remember(settings.languages, Languages.extra) { translateLanguages(settings) }
+    val targetName = remember(target, groups) {
+        (groups.second + groups.first + groups.third).firstOrNull { it.code == target }?.let { l ->
+            if (l.code.startsWith("en")) "EN" + l.code.removePrefix("en").uppercase() else l.name
+        } ?: target.uppercase()
     }
     var pick by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
@@ -201,11 +241,24 @@ internal fun TranslatorBar(state: KeyboardState, actions: KeyboardActions, setti
             return@LaunchedEffect
         }
         state.translatorLoading = true
-        delay(350L)
+        // региональный английский переводит ИИ по ключу пользователя: запросов меньше — ждём, пока допечатают
+        val region = EnglishVariants.regionName(target)
+        val keys = AiKeys.of(settings)
+        val viaAi = region != null && AiFix.hasLlm(keys)
+        delay(if (viaAi) 900L else 350L)
         // нет сети в первый раз — ещё одна попытка, прежде чем сдаться
         // языки раскладок — подсказка, на каком языке набран текст (текущая — первой)
         val hints = (listOf(state.language.id) + Languages.enabled(settings).map { it.id }).map { it.substringBefore('-') }.distinct()
-        var r = Translator.translate(input, "auto", target, hints)
+        var r: Result<String> = Result.failure(IllegalStateException())
+        if (viaAi) {
+            val ai = AiFix.run(
+                context, input, keys, "en", AiTask.CUSTOM,
+                "Translate the text into $region: use that region's spelling, vocabulary and idioms. " +
+                    "Keep the meaning, tone and formatting. Output only the translation, nothing else."
+            )
+            r = ai.map { it.first.trim() }.let { if (it.getOrNull().isNullOrBlank()) Result.failure(IllegalStateException()) else it }
+        }
+        if (r.isFailure) r = Translator.translate(input, "auto", target, hints)
         if (r.isFailure) {
             delay(800L)
             r = Translator.translate(input, "auto", target, hints)
@@ -215,51 +268,67 @@ internal fun TranslatorBar(state: KeyboardState, actions: KeyboardActions, setti
         state.translatorLoading = false
     }
     if (pick) {
-        Row(
-            Modifier.fillMaxWidth().panelSurface(palette).horizontalScroll(rememberScrollState()).padding(6.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            for (t in targets) {
-                val sel = t == target
-                Box(
-                    Modifier.clip(CircleShape).background(if (sel) palette.accent else palette.func)
-                        .clickable { KeyboardPrefs.edit(context) { putString("translate_target", t) }; pick = false }
-                        .padding(horizontal = 14.dp, vertical = 10.dp)
-                ) {
-                    Text(t.uppercase(), color = if (sel) palette.onAccent else palette.onFunc, fontFamily = font, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
+        Column(Modifier.fillMaxWidth().panelSurface(palette).padding(horizontal = 8.dp, vertical = 6.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    tr("Язык перевода"), color = palette.onLetter, fontFamily = font, fontWeight = FontWeight.ExtraBold,
+                    fontSize = 14.sp, modifier = Modifier.weight(1f).padding(start = 6.dp)
+                )
+                Box(Modifier.size(36.dp).clip(CircleShape).clickable { pick = false }, contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.Close, null, tint = palette.muted, modifier = Modifier.size(20.dp))
                 }
+            }
+            val gridState = rememberLazyGridState()
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(108.dp),
+                state = gridState,
+                modifier = Modifier.fillMaxWidth().heightIn(max = if (settings.landscape) 120.dp else 230.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (groups.first.isNotEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) { TranslateHeader(tr("Ваши языки"), palette, font) }
+                    gridItems(groups.first) { TranslatePill(it, target, palette, font) { code -> KeyboardPrefs.edit(context) { putString("translate_target", code) }; pick = false } }
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) { TranslateHeader(tr("Английский"), palette, font) }
+                gridItems(groups.second) { TranslatePill(it, target, palette, font) { code -> KeyboardPrefs.edit(context) { putString("translate_target", code) }; pick = false } }
+                item(span = { GridItemSpan(maxLineSpan) }) { TranslateHeader(tr("Все языки"), palette, font) }
+                gridItems(groups.third) { TranslatePill(it, target, palette, font) { code -> KeyboardPrefs.edit(context) { putString("translate_target", code) }; pick = false } }
             }
         }
         return
     }
     Row(
         modifier = Modifier.fillMaxWidth().panelSurface(palette).padding(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Box(
-            Modifier.clip(CircleShape).background(palette.func)
-                .combinedClickable(onLongClick = { pick = true }) {
-                    val next = targets[(targets.indexOf(target) + 1).mod(targets.size)]
-                    KeyboardPrefs.edit(context) { putString("translate_target", next) }
-                }
+            Modifier.clip(CircleShape).background(palette.func).clickable { pick = true }
                 .padding(horizontal = 12.dp, vertical = 10.dp)
         ) {
-            Text(tr("Авто") + " → ${target.uppercase()}", color = palette.onFunc, fontFamily = font, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
+            Text(tr("Авто") + " → $targetName", color = palette.onFunc, fontFamily = font, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, maxLines = 1)
         }
-        Column(Modifier.weight(1f)) {
-            Text(
-                if (input.isEmpty()) tr("Печатайте — переведу") else input,
-                color = if (input.isEmpty()) palette.muted else palette.onLetter,
-                fontFamily = font, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
-            )
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            // набранное: показываем целиком, длинное прокручивается и всегда стоит на конце — там, где печатаете
+            val inputScroll = rememberScrollState()
+            LaunchedEffect(input) { inputScroll.scrollTo(inputScroll.maxValue) }
+            Box(Modifier.fillMaxWidth().heightIn(max = 78.dp).verticalScroll(inputScroll)) {
+                Text(
+                    if (input.isEmpty()) tr("Печатайте — переведу") else input,
+                    color = if (input.isEmpty()) palette.muted else palette.onLetter,
+                    fontFamily = font, fontSize = 13.sp
+                )
+            }
             val result = when {
                 state.translatorLoading -> tr("Перевожу…")
                 failed -> tr("Не удалось перевести — проверьте интернет")
                 else -> state.translatorResult
             }
             if (result.isNotEmpty()) {
-                Text(result, color = palette.accent, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Box(Modifier.fillMaxWidth().heightIn(max = 150.dp).verticalScroll(rememberScrollState())) {
+                    Text(result, color = palette.accent, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
             }
         }
         if (input.isNotEmpty()) {

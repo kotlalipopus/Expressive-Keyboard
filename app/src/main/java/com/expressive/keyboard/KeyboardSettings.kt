@@ -203,6 +203,8 @@ data class KeyboardSettings(
     val oneHandedWidth: Float = 0.7f,
     /** Верхняя панель над клавиатурой: подсказки, микрофон и кнопка меню. */
     val showHeader: Boolean = true,
+    /** Поля чисел и телефонов получают цифровую клавиатуру 4×4, как у системной. */
+    val numberPad: Boolean = true,
     /** «Жидкое стекло» на любой теме: клавиши-линзы с объёмными бликами (Android 13+). */
     val liquidGlass: Boolean = false,
     val showSuggestions: Boolean = true,
@@ -229,6 +231,8 @@ data class KeyboardSettings(
     val globeLongPress: String = "LANGUAGES",
     /** Панель редактирования над клавиатурой: курсор, выделение, копировать/вставить. */
     val editBar: Boolean = false,
+    /** Удержание кнопки панели функций: PIN — закрепить панель над подсказками | EDIT_BAR — панель редактирования. */
+    val toolsLongPress: String = "PIN",
     /** Размытие приложения под клавиатурой: THEME — как в оформлении | ON | OFF. По умолчанию выключено: оно греет телефон. */
     val windowBlur: String = "OFF",
     /** Сила размытия, dp. */
@@ -251,6 +255,11 @@ data class KeyboardSettings(
     val geminiKey: String = "",
     val openaiKey: String = "",
     val groqKey: String = "",
+    /** Свои модели ИИ (пусто — по умолчанию). */
+    val geminiModel: String = "",
+    val claudeModel: String = "",
+    val openaiModel: String = "",
+    val groqModel: String = "",
     // --- скорость и жесты ---
     val instantInput: Boolean = true,             // буква появляется в момент касания, а не при отпускании
     val glideTyping: Boolean = true,              // печать, не отрывая пальца
@@ -288,6 +297,8 @@ data class KeyboardSettings(
     val aiVoiceCleanup: Boolean = true,
     /** Кнопка панели функций в строке подсказок. Без неё и без подсказок панель функций видна всегда. */
     val toolsButton: Boolean = true,
+    /** Панель функций закреплена отдельной строкой над подсказками (удержание кнопки панели функций). */
+    val pinnedTools: Boolean = false,
     /** Что по удержанию буквы: VARIANTS — варианты буквы и символы (как раньше), SYMBOLS — символ с того же места на «?123», как в Gboard. */
     val holdMode: String = "VARIANTS",
     /** В альбомной ориентации клавиатура делится на две половины — до букв легко дотянуться большими пальцами. */
@@ -444,6 +455,7 @@ object KeyboardPrefs {
             oneHanded = p.getString("one_handed", "OFF") ?: "OFF",
             oneHandedWidth = p.getFloat("one_handed_w", 0.7f).coerceIn(0.55f, 0.9f),
             showHeader = p.getBoolean("show_header", true),
+            numberPad = p.getBoolean("number_pad", true),
             liquidGlass = p.getBoolean("liquid_glass", false),
             showSuggestions = p.getBoolean("show_suggestions", true),
             showMicButton = p.getBoolean("show_mic_button", true),
@@ -460,6 +472,7 @@ object KeyboardPrefs {
             spaceSwipe = p.getString("space_swipe", "CURSOR") ?: "CURSOR",
             globeLongPress = p.getString("globe_long_press", "LANGUAGES") ?: "LANGUAGES",
             editBar = p.getBoolean("edit_bar", false),
+            toolsLongPress = p.getString("tools_long_press", "PIN") ?: "PIN",
             windowBlur = p.getString("window_blur", "OFF") ?: "OFF",
             windowBlurDp = p.getFloat("window_blur_dp", 32f).coerceIn(4f, 100f),
             backspaceSwipe = p.getBoolean("backspace_swipe", true),
@@ -476,6 +489,10 @@ object KeyboardPrefs {
             geminiKey = SecretBox.decrypt(p.getString("gemini_key", "") ?: ""),
             openaiKey = SecretBox.decrypt(p.getString("openai_key", "") ?: ""),
             groqKey = SecretBox.decrypt(p.getString("groq_key", "") ?: ""),
+            geminiModel = (p.getString("gemini_model", "") ?: "").trim(),
+            claudeModel = (p.getString("anthropic_model", "") ?: "").trim(),
+            openaiModel = (p.getString("openai_model", "") ?: "").trim(),
+            groqModel = (p.getString("groq_model", "") ?: "").trim(),
             instantInput = p.getBoolean("instant_input", true),
             glideTyping = p.getBoolean("glide_typing", true),
             glideTrail = p.getBoolean("glide_trail", true),
@@ -501,6 +518,7 @@ object KeyboardPrefs {
             dynamicZones = p.getBoolean("dynamic_zones", true),
             aiVoiceCleanup = p.getBoolean("ai_voice_cleanup", true),
             toolsButton = p.getBoolean("tools_button", true),
+            pinnedTools = p.getBoolean("pinned_tools", false),
             holdMode = p.getString("hold_mode", "VARIANTS") ?: "VARIANTS",
             landscapeSplit = p.getBoolean("landscape_split", true),
             langLayouts = p.getString("lang_layouts", "") ?: "",
@@ -544,14 +562,14 @@ object KeyboardPrefs {
         listOf(
             "show_number_row", "show_key_borders", "key_preview", "auto_capitalize", "auto_correct_enabled",
             "double_space_period", "haptics_enabled", "vibrate_on_release", "strong_special_keys", "sound_enabled",
-            "show_hints", "show_header", "liquid_glass", "show_suggestions", "show_mic_button", "show_emoji_key", "show_globe_key", "panel_animations",
+            "show_hints", "show_header", "number_pad", "liquid_glass", "show_suggestions", "show_mic_button", "show_emoji_key", "show_globe_key", "panel_animations",
             "backspace_swipe", "clipboard_history", "instant_input", "glide_typing", "glide_trail", "swipe_up_hint",
             "space_long_press", "auto_pair", "incognito", "dict_auto_download", "punctuation_keys", "smart_punctuation",
-            "system_spellcheck", "edit_bar", "auto_space_punct", "eco_mode", "dash_merge", "clip_screenshots", "correct_everywhere", "dynamic_zones", "ai_voice_cleanup", "tools_button", "landscape_split"
+            "system_spellcheck", "edit_bar", "auto_space_punct", "eco_mode", "dash_merge", "clip_screenshots", "correct_everywhere", "dynamic_zones", "ai_voice_cleanup", "tools_button", "pinned_tools", "landscape_split"
         ).forEach { put(it, 'b') }
         listOf(
             "theme_mode", "accent_shape_preset", "haptic_mode", "font_style", "color_source", "one_handed", "space_swipe",
-            "globe_long_press", "window_blur", "hold_mode", "ai_provider", "space_long_action", "languages", "auto_correct_strength", "translate_target", "toolbar_order", "toolbar_hidden", "user_layouts",
+            "globe_long_press", "tools_long_press", "window_blur", "hold_mode", "ai_provider", "space_long_action", "languages", "auto_correct_strength", "translate_target", "gemini_model", "anthropic_model", "openai_model", "groq_model", "toolbar_order", "toolbar_hidden", "user_layouts",
             "space_left_key", "space_right_key", "emoji_style", "clipboard_keep", "app_language", "design_style", "skin_options", "anim_press", "anim_popup", "anim_panel", "custom_anims", "lang_layouts"
         ).forEach { put(it, 's') }
     }

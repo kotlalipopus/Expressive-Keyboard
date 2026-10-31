@@ -1293,7 +1293,7 @@ object ScriptHost {
             require(m.aiTimes.size < 10) { "ai: не больше 10 запросов в минуту" }
             m.aiTimes.addLast(now)
             val st = KeyboardPrefs.current(ctx)
-            val keys = AiKeys(AiProvider.from(st.aiProvider), st.geminiKey, st.anthropicKey, st.openaiKey, st.groqKey)
+            val keys = AiKeys.of(st)
             val lang = (b()?.scriptLanguage() ?: "en").substringBefore('-')
             io.launch {
                 val r = AiFix.run(ctx, o["text"]?.toString().orEmpty().take(8000), keys, lang, AiTask.CUSTOM, promptText.take(4000))

@@ -359,6 +359,10 @@ object Dictionaries {
     private const val DIR = "dicts"
     private const val BASE = "https://raw.githubusercontent.com/hermitdave/FrequencyWords/master/content/2018"
     private const val LIMIT = 50_000
+    /** Сколько редких слов (кроме 50 000 частых) оставляем у скачанного словаря. */
+    private const val MORE_LIMIT = 600_000
+    /** Версия набора редких слов: у словарей, скачанных по старой схеме, она другая — их докачают. */
+    private const val MORE_VERSION = "v3"
 
     /** code → "загрузка…" / текст ошибки; готовые словари определяются по файлу. */
     var status by mutableStateOf<Map<String, String>>(emptyMap())
@@ -388,8 +392,14 @@ object Dictionaries {
     }.getOrNull()
 
     /** Встроенные в приложение редкие слова языка (dict/<code>_more.txt) — только для ru и en. */
+    fun moreMarker(context: Context, code: String) = File(File(context.applicationContext.filesDir, DIR), "${code}_more.$MORE_VERSION")
+
+    fun moreFile(context: Context, code: String) = File(File(context.applicationContext.filesDir, DIR), "${code}_more.txt")
+
     fun readRare(context: Context, code: String): List<Pair<String, Int>>? = runCatching {
-        if (!bundled(context, code + "_more")) null
+        val own = moreFile(context, code)
+        if (own.exists() && own.length() > 0) RareWords.parse(own.readLines())
+        else if (!bundled(context, code + "_more")) null
         else RareWords.parse(context.assets.open("dict/${code}_more.txt").bufferedReader().use { it.readLines() })
     }.getOrNull()
 
@@ -407,9 +417,10 @@ object Dictionaries {
     suspend fun download(context: Context, code: String): Result<Int> = withContext(Dispatchers.IO) {
         val app = context.applicationContext
         status = status + (code to "загрузка…")
+        var moreLines: List<String> = emptyList()
         val r = runCatching {
             var lastError: Throwable? = null
-            for (suffix in listOf("50k", "full")) {
+            for (suffix in listOf("full", "50k")) {
                 val res = runCatching {
                     val conn = (URL("$BASE/$code/${code}_$suffix.txt").openConnection() as HttpURLConnection).apply {
                         connectTimeout = 10_000
@@ -418,14 +429,26 @@ object Dictionaries {
                     try {
                         if (conn.responseCode != 200) throw IllegalStateException("сервер ответил ${conn.responseCode}")
                         val out = LinkedHashSet<String>()
+                        val seen = HashSet<String>()
+                        val more = ArrayList<String>()
                         conn.inputStream.bufferedReader().useLines { lines ->
                             for (line in lines) {
-                                if (out.size >= LIMIT) break
-                                val w = line.trim().substringBefore(' ').lowercase()
-                                if (w.isNotEmpty() && WORD.matches(w) && !w.endsWith("'") && !w.endsWith("-")) out += w
+                                if (out.size >= LIMIT && more.size >= MORE_LIMIT) break
+                                val parts = line.trim().split(' ')
+                                val w = parts[0].lowercase()
+                                if (w.isEmpty() || !WORD.matches(w) || w.endsWith("'") || w.endsWith("-") || !seen.add(w)) continue
+                                if (out.size < LIMIT) out += w
+                                else {
+                                    // редкие слова — в отдельный файл: «слово место», место считается после частых; опечатки
+                                    // из субтитров встречаются один раз, поэтому слова с одним упоминанием не берём
+                                    val count = parts.getOrNull(1)?.toIntOrNull() ?: 2
+                                    if (count < 3) break
+                                    more += w + " " + more.size.toString(36)
+                                }
                             }
                         }
                         require(out.size >= 500) { "слишком маленький словарь" }
+                        moreLines = more
                         out
                     } finally {
                         conn.disconnect()
@@ -441,7 +464,17 @@ object Dictionaries {
                     f.delete()
                     if (!tmp.renameTo(f)) throw IllegalStateException("не удалось сохранить словарь")
                 }
-                return@runCatching words.size
+                val mf = moreFile(app, code)
+                if (moreLines.isNotEmpty()) {
+                    val mtmp = File(mf.parentFile, "${code}_more.tmp")
+                    mtmp.writeText(moreLines.joinToString("\n"))
+                    if (!mtmp.renameTo(mf)) {
+                        mf.delete()
+                        mtmp.renameTo(mf)
+                    }
+                } else mf.delete()
+                runCatching { moreMarker(app, code).writeText("ok") }
+                return@runCatching words.size + moreLines.size
             }
             throw lastError ?: IllegalStateException("словарь не найден")
         }
@@ -454,13 +487,18 @@ object Dictionaries {
     /** Один раз за запуск: если словаря языка нет — скачать в фоне. */
     fun ensureAsync(context: Context, lang: KeyboardLanguage) {
         val code = lang.dict ?: return
-        if (isInstalled(context, code) || !tried.add(code)) return
+        if (!tried.add(code)) return
+        // словарь, скачанный раньше (50 000 слов без редких форм), обновляем до большого — один раз
+        val old = !bundled(context, code) && file(context, code).let { it.exists() && it.length() > 0 } && !moreMarker(context, code).exists()
+        if (isInstalled(context, code) && !old) return
         if (!KeyboardPrefs.current(context).dictAutoDownload) return
         CoroutineScope(Dispatchers.IO + BackgroundErrors).launch { download(context, code) }
     }
 
     fun delete(context: Context, code: String) {
         file(context, code).delete()
+        moreFile(context, code).delete()
+        moreMarker(context, code).delete()
         version++
         WordPredictorEngine.invalidate(code)
     }
@@ -1713,11 +1751,12 @@ object WordPredictorEngine {
         autoCorrect: Boolean = true,
         touches: List<KeyTouch?>? = null,
         sys: SystemSpell.Result? = null,
+        wholeWord: Boolean = false,
         cancelled: (() -> Boolean)? = null
     ): PredictionSnapshot? {
         cancelCheck.set(cancelled)
         return try {
-            predictInner(word, previous, undo, lang, capitalizeNext, strength, autoCorrect, touches, sys)
+            predictInner(word, previous, undo, lang, capitalizeNext, strength, autoCorrect, touches, sys, wholeWord)
         } catch (_: Cancelled) {
             null
         } finally {
@@ -1734,7 +1773,8 @@ object WordPredictorEngine {
         strength: String,
         autoCorrect: Boolean,
         touches: List<KeyTouch?>?,
-        sys: SystemSpell.Result?
+        sys: SystemSpell.Result?,
+        wholeWord: Boolean = false
     ): PredictionSnapshot {
         val clean = word.trim()
         if (clean.isEmpty()) return nextWords(previous, undo, lang, capitalizeNext)
@@ -1750,7 +1790,8 @@ object WordPredictorEngine {
         val sysAlt = if (sys != null && sys.typo) {
             sys.suggestions.filter { sameScript(lang, it) }.map { applyCase(it, cap, allCaps) }.filter { it != clean && it != fix }
         } else emptyList()
-        val comps = completions(lower, lang, 3).map { applyCase(it, cap, allCaps) }.filter { it != clean && it != fix }
+        // слово уже набрано целиком (курсор поставили на него): дописывать нечего, нужны исправления
+        val comps = if (wholeWord && !known) emptyList() else completions(lower, lang, 3).map { applyCase(it, cap, allCaps) }.filter { it != clean && it != fix }
 
         val chips = when {
             fix != null -> listOf(

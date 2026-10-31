@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Backspace
 import androidx.compose.material.icons.automirrored.rounded.KeyboardReturn
 import androidx.compose.material.icons.rounded.EmojiEmotions
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.KeyboardCapslock
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.RestartAlt
@@ -263,8 +264,8 @@ internal fun LayoutEditorPage(settings: KeyboardSettings) {
     InfoCard(
         Icons.Rounded.SwapHoriz,
         "Перетащите клавишу на другую или нажмите на две по очереди — они поменяются местами. Меняются любые клавиши: " +
-            "буквы, цифры, знаки, пробел, запятая, эмодзи, смена языка, Shift, ⌫ и Enter. Удерживайте букву или знак, " +
-            "чтобы поставить на её место свой символ."
+            "буквы, цифры, знаки, пробел, запятая, эмодзи, смена языка, Shift, ⌫ и Enter. Чтобы заменить букву или знак " +
+            "другим символом, нажмите на неё и выберите «Заменить символ» (или удерживайте её)."
     )
     SettingsSection("Раскладка") {
         if (languages.size > 1) {
@@ -353,6 +354,14 @@ internal fun LayoutEditorPage(settings: KeyboardSettings) {
                 }
             }
         }
+        // выбранную клавишу можно не менять местами, а заменить другим символом — без долгого нажатия
+        val pickedSlot = selected?.let { sel -> slots.flatten().firstOrNull { it.id == sel } }
+        if (pickedSlot != null && pickedSlot.key.type == KeyType.CHARACTER) {
+            ActionItem(
+                Icons.Rounded.Edit, tr("Заменить символ на клавише «{0}»", pickedSlot.key.label),
+                tr("Поставить на это место другую букву, цифру, знак или смайл"), onClick = { editing = pickedSlot }
+            )
+        }
         if (user.containsKey(id) || (hasNumbers && user.containsKey(UserLayouts.NUMBERS))) {
             ActionItem(Icons.Rounded.RestartAlt, "Вернуть как было", "Только для этой раскладки", onClick = {
                 var next = user - id
@@ -372,8 +381,8 @@ internal fun LayoutEditorPage(settings: KeyboardSettings) {
             title = { Text(tr("Символ на клавише")) },
             text = {
                 OutlinedTextField(
-                    value = text, onValueChange = { if (it.text.length <= 4) text = it }, singleLine = true,
-                    label = { Text(tr("Буква, цифра или знак")) }
+                    value = text, onValueChange = { if (it.text.length <= 8) text = it }, singleLine = true,
+                    label = { Text(tr("Буква, цифра, знак или смайл")) }
                 )
             },
             confirmButton = {

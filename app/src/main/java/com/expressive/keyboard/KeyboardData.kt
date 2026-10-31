@@ -215,8 +215,10 @@ object KeyVariantsCatalog {
         "0" to listOf("°", "∅", "⁰"), "." to listOf("…", "!", "?", ",", ":"),
         "," to listOf(";", "!", "?", "—", "…"), "$" to listOf("₽", "€", "£", "¥", "₿"),
         "-" to listOf("–", "—", "•", "±"), "+" to listOf("±", "×", "÷", "="),
-        "\"" to listOf("«", "»", "„", "“"), "'" to listOf("‘", "’", "`"),
-        "?" to listOf("¿", "‽", "!"), "!" to listOf("¡", "‼", "?")
+        // сам знак стоит в середине — это вариант по умолчанию (ровно посередине выбирается при удержании и сдвиге);
+        // раньше его не было в списке, и лёгкий сдвиг пальца на «"» вводил «„» или ««»
+        "\"" to listOf("«", "»", "\"", "„", "“"), "'" to listOf("‘", "’", "'", "`"),
+        "?" to listOf("¿", "?", "‽"), "!" to listOf("¡", "!", "‼")
     )
 
     fun getVariantsFor(label: String, upper: Boolean): List<String> {
@@ -226,6 +228,22 @@ object KeyVariantsCatalog {
 }
 
 object KeyboardLayouts {
+    /** Цифровая клавиатура 4×4 для полей чисел и телефонов: 1-2-3-⌫ / 4-5-6-Enter / 7-8-9-«.» / знаки-0-знаки. */
+    fun numberPad(phone: Boolean): List<KeyRow> {
+        fun c(l: String, vararg more: String) = KeyModel(l, customVariants = more.toList().ifEmpty { null })
+        val back = KeyModel("⌫", KeyType.BACKSPACE)
+        val enter = KeyModel("↵", KeyType.ENTER)
+        return listOf(
+            KeyRow(listOf(c("1"), c("2"), c("3"), back)),
+            KeyRow(listOf(c("4"), c("5"), c("6"), enter)),
+            KeyRow(listOf(c("7"), c("8"), c("9"), if (phone) c("*") else c(".", "-", ","))),
+            KeyRow(
+                if (phone) listOf(c("+"), c("0"), c("#"), c("-"))
+                else listOf(c("-"), c("0"), c("+"), c(","))
+            )
+        )
+    }
+
     private fun c(vararg s: String): List<KeyModel> = s.map { KeyModel(it) }
     private fun gap(w: Float) = KeyModel("", KeyType.SPACER, w)
     private fun shift(w: Float) = KeyModel("⇧", KeyType.SHIFT, w)
@@ -311,7 +329,7 @@ object KeyboardLayouts {
     private val symbols2 = listOf(
         KeyRow(c("~", "`", "|", "•", "√", "π", "÷", "×", "¶", "∆")),
         KeyRow(c("£", "€", "$", "¥", "^", "°", "=", "{", "}", "\\")),
-        KeyRow(listOf(KeyModel("?123", KeyType.SYMBOLS_PAGE, 1.45f)) + c("%", "©", "®", "™", "✓", "[", "]") + back(1.5f))
+        KeyRow(listOf(KeyModel("?123", KeyType.SYMBOLS_PAGE, 1.45f)) + c("%", "©", "®", "™", "№", "[", "]") + back(1.5f))
     )
 
     /** Ряды по языку и его буквам: своя раскладка того же языка — другой ключ. */
@@ -683,18 +701,55 @@ object Translator {
      * Перевод через несколько бесплатных адресов по очереди: основной адрес Google у части операторов
      * и в части стран недоступен или отвечает ошибкой на частые запросы — тогда пробуем следующий.
      */
-    suspend fun translate(text: String, from: String, to: String, hints: List<String> = emptyList()): Result<String> = withContext(Dispatchers.IO) {
+    suspend fun translate(text: String, from: String, target: String, hints: List<String> = emptyList()): Result<String> = withContext(Dispatchers.IO) {
         val clean = text.trim()
         if (clean.isEmpty()) return@withContext Result.success("")
+        // "en-GB" и другие разновидности английского: сервис переводит на английский, а написание правим сами
+        val to = serviceCode(target)
         val src = if (from == "auto") guessSource(clean, to, hints) else from
         var last: Throwable? = null
-        for (attempt in listOf(::viaGtx, ::viaDictExt, ::viaMyMemory)) {
-            val r = runCatching { attempt(clean, src, to) }
+        for ((attempt, limit) in listOf(::viaGtx to 4500, ::viaDictExt to 1500, ::viaMyMemory to 450)) {
+            // длинное сообщение режем по абзацам и предложениям: у запасных адресов лимит в сотни символов
+            val r = runCatching {
+                splitText(clean, limit).joinToString("") { piece ->
+                    val trail = piece.takeLastWhile { it.isWhitespace() }
+                    attempt(piece.trim(), src, to).trim() + trail
+                }
+            }
             val out = r.getOrNull()?.trim()
-            if (!out.isNullOrEmpty()) return@withContext Result.success(out)
+            if (!out.isNullOrEmpty()) return@withContext Result.success(EnglishVariants.apply(out, target))
             last = r.exceptionOrNull() ?: last
         }
         Result.failure(last ?: java.io.IOException("empty translation"))
+    }
+
+    /** Режет текст на куски не длиннее max по абзацам, предложениям и пробелам; склеенные вместе они дают исходный текст. */
+    internal fun splitText(text: String, max: Int): List<String> {
+        if (text.length <= max) return listOf(text)
+        val out = ArrayList<String>()
+        var start = 0
+        while (start < text.length) {
+            var end = minOf(start + max, text.length)
+            if (end < text.length) {
+                val window = text.substring(start, end)
+                val cut = listOf(window.lastIndexOf('\n'), window.lastIndexOf(". "), window.lastIndexOf("! "), window.lastIndexOf("? "), window.lastIndexOf(' '))
+                    .firstOrNull { it > max / 3 }
+                if (cut != null) end = start + cut + 1
+            }
+            // пробелы после куска остаются в нём — при склейке текст не меняется
+            while (end < text.length && text[end].isWhitespace() && text[end] != '\n') end++
+            out += text.substring(start, end)
+            start = end
+        }
+        return out
+    }
+
+    /** Код языка перевода из панели → код для сервиса перевода. */
+    fun serviceCode(target: String): String = when {
+        target.startsWith("en-") -> "en"
+        target == "zh" -> "zh-CN"
+        target == "zh-tw" -> "zh-TW"
+        else -> target
     }
 
     private val CYRILLIC_LANGS = setOf("ru", "uk", "be", "bg", "sr", "mk", "kk", "ky", "tg", "tt", "ba", "mn")
@@ -774,10 +829,109 @@ object Translator {
         }
         if (src == to) return text
         val raw = open(
-            "https://api.mymemory.translated.net/get?langpair=$src%7C$to&q=" + URLEncoder.encode(text.take(480), "UTF-8")
+            "https://api.mymemory.translated.net/get?langpair=$src%7C$to&q=" + URLEncoder.encode(text, "UTF-8")
         ).body()
         val o = JSONObject(raw)
         if (o.optInt("responseStatus", 200) != 200) return ""
         return o.optJSONObject("responseData")?.optString("translatedText").orEmpty()
+    }
+}
+
+/**
+ * Разновидности английского для переводчика. Сервис отдаёт американский английский, поэтому британское,
+ * австралийское, канадское и индийское написание получаем заменой слов: -or → -our, -er → -re, -ize → -ise и т. п.
+ */
+object EnglishVariants {
+    /** Код → (название, пояснение). "en" — американский, как отдаёт сервис. */
+    val LIST: List<Triple<String, String, String>> = listOf(
+        Triple("en", "English", "США"),
+        Triple("en-GB", "English", "Великобритания"),
+        Triple("en-AU", "English", "Австралия"),
+        Triple("en-CA", "English", "Канада"),
+        Triple("en-IN", "English", "Индия")
+    )
+
+    /** Как назвать вариант ИИ; null — американский английский, его отдаёт сам сервис перевода. */
+    fun regionName(code: String): String? = when (code) {
+        "en-GB" -> "British English (United Kingdom)"
+        "en-AU" -> "Australian English"
+        "en-CA" -> "Canadian English"
+        "en-IN" -> "Indian English"
+        else -> null
+    }
+
+    private class Rules(val our: Boolean, val re: Boolean, val ise: Boolean, val ence: Boolean, val ogue: Boolean, val ll: Boolean, val misc: Boolean, val vocab: Boolean)
+
+    private val rules = mapOf(
+        "en-GB" to Rules(our = true, re = true, ise = true, ence = true, ogue = true, ll = true, misc = true, vocab = true),
+        "en-AU" to Rules(our = true, re = true, ise = true, ence = true, ogue = true, ll = true, misc = true, vocab = true),
+        "en-IN" to Rules(our = true, re = true, ise = true, ence = true, ogue = true, ll = true, misc = true, vocab = false),
+        "en-CA" to Rules(our = true, re = true, ise = false, ence = true, ogue = true, ll = true, misc = true, vocab = false)
+    )
+
+    private val OUR = "color favor honor humor labor neighbor behavior flavor harbor rumor savior vapor odor armor rigor vigor valor endeavor clamor tumor parlor splendor".split(' ')
+    private val OUR_SUFFIX = listOf("", "s", "ed", "ing", "ful", "less", "able", "ably", "ite", "ites")
+    private val IZE = ("organize realize recognize apologize criticize emphasize summarize specialize optimize customize utilize minimize maximize " +
+        "authorize categorize centralize finalize generalize legalize memorize normalize personalize prioritize standardize visualize civilize " +
+        "colonize modernize harmonize symbolize synchronize hospitalize familiarize materialize mobilize neutralize patronize penalize privatize " +
+        "publicize randomize rationalize revolutionize scrutinize socialize stabilize sterilize stigmatize sympathize terrorize theorize " +
+        "trivialize vandalize capitalize characterize commercialize computerize criminalize democratize digitize dramatize economize energize " +
+        "equalize evangelize fertilize globalize hypothesize idealize immunize industrialize internalize italicize jeopardize localize magnetize " +
+        "marginalize monetize naturalize notarize").split(' ')
+    private val IZE_SUFFIX = listOf("e", "es", "ed", "ing", "ation", "ations", "er", "ers")
+    private val YZE = "analyze paralyze catalyze".split(' ')
+    private val RE = "center theater liter fiber caliber somber luster centimeter millimeter kilometer".split(' ')
+    private val ENCE = "defense offense pretense".split(' ')
+    private val OGUE = "catalog dialog analog".split(' ')
+    private val LL = ("traveler travelers traveling traveled canceled canceling labeled labeling modeling modeled fueled fueling signaled signaling " +
+        "marveled marveling counselor counselors leveled leveling totaled totaling").split(' ')
+    private val MISC = mapOf(
+        "gray" to "grey", "jewelry" to "jewellery", "pajamas" to "pyjamas", "aluminum" to "aluminium", "plow" to "plough", "plowed" to "ploughed",
+        "mold" to "mould", "skeptic" to "sceptic", "skeptical" to "sceptical", "sulfur" to "sulphur", "cozy" to "cosy", "donut" to "doughnut",
+        "donuts" to "doughnuts", "aging" to "ageing", "artifact" to "artefact", "mustache" to "moustache", "maneuver" to "manoeuvre"
+    )
+    private val VOCAB = mapOf("mom" to "mum", "moms" to "mums", "gotten" to "got", "sidewalk" to "pavement", "sidewalks" to "pavements", "vacation" to "holiday", "vacations" to "holidays")
+
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Pair<Regex, Map<String, String>>>()
+
+    private fun build(code: String): Pair<Regex, Map<String, String>>? {
+        val r = rules[code] ?: return null
+        val m = LinkedHashMap<String, String>()
+        if (r.our) for (w in OUR) for (s in OUR_SUFFIX) m[w + s] = w.dropLast(2) + "our" + s
+        if (r.re) for (w in RE) { m[w] = w.dropLast(2) + "re"; m[w + "s"] = w.dropLast(2) + "res" }
+        if (r.ise) {
+            for (w in IZE) { val st = w.dropLast(1); for (s in IZE_SUFFIX) m[st + s] = st.dropLast(1) + "s" + s }
+            for (w in YZE) { val st = w.dropLast(1); for (s in listOf("e", "es", "ed", "ing")) m[st + s] = st.dropLast(1) + "s" + s }
+        }
+        if (r.ence) for (w in ENCE) { m[w] = w.dropLast(2) + "ce"; m[w + "s"] = w.dropLast(2) + "ces" }
+        if (r.ogue) for (w in OGUE) { m[w] = w + "ue"; m[w + "s"] = w + "ues" }
+        if (r.ll) for (w in LL) m[w] = ll(w)
+        if (r.misc) m.putAll(MISC)
+        if (r.vocab) m.putAll(VOCAB)
+        val re = Regex("\\b(" + m.keys.sortedByDescending { it.length }.joinToString("|") + ")\\b", RegexOption.IGNORE_CASE)
+        return re to m
+    }
+
+    /** traveler → traveller, canceled → cancelled, counselor → counsellor. */
+    private fun ll(w: String): String = when {
+        w.startsWith("counselor") -> w.replaceFirst("counselor", "counsellor")
+        w.endsWith("ed") -> w.dropLast(2) + "led"
+        w.endsWith("ing") -> w.dropLast(3) + "ling"
+        w.endsWith("ers") -> w.dropLast(3) + "lers"
+        w.endsWith("er") -> w.dropLast(2) + "ler"
+        else -> w
+    }
+
+    fun apply(text: String, code: String): String {
+        val (re, map) = cache[code] ?: (build(code) ?: return text).also { cache[code] = it }
+        return re.replace(text) { mr ->
+            val src = mr.value
+            val to = map[src.lowercase()] ?: return@replace src
+            when {
+                src.length > 1 && src.all { !it.isLetter() || it.isUpperCase() } -> to.uppercase()
+                src.first().isUpperCase() -> to.replaceFirstChar { it.uppercase() }
+                else -> to
+            }
+        }
     }
 }

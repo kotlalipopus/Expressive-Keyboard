@@ -79,13 +79,25 @@ enum class AiTask(val id: String, val title: String, val icon: String, val promp
 }
 
 /** Ключи и выбор сервиса — из настроек. */
-data class AiKeys(val provider: AiProvider, val gemini: String, val claude: String, val openai: String, val groq: String)
+data class AiModels(val gemini: String = "", val claude: String = "", val openai: String = "", val groq: String = "")
+
+data class AiKeys(
+    val provider: AiProvider, val gemini: String, val claude: String, val openai: String, val groq: String,
+    val models: AiModels = AiModels()
+) {
+    companion object {
+        fun of(s: KeyboardSettings) = AiKeys(
+            AiProvider.from(s.aiProvider), s.geminiKey, s.anthropicKey, s.openaiKey, s.groqKey,
+            AiModels(s.geminiModel, s.claudeModel, s.openaiModel, s.groqModel)
+        )
+    }
+}
 
 object AiFix {
-    private const val CLAUDE_MODEL = "claude-opus-5-5"
-    private const val GEMINI_MODEL = "gemini-flash-latest"
-    private const val OPENAI_MODEL = "gpt-4.1-mini"
-    private const val GROQ_MODEL = "llama-3.3-70b-versatile"
+    const val CLAUDE_MODEL = "claude-opus-5-5"
+    const val GEMINI_MODEL = "gemini-flash-latest"
+    const val OPENAI_MODEL = "gpt-4.1-mini"
+    const val GROQ_MODEL = "llama-3.3-70b-versatile"
     private const val MAX_CHARS = 8000
 
     private val SYSTEM = """
@@ -162,10 +174,10 @@ object AiFix {
     }
 
     private fun ask(p: AiProvider, system: String, user: String, keys: AiKeys): String = when (p) {
-        AiProvider.GEMINI -> gemini(user, keys.gemini.trim(), system)
-        AiProvider.CLAUDE -> claude(user, keys.claude.trim(), system)
-        AiProvider.OPENAI -> openAiCompatible("https://api.openai.com/v1", OPENAI_MODEL, user, keys.openai.trim(), "OpenAI", system)
-        AiProvider.GROQ -> openAiCompatible("https://api.groq.com/openai/v1", GROQ_MODEL, user, keys.groq.trim(), "Groq", system)
+        AiProvider.GEMINI -> gemini(user, keys.gemini.trim(), system, keys.models.gemini.ifBlank { GEMINI_MODEL })
+        AiProvider.CLAUDE -> claude(user, keys.claude.trim(), system, keys.models.claude.ifBlank { CLAUDE_MODEL })
+        AiProvider.OPENAI -> openAiCompatible("https://api.openai.com/v1", keys.models.openai.ifBlank { OPENAI_MODEL }, user, keys.openai.trim(), "OpenAI", system)
+        AiProvider.GROQ -> openAiCompatible("https://api.groq.com/openai/v1", keys.models.groq.ifBlank { GROQ_MODEL }, user, keys.groq.trim(), "Groq", system)
         else -> throw Skip("unsupported")
     }
 
@@ -177,6 +189,14 @@ object AiFix {
 
     /** Модель, которую сервис сам предложил после 404: база URL → id модели. */
     private val pickedModel = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** Проверка подключения: короткий запрос выбранному сервису; ответ — исправленная фраза или причина ошибки. */
+    suspend fun test(context: Context, keys: AiKeys, provider: AiProvider): Result<String> = withContext(Dispatchers.IO) {
+        runCatching { run(provider, context, "helo wrold", keys, "en") }.recoverCatching { e ->
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            throw IllegalStateException(e.message ?: e.javaClass.simpleName)
+        }
+    }
 
     /** Исправленный текст и кто исправлял, или понятная ошибка. lang — код языка клавиатуры (ru, en, …). */
     suspend fun fix(context: Context, text: String, keys: AiKeys, lang: String): Result<Pair<String, AiProvider>> =
@@ -212,14 +232,14 @@ object AiFix {
 
     private fun run(p: AiProvider, context: Context, text: String, keys: AiKeys, lang: String): String = when (p) {
         AiProvider.NANO -> nano(context, text, lang)
-        AiProvider.GEMINI -> gemini(text, keys.gemini.trim().ifBlank { throw Skip(tr("Не задан ключ {0}", "Gemini")) })
-        AiProvider.CLAUDE -> claude(text, keys.claude.trim().ifBlank { throw Skip(tr("Не задан ключ {0}", "Claude")) })
+        AiProvider.GEMINI -> gemini(text, keys.gemini.trim().ifBlank { throw Skip(tr("Не задан ключ {0}", "Gemini")) }, SYSTEM, keys.models.gemini.ifBlank { GEMINI_MODEL })
+        AiProvider.CLAUDE -> claude(text, keys.claude.trim().ifBlank { throw Skip(tr("Не задан ключ {0}", "Claude")) }, SYSTEM, keys.models.claude.ifBlank { CLAUDE_MODEL })
         AiProvider.OPENAI -> openAiCompatible(
-            "https://api.openai.com/v1", OPENAI_MODEL, text,
+            "https://api.openai.com/v1", keys.models.openai.ifBlank { OPENAI_MODEL }, text,
             keys.openai.trim().ifBlank { throw Skip(tr("Не задан ключ {0}", "OpenAI")) }, "OpenAI"
         )
         AiProvider.GROQ -> openAiCompatible(
-            "https://api.groq.com/openai/v1", GROQ_MODEL, text,
+            "https://api.groq.com/openai/v1", keys.models.groq.ifBlank { GROQ_MODEL }, text,
             keys.groq.trim().ifBlank { throw Skip(tr("Не задан ключ {0}", "Groq")) }, "Groq"
         )
         AiProvider.LANGUAGETOOL -> languageTool(text, lang)
@@ -299,16 +319,23 @@ object AiFix {
             }
     }
 
-    private fun claude(text: String, key: String, system: String = SYSTEM): String = try {
-        val params = MessageCreateParams.builder()
-            .model(CLAUDE_MODEL)
+    private fun claude(text: String, key: String, system: String = SYSTEM, model: String = CLAUDE_MODEL): String = try {
+        fun params(effort: Boolean) = MessageCreateParams.builder()
+            .model(model)
             .maxTokens(16000L)
             .system(system)
-            // простая правка: низкое усилие — быстрее ответ
-            .outputConfig(OutputConfig.builder().effort(OutputConfig.Effort.LOW).build())
+            .apply {
+                // простая правка: низкое усилие — быстрее ответ (не все модели принимают этот параметр)
+                if (effort) outputConfig(OutputConfig.builder().effort(OutputConfig.Effort.LOW).build())
+            }
             .addUserMessage(text)
             .build()
-        val msg = claudeClient(key).messages().create(params)
+        val msg = try {
+            claudeClient(key).messages().create(params(true))
+        } catch (e: com.anthropic.errors.BadRequestException) {
+            // модель не знает параметр «усилие» — повторяем без него
+            claudeClient(key).messages().create(params(false))
+        }
         if (msg.stopReason().map { it.toString() }.orElse("") == "refusal") {
             throw IllegalStateException(tr("Claude отказался обработать этот текст"))
         }
@@ -321,7 +348,7 @@ object AiFix {
     } catch (e: RateLimitException) {
         throw IllegalStateException(tr("Слишком много запросов — попробуйте через минуту"))
     } catch (e: AnthropicServiceException) {
-        throw IllegalStateException(tr("Ошибка {0}: {1}", "Claude", e.statusCode()))
+        throw IllegalStateException(tr("Ошибка {0}: {1}", "Claude", e.statusCode()) + (e.message?.let { " — " + it.take(160) } ?: ""))
     } catch (e: AnthropicIoException) {
         throw IllegalStateException(tr("Нет соединения с сервером"))
     }
@@ -360,12 +387,12 @@ object AiFix {
         }
     }
 
-    private fun gemini(text: String, key: String, system: String = SYSTEM): String {
+    private fun gemini(text: String, key: String, system: String = SYSTEM, model: String = GEMINI_MODEL): String {
         val body = JSONObject()
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
             .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", text)))))
         val root = post(
-            "https://generativelanguage.googleapis.com/v1beta/models/$GEMINI_MODEL:generateContent",
+            "https://generativelanguage.googleapis.com/v1beta/models/${model.removePrefix("models/")}:generateContent",
             body, mapOf("x-goog-api-key" to key), "Gemini"
         )
         val parts = root.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")

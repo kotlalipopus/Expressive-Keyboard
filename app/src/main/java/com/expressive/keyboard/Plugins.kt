@@ -765,6 +765,10 @@ object PluginRepository {
     private const val PREFS = "expressive_keyboard_plugins"
     private const val DIR = "plugins"
     private const val MAX_FILE = 8 * 1024 * 1024
+    /** Встроенный мод, который подменяет «"» на «ёлочки». */
+    private const val SMART_QUOTES_ID = "builtin.smart-quotes"
+    /** Отметка о разовом выключении мода «Ёлочки» (см. reload). */
+    private const val SMART_QUOTES_OFF = "smart_quotes_off"
 
     var plugins by mutableStateOf<List<KeyboardPlugin>>(emptyList())
         private set
@@ -814,13 +818,24 @@ object PluginRepository {
         }
         val sp = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         var dis = sp.getStringSet("disabled", emptySet())?.toSet() ?: emptySet()
+        val edit = sp.edit()
+        var changed = false
         // новые встроенные плагины с "enabledByDefault": false появляются выключенными
         val known = sp.getStringSet("known_builtins", emptySet())?.toSet() ?: emptySet()
         val fresh = list.filter { it.builtIn && it.id !in known }
         if (fresh.isNotEmpty()) {
             dis = dis + fresh.filter { !it.enabledByDefault }.map { it.id }
-            sp.edit().putStringSet("disabled", dis).putStringSet("known_builtins", known + fresh.map { it.id }).apply()
+            edit.putStringSet("known_builtins", known + fresh.map { it.id })
+            changed = true
         }
+        // Разовая миграция: мод «Ёлочки «»» оказался включён у тех, кто его не выбирал, и нажатие «"»
+        // вводило « вместо самой кавычки. Выключаем его один раз; кто включит вручную — тот и получит.
+        if (!sp.getBoolean(SMART_QUOTES_OFF, false)) {
+            dis = dis + SMART_QUOTES_ID
+            edit.putBoolean(SMART_QUOTES_OFF, true)
+            changed = true
+        }
+        if (changed) edit.putStringSet("disabled", dis).apply()
         disabled = dis
         plugins = list
         errors = errs

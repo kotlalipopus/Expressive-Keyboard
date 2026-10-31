@@ -148,6 +148,9 @@ class KeyboardState {
     var language by mutableStateOf(KeyboardLanguage.RU)
     var shift by mutableStateOf(ShiftState.OFF)
     var symbolsPage by mutableIntStateOf(0)
+    /** Поле числа или телефона: вместо букв — цифровая клавиатура. */
+    var numberPad by mutableStateOf(false)
+    var phoneField by mutableStateOf(false)
     var panel by mutableStateOf(ActivePanel.KEYBOARD)
     /** Голосовая панель открыта удержанием микрофона — режим Rambler. */
     var rambler by mutableStateOf(false)
@@ -591,6 +594,7 @@ class ComposeKeyboardService : InputMethodService(),
     private var appliedEco: Boolean? = null
     /** Фон окна, который мы поставили для размытия: если система или прошивка его подменили, ставим заново. */
     private var blurDrawable: android.graphics.drawable.Drawable? = null
+    private var overflowStreak = 0
     private val blurWatch = object : Runnable {
         override fun run() {
             val v = inputView ?: return
@@ -723,6 +727,7 @@ class ComposeKeyboardService : InputMethodService(),
 
     override fun onCreate() {
         super.onCreate()
+        CrashLog.install(this)
         savedStateController.performRestore(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         KeyboardPrefs.ensureInit(this)
@@ -1068,8 +1073,10 @@ class ComposeKeyboardService : InputMethodService(),
         if (Build.VERSION.SDK_INT < 31 || blurRadius <= 0) return
         val w = window?.window ?: return
         // фон окна подменили (смена окна, конфигурации, прошивка) — размытие осталось бы без подложки и дымки:
-        // клавиатура выглядела бы просто прозрачной. Ставим всё заново.
-        if (w.decorView.background !== blurDrawable) {
+        // клавиатура выглядела бы просто прозрачной. Ставим всё заново. Сам объект система может оборачивать,
+        // поэтому сравниваем не его, а наличие: фона нет или он стал пустым цветом
+        val bg = w.decorView.background
+        if (blurDrawable != null && (bg == null || bg is ColorDrawable)) {
             appliedBg = null
             applyWindowColors()
         }
@@ -1085,7 +1092,10 @@ class ComposeKeyboardService : InputMethodService(),
         // в окне клавиатуры: размытие под ней только продолжает фон вниз. Раньше из-за этого размытие
         // выключалось у многих (жестовая навигация, Android 13+). Выключаем, только если окно намного выше.
         val overflow = decor.height - v.height > (96 * d).toInt() || decor.width - v.width > (4 * d).toInt()
-        if (overflow != WindowBlur.overflow) WindowBlur.overflow = overflow
+        // выключаем размытие только если окно высокое несколько проверок подряд: на миг оно бывает выше при анимации
+        overflowStreak = if (overflow) overflowStreak + 1 else 0
+        val off = overflowStreak >= 3
+        if (off != WindowBlur.overflow) WindowBlur.overflow = off
     }
 
     // ------------------------------------------------------------------ поле ввода
@@ -1150,6 +1160,8 @@ class ComposeKeyboardService : InputMethodService(),
         val cls = (info?.inputType ?: 0) and InputType.TYPE_MASK_CLASS
         kb.symbolsPage = if (cls == InputType.TYPE_CLASS_NUMBER || cls == InputType.TYPE_CLASS_PHONE ||
             cls == InputType.TYPE_CLASS_DATETIME) 1 else 0
+        kb.numberPad = settings.numberPad && (cls == InputType.TYPE_CLASS_NUMBER || cls == InputType.TYPE_CLASS_PHONE)
+        kb.phoneField = cls == InputType.TYPE_CLASS_PHONE
         tapWord = null
         kb.selectMode = false
         kb.shift = if (autoCapAllowed() && startsSentence(info)) ShiftState.SINGLE else ShiftState.OFF
@@ -1220,6 +1232,10 @@ class ComposeKeyboardService : InputMethodService(),
             } else {
                 expSelStart = newSelStart
                 expSelEnd = newSelEnd
+                if (newSelStart == newSelEnd && newSelStart >= 0) {
+                    inspectCursor(newSelStart)
+                    schedulePredictions()
+                }
             }
             return
         }
@@ -1312,7 +1328,8 @@ class ComposeKeyboardService : InputMethodService(),
     private fun icCommit(ic: InputConnection, text: String) {
         tapWord = null
         val base = if (composing.isNotEmpty()) composingStart else selectionStart()
-        ic.commitText(text, 1)
+        // очень длинный текст (из буфера) уходит в приложение частями: один вызов упирается в лимит системы
+        if (text.length > 50_000) text.chunked(50_000).forEach { ic.commitText(it, 1) } else ic.commitText(text, 1)
         composing = ""
         composingStart = -1
         if (text.isNotEmpty()) lastTypedChar = text.last()
@@ -1495,7 +1512,7 @@ class ComposeKeyboardService : InputMethodService(),
         predictionJob = serviceScope.launch {
             val snap = withContext(Dispatchers.Default) {
                 val me = coroutineContext[Job]
-                WordPredictorEngine.predict(tw.word, "", null, lang, false, s.autoCorrectStrength, true, null, sys) { me?.isActive == false }
+                WordPredictorEngine.predict(tw.word, "", null, lang, false, s.autoCorrectStrength, true, null, sys, true) { me?.isActive == false }
             } ?: return@launch
             if (tapWord != tw) return@launch
             val useful = !(snap.known && snap.autoCorrection == null) && snap.chips.any { !it.isEmpty && it.commitWord != tw.word }
@@ -1795,10 +1812,44 @@ class ComposeKeyboardService : InputMethodService(),
         if (ch in ".!?") requestAutoCap()
     }
 
+    /**
+     * Приложение само «отпустило» набираемое слово (пересчитало текст, сбросило подчёркивание), и клавиатура его
+     * потеряла: по пробелу исправлять было нечего — в части приложений автоисправление «не работало». Читаем слово
+     * перед курсором у самого поля и исправляем его оттуда.
+     */
+    private fun lateCorrect(ic: InputConnection, suffix: String): Boolean {
+        if (!settings.autoCorrect || !flags.autoCorrect || kb.language.composer != Composer.NONE) return false
+        val first = suffix.firstOrNull() ?: return false
+        if (first != ' ' && first !in ".,!?;:") return false
+        if (autoSpace || lastActionWasSpace) return false
+        if (lastTypedChar?.let { !isWordLetter(it) } == true) return false
+        val before = runCatching { ic.getTextBeforeCursor(48, 0) }.getOrNull()?.toString() ?: return false
+        var l = before.length
+        while (l > 0 && (isWordLetter(before[l - 1]) || before[l - 1] in "'’")) l--
+        val tail = before.substring(l)
+        if (tail.length < 2) return false
+        // слово не должно быть частью другого: после курсора буквы нет, перед словом — не цифра/символ слитного токена
+        val after = runCatching { ic.getTextAfterCursor(1, 0) }.getOrNull()?.toString().orEmpty()
+        if (after.isNotEmpty() && isWordLetter(after[0])) return false
+        if (l > 0 && before[l - 1] in "@#/_\\.:") return false
+        val correction = resolveCorrection(tail) ?: return false
+        ic.beginBatchEdit()
+        icDeleteBefore(ic, tail.length)
+        icCommit(ic, correction + suffix)
+        ic.endBatchEdit()
+        undo = UndoAutoCorrectState(tail, correction + suffix)
+        if (' ' !in correction) learn(lastCommittedWord, correction)
+        lastCommittedWord = correction.substringAfterLast(' ')
+        autoSpace = false
+        schedulePredictions()
+        return true
+    }
+
     private fun commitWithBoundary(ic: InputConnection, suffix: String) {
         if (suffix.isNotBlank()) tokenHasSymbol = true
         val word = composing
         if (word.isEmpty()) {
+            if (lateCorrect(ic, suffix)) return
             if (autoSpace && suffix.firstOrNull()?.let { it in ".,!?:;" } == true) {
                 ic.beginBatchEdit()
                 icDeleteBefore(ic, 1)
@@ -2017,10 +2068,17 @@ class ComposeKeyboardService : InputMethodService(),
             return
         }
         if (composing.isNotEmpty()) {
-            learn(lastCommittedWord, composing)
-            ic.finishComposingText()
-            composing = ""
-            composingStart = -1
+            // Enter тоже исправляет последнее слово — как пробел: в чатах сообщение уходит по Enter без пробела в конце
+            val fix = runCatching { resolveCorrection(composing) }.getOrNull()
+            if (fix != null) {
+                learn(lastCommittedWord, fix)
+                icCommit(ic, fix)
+            } else {
+                learn(lastCommittedWord, composing)
+                ic.finishComposingText()
+                composing = ""
+                composingStart = -1
+            }
         }
         undo = null
         autoSpace = false
@@ -2420,6 +2478,12 @@ class ComposeKeyboardService : InputMethodService(),
             kb.panel = ActivePanel.KEYBOARD
             kb.toolbarOpen = false
             if (wasTranslate) schedulePredictions()
+        } else if (settings.pinnedTools) {
+            // панель функций закреплена над подсказками: повторное нажатие убирает её,
+            // а не открывает вторую такую же строку ниже
+            KeyboardPrefs.edit(this) { putBoolean("pinned_tools", false) }
+            kb.toolbarOpen = false
+            if (kb.fieldEmpty) kb.toolsDismissed = true
         } else if (kb.toolbarOpen || (kb.fieldEmpty && !kb.toolsDismissed)) {
             // панель открыта сама (поле пустое) или вручную — убираем, на пустом поле остаются подсказки
             kb.toolbarOpen = false
@@ -2464,10 +2528,7 @@ class ComposeKeyboardService : InputMethodService(),
     override fun rambler() {
         HapticsEngine.tick(this, inputView, settings)
         val s = settings
-        val keys = AiKeys(AiProvider.from(s.aiProvider), s.geminiKey, s.anthropicKey, s.openaiKey, s.groqKey)
-        if (!AiFix.hasLlm(keys)) {
-            Toast.makeText(this, tr("Rambler чистит речь через ИИ: добавьте ключ в настройках «ИИ»"), Toast.LENGTH_LONG).show()
-        }
+        val keys = AiKeys.of(s)
         if (kb.panel == ActivePanel.VOICE) voice.stop()
         kb.rambler = true
         kb.panel = ActivePanel.VOICE
@@ -2527,11 +2588,14 @@ class ComposeKeyboardService : InputMethodService(),
         // в Rambler чистим всегда, даже короткие фразы и с выключенной очисткой диктовки
         val rambler = kb.rambler
         if ((!s.aiVoiceCleanup && !rambler) || flags.isPassword || committed.trim().split(' ').size < (if (rambler) 2 else 3)) return
-        val keys = AiKeys(AiProvider.from(s.aiProvider), s.geminiKey, s.anthropicKey, s.openaiKey, s.groqKey)
-        if (!AiFix.hasLlm(keys)) return
+        val keys = AiKeys.of(s)
+        val llm = AiFix.hasLlm(keys)
+        val langId = kb.language.id.substringBefore('-')
         serviceScope.launch {
-            val r = AiFix.run(this@ComposeKeyboardService, committed.trim(), keys, kb.language.id.substringBefore('-'), AiTask.DICTATION)
-            val clean = r.getOrNull()?.first?.trim()?.takeIf { it.isNotEmpty() } ?: return@launch
+            // без ключа ИИ — локальная очистка (слова-паразиты, повторы), без сети
+            val clean = if (llm) AiFix.run(this@ComposeKeyboardService, committed.trim(), keys, langId, AiTask.DICTATION)
+                .getOrNull()?.first?.trim()?.takeIf { it.isNotEmpty() } ?: return@launch
+            else LocalSpeechClean.clean(committed, langId).takeIf { it.isNotEmpty() } ?: return@launch
             val ic = currentInputConnection ?: return@launch
             val lead = committed.takeWhile { it == ' ' }
             val out = lead + clean + " "
@@ -2708,7 +2772,7 @@ class ComposeKeyboardService : InputMethodService(),
             return
         }
         val s = settings
-        val keys = AiKeys(AiProvider.from(s.aiProvider), s.geminiKey, s.anthropicKey, s.openaiKey, s.groqKey)
+        val keys = AiKeys.of(s)
         kb.aiBusy = true
         kb.aiTask = task.id
         val started = SystemClock.uptimeMillis()
@@ -2765,7 +2829,7 @@ class ComposeKeyboardService : InputMethodService(),
             return
         }
         val s = settings
-        val keys = AiKeys(AiProvider.from(s.aiProvider), s.geminiKey, s.anthropicKey, s.openaiKey, s.groqKey)
+        val keys = AiKeys.of(s)
         kb.aiBusy = true
         val started = SystemClock.uptimeMillis()
         serviceScope.launch {
@@ -2939,9 +3003,8 @@ class ComposeKeyboardService : InputMethodService(),
             if (text.isNullOrEmpty()) return
             lastClipStamp = stamp
             if (stamp == 0L && kb.clipboard.firstOrNull() == text) return
-            // очень длинный текст в историю не кладём целиком — это не заметки, а буфер
-            val entry = if (text.length > 20_000) text.take(20_000) else text
-            addClip(entry, stamp)
+            addClip(text, stamp)
+            val entry = text
             if (!ScriptHost.privateMode) ScriptHost.emit("clipboard", entry)
         }
     }

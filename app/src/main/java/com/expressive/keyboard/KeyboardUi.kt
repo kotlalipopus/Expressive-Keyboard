@@ -741,6 +741,7 @@ internal fun KeyView(
                                 } else Long.MAX_VALUE
                                 var gesture = KeyGesture.CANCELED
                                 var last = down.position
+                                var lastT = down.uptimeMillis
                                 // куда «перепрыгнул» палец: на старых экранах отпускание пальца иногда теряется, и
                                 // следующее нажатие приходит тем же касанием — скачком через клавиатуру. Это два
                                 // нажатия, а не росчерк: раньше из него угадывалось слово, и «При» становилось
@@ -759,6 +760,7 @@ internal fun KeyView(
                                     val d = ch.position - down.position
                                     val prev = last
                                     last = ch.position
+                                    lastT = ch.uptimeMillis
                                     if (letterKey && !rolled && ch.pressed && (prev - down.position).getDistance() < glideStart) {
                                         var from = prev
                                         var jump = 0f
@@ -890,6 +892,7 @@ internal fun KeyView(
                                                 break
                                             }
                                             ch.consume()
+                                            lastT = ch.uptimeMillis
                                         }
                                         val pts = glide.trail.toList()
                                         glide.trail.clear()
@@ -897,17 +900,18 @@ internal fun KeyView(
                                             val net = pts.last() - pts.first()
                                             var len = 0f
                                             for (i in 1 until pts.size) len += (pts[i] - pts[i - 1]).getDistance()
+                                            val snap = layer.coords?.let { glide.snapshot(it) }
                                             if (upSymbol != null && net.y < -upDist && abs(net.x) < abs(net.y) * 0.7f && len < iw * 2.2f) {
                                                 if (instant) act.replaceLast(tapOut, upSymbol) else act.commitKey(k, upSymbol)
-                                            } else if (len < iw * 1.25f) {
-                                                // короткий мазок при быстром наборе — это нажатие, а не слово
+                                            } else if (snap == null || len < iw * 1.25f || !looksLikeGlide(pts, snap.first, iw, lastT - down.uptimeMillis)) {
+                                                // короткий или слишком быстрый мазок при быстром наборе — это нажатие, а не слово:
+                                                // раньше палец, чуть съехавший с «п» на «а», вставлял «пап» и «папа»
                                                 if (!instant) {
                                                     act.keyTouch(touchX, touchY)
                                                     act.commitKey(k, tapOut)
                                                 }
                                             } else {
-                                                val snap = layer.coords?.let { glide.snapshot(it) }
-                                                if (snap != null) act.commitGlide(pts, snap.first, snap.second, if (instant) tapOut else null)
+                                                act.commitGlide(pts, snap.first, snap.second, if (instant) tapOut else null)
                                             }
                                         }
                                     }
@@ -1370,21 +1374,28 @@ internal fun HeaderBar(
     // в переводчике — подсказки для набираемого там слова
     val translating = panel == ActivePanel.TRANSLATE && settings.showSuggestions
     val tools = !showCandidates && offer == null && inline == null &&
-        (state.toolbarOpen || (!translating && (panel != ActivePanel.KEYBOARD || !settings.showSuggestions || (state.fieldEmpty && !state.toolsDismissed))))
+        (state.toolbarOpen || (!translating && (panel != ActivePanel.KEYBOARD || !settings.showSuggestions || (state.fieldEmpty && !state.toolsDismissed && !settings.pinnedTools))))
     val button = if (settings.landscape) 38.dp else 46.dp
     val skinButtons = LocalSkin.current?.buttons
     val btnFg = skinButtons?.let { it.text ?: palette.onFunc } ?: palette.onAccent
-    val headerButton: @Composable (() -> Unit, @Composable BoxScope.() -> Unit) -> Unit = { onClick, content ->
-        if (skinButtons != null) SkinButton(skinButtons, palette, button, onClick, content = content)
-        else CookieButton(spec, palette.accent, button, onClick, content = content)
+    val headerButton: @Composable (() -> Unit, (() -> Unit)?, @Composable BoxScope.() -> Unit) -> Unit = { onClick, onLong, content ->
+        if (skinButtons != null) SkinButton(skinButtons, palette, button, onClick, onLong, content)
+        else CookieButton(spec, palette.accent, button, onClick, onLong, content)
     }
+    val context = LocalContext.current
     Row(
         modifier = Modifier.fillMaxWidth().height(if (settings.landscape) 40.dp else 48.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         // кнопку панели функций можно убрать; «назад» в панелях остаётся всегда
-        if (panel != ActivePanel.KEYBOARD || settings.toolsButton) headerButton({ actions.headerMenu() }) {
+        if (panel != ActivePanel.KEYBOARD || settings.toolsButton) headerButton({ actions.headerMenu() }, {
+            // удержание на клавиатуре: по настройке — панель функций строкой над подсказками или панель редактирования
+            if (panel == ActivePanel.KEYBOARD) {
+                if (settings.toolsLongPress == "EDIT_BAR") KeyboardPrefs.edit(context) { putBoolean("edit_bar", !settings.editBar) }
+                else KeyboardPrefs.edit(context) { putBoolean("pinned_tools", !settings.pinnedTools) }
+            }
+        }) {
             if (panel != ActivePanel.KEYBOARD) {
                 SlotIcon("back", btnFg, 22.dp) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = btnFg, modifier = Modifier.size(22.dp)) }
             } else {
@@ -2140,7 +2151,7 @@ internal fun KeyboardScreen(
     val layer = remember { CoordsHolder() }
     val spec = remember(settings.shapePreset, settings.waveCount, settings.waveAmplitudePercent) { settings.accentSpec() }
     val panel = state.panel
-    val numbers = settings.showNumberRow && state.symbolsPage == 0
+    val numbers = settings.showNumberRow && state.symbolsPage == 0 && !state.numberPad
     val bodyHeight = (settings.keyHeightDp * (if (numbers) 4.78f else 4f) + settings.rowSpacingDp * (if (numbers) 4f else 3f)).dp
     val trailColor = LocalSkin.current?.trail ?: palette.accent.copy(alpha = 0.85f)
     val density = LocalDensity.current
@@ -2163,6 +2174,12 @@ internal fun KeyboardScreen(
             verticalArrangement = Arrangement.spacedBy(gap)
         ) {
             if (settings.editBar && !settings.landscape) EditBar(state, actions, palette)
+            // закреплённая панель функций — одна: если строку инструментов открыли в заголовке, вторая не нужна
+            if (settings.pinnedTools && panel == ActivePanel.KEYBOARD && !state.toolbarOpen) {
+                Box(Modifier.fillMaxWidth().height(if (settings.landscape) 40.dp else 48.dp), contentAlignment = Alignment.Center) {
+                    ToolbarPill(state, actions, settings, palette)
+                }
+            }
             // верхнюю панель можно убрать совсем; в панелях она остаётся ради кнопки «назад»,
             // а панель инструментов показывается, если её открыли вручную
             if (settings.showHeader || panel != ActivePanel.KEYBOARD || state.toolbarOpen) {
@@ -2302,7 +2319,7 @@ internal fun KeyGrid(
     val scriptLayouts = ScriptHost.layoutOverrides
     val langLabels = remember(settings.languages, Languages.extra) { Languages.enabled(settings).map { it.label } }
     val split = settings.landscape && settings.landscapeSplit
-    val baseRows = remember(
+    val letterRows = remember(
         lang, lang.rows, page, settings.showNumberRow, settings.showGlobeKey, settings.showEmojiKey, settings.punctuationKeys,
         settings.spaceLeftKey, settings.spaceRightKey, langLabels, pluginLayouts, scriptLayouts, settings.userLayouts
     ) {
@@ -2311,6 +2328,8 @@ internal fun KeyGrid(
             langLabels, settings.spaceLeftKey, settings.spaceRightKey, settings.userLayoutMap
         )
     }
+    val padRows = remember(state.phoneField) { KeyboardLayouts.numberPad(state.phoneField) }
+    val baseRows = if (state.numberPad) padRows else letterRows
     val rows = remember(baseRows, split) { if (split) KeyboardLayouts.split(baseRows) else baseRows }
     // удержание как в Gboard: символ с того же места на странице «?123»
     val holdSymbols = remember(lang, page, settings.holdMode, baseRows, pluginLayouts, settings.userLayouts) {

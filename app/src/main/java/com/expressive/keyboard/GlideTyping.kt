@@ -55,6 +55,33 @@ class GlideController {
 }
 
 /**
+ * Росчерк ли это, а не смазанное нажатие. При быстрой печати палец съезжает с клавиши на соседнюю, и такой мазок
+ * (п→а→п) распознавался как слово «пап». Настоящий росчерк длится дольше и проходит минимум через три буквы.
+ */
+internal fun looksLikeGlide(path: List<Offset>, keys: Map<Char, Offset>, keyWidth: Float, durationMs: Long): Boolean {
+    if (durationMs < 140L) return false
+    val near = keyWidth * 0.5f
+    var hit = 0
+    for (c in keys.values) {
+        var close = false
+        for (i in 1 until path.size) {
+            val a = path[i - 1]
+            val b = path[i]
+            val abx = b.x - a.x
+            val aby = b.y - a.y
+            val len2 = abx * abx + aby * aby
+            val t = if (len2 <= 0f) 0f else (((c.x - a.x) * abx + (c.y - a.y) * aby) / len2).coerceIn(0f, 1f)
+            if ((Offset(a.x + abx * t, a.y + aby * t) - c).getDistance() <= near) {
+                close = true
+                break
+            }
+        }
+        if (close && ++hit >= 3) return true
+    }
+    return false
+}
+
+/**
  * Распознавание слова по росчерку. Буквы слова по порядку «прикладываются» к траектории (каждая — к ближайшей
  * точке не раньше предыдущей буквы), плюс форма росчерка, его длина, повороты пальца (каждый резкий поворот
  * должен быть у какой-то буквы слова) и частота слова. Расстояния — в шагах клавиш: по горизонтали в ширинах,

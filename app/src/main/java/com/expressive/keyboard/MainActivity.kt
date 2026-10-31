@@ -140,6 +140,7 @@ import kotlin.math.sqrt
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        CrashLog.install(this)
         super.onCreate(savedInstanceState)
         KeyboardPrefs.ensureInit(this)
         WordPredictorEngine.ensureInitialized(this)
@@ -774,6 +775,18 @@ internal fun KeysPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         ToggleItem(Icons.Rounded.SelectAll, "Панель редактирования", "Над клавиатурой: курсор, выделение, копировать и вставить", settings.editBar) {
             KeyboardPrefs.edit(context) { putBoolean("edit_bar", it) }
         }
+        ChoiceItem(
+            Icons.Rounded.TouchApp, "Удержание кнопки панели функций",
+            "Короткое нажатие открывает и закрывает панель инструментов",
+            listOf("PIN" to "Закрепить панель", "EDIT_BAR" to "Панель редактирования"),
+            settings.toolsLongPress
+        ) { v ->
+            KeyboardPrefs.edit(context) {
+                putString("tools_long_press", v)
+                // выбор «панель редактирования» освобождает кнопку от закреплённой строки инструментов
+                if (v == "EDIT_BAR") putBoolean("pinned_tools", false)
+            }
+        }
         ToggleItem(Icons.Rounded.Language, "Кнопка смены языка", "Без неё язык меняется свайпом по пробелу", settings.showGlobeKey) {
             KeyboardPrefs.edit(context) { putBoolean("show_globe_key", it) }
         }
@@ -805,6 +818,11 @@ internal fun KeysPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         ToggleItem(Icons.Outlined.Mic, "Кнопка микрофона", null, settings.showMicButton) {
             KeyboardPrefs.edit(context) { putBoolean("show_mic_button", it) }
         }
+        ToggleItem(
+            Icons.Rounded.Dialpad, "Цифровая клавиатура для чисел",
+            "В полях ввода числа и номера телефона — крупные цифры 4×4, как у системной клавиатуры",
+            settings.numberPad
+        ) { KeyboardPrefs.edit(context) { putBoolean("number_pad", it) } }
         ToggleItem(
             Icons.Rounded.VerticalAlignTop, "Верхняя панель",
             "Подсказки, микрофон и кнопки над клавиатурой. Если выключить, клавиатура станет ниже",
@@ -851,6 +869,9 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
     var giphyDialog by remember { mutableStateOf(false) }
     var klipyDialog by remember { mutableStateOf(false) }
     var keyDialog by remember { mutableStateOf<String?>(null) }
+    var modelDialog by remember { mutableStateOf<String?>(null) }
+    var testing by remember { mutableStateOf(false) }
+    val aiScope = rememberCoroutineScope()
     // поддерживает ли телефон исправление на устройстве (Gemini Nano) — для подписи
     var nanoStatus by remember { mutableStateOf<Int?>(-1) }
     LaunchedEffect(part) {
@@ -940,6 +961,54 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
             if (settings.groqKey.isBlank()) "Бесплатно: console.groq.com" else "Задан",
             onClick = { keyDialog = "groq_key" }
         )
+        ActionItem(
+            Icons.Rounded.Tune, "Модель Gemini", settings.geminiModel.ifBlank { tr("По умолчанию: {0}", AiFix.GEMINI_MODEL) },
+            onClick = { modelDialog = "gemini_model" }
+        )
+        ActionItem(
+            Icons.Rounded.Tune, "Модель Claude", settings.claudeModel.ifBlank { tr("По умолчанию: {0}", AiFix.CLAUDE_MODEL) },
+            onClick = { modelDialog = "anthropic_model" }
+        )
+        ActionItem(
+            Icons.Rounded.Tune, "Модель OpenAI", settings.openaiModel.ifBlank { tr("По умолчанию: {0}", AiFix.OPENAI_MODEL) },
+            onClick = { modelDialog = "openai_model" }
+        )
+        ActionItem(
+            Icons.Rounded.Tune, "Модель Groq", settings.groqModel.ifBlank { tr("По умолчанию: {0}", AiFix.GROQ_MODEL) },
+            onClick = { modelDialog = "groq_model" }
+        )
+        ActionItem(
+            Icons.Rounded.NetworkCheck, "Проверить подключение",
+            if (testing) tr("Проверяю…") else tr("Отправит тестовую фразу выбранному сервису и покажет ответ или причину ошибки"),
+            onClick = {
+                if (testing) return@ActionItem
+                testing = true
+                val keys = AiKeys.of(settings)
+                // «Авто» и «На телефоне» — первый сервис, у которого есть ключ
+                val p = when (keys.provider) {
+                    AiProvider.GEMINI, AiProvider.CLAUDE, AiProvider.OPENAI, AiProvider.GROQ -> keys.provider
+                    else -> when {
+                        keys.gemini.isNotBlank() -> AiProvider.GEMINI
+                        keys.claude.isNotBlank() -> AiProvider.CLAUDE
+                        keys.openai.isNotBlank() -> AiProvider.OPENAI
+                        keys.groq.isNotBlank() -> AiProvider.GROQ
+                        else -> null
+                    }
+                }
+                if (p == null) {
+                    testing = false
+                    Toast.makeText(context, tr("Сначала вставьте ключ"), Toast.LENGTH_LONG).show()
+                } else aiScope.launch {
+                    val r = AiFix.test(context, keys, p)
+                    testing = false
+                    Toast.makeText(
+                        context,
+                        r.fold({ "✓ ${p.title}: $it" }, { "✕ ${p.title}: ${it.message}" }),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        )
         ToggleItem(
             Icons.Rounded.AutoFixHigh, "Чистая диктовка (ИИ)",
             "Как Rambler в Pixel: из голосового ввода убираются «э-э», повторы и оговорки, расставляются знаки. Нужен ключ ИИ",
@@ -956,6 +1025,18 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
         TextInputDialog(title, current, hint, onDismiss = { keyDialog = null }) { v ->
             KeyboardPrefs.edit(context) { putString(k, SecretBox.encrypt(v.trim())) }
             keyDialog = null
+        }
+    }
+    modelDialog?.let { k ->
+        val (title, current) = when (k) {
+            "gemini_model" -> "Модель Gemini" to settings.geminiModel
+            "openai_model" -> "Модель OpenAI" to settings.openaiModel
+            "groq_model" -> "Модель Groq" to settings.groqModel
+            else -> "Модель Claude" to settings.claudeModel
+        }
+        TextInputDialog(title, current, "Пусто — модель по умолчанию", onDismiss = { modelDialog = null }) { v ->
+            KeyboardPrefs.edit(context) { putString(k, v.trim()) }
+            modelDialog = null
         }
     }
     if (part == SettingsPage.TYPING) SettingsSection("Исправления") {
@@ -1674,6 +1755,21 @@ internal fun AboutPage() {
         Text(tr("Версия {0}", version) + " · Material 3 Expressive", style = MaterialTheme.typography.bodyMedium, color = cs.onPrimaryContainer.copy(alpha = 0.8f))
     }
     AuthorLine()
+    var crash by remember { mutableStateOf(CrashLog.read(context)) }
+    crash?.let { report ->
+        SettingsSection("Последний сбой") {
+            InfoCard(Icons.Rounded.BugReport, report.lineSequence().firstOrNull { it.contains("Exception") || it.contains("Error") }?.take(200) ?: report.take(200))
+            ActionItem(Icons.Rounded.ContentCopy, "Скопировать отчёт о сбое", "Отправьте его автору — по нему можно найти причину", onClick = {
+                val cm = context.getSystemService(android.content.ClipboardManager::class.java)
+                cm?.setPrimaryClip(android.content.ClipData.newPlainText("crash", report))
+                Toast.makeText(context, tr("Скопировано"), Toast.LENGTH_SHORT).show()
+            })
+            ActionItem(Icons.Rounded.Delete, "Убрать отчёт", null, onClick = {
+                CrashLog.clear(context)
+                crash = null
+            })
+        }
+    }
     SettingsSection("Обновления") {
         val scope = rememberCoroutineScope()
         var auto by remember { mutableStateOf(Updater.autoEnabled(context)) }

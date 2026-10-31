@@ -184,3 +184,42 @@ object PowerState {
         }.getOrDefault(false)
     }
 }
+
+
+/**
+ * Запись последнего сбоя: клавиатура живёт в отдельном процессе, и когда он падает, причины потом не найти.
+ * Стек падения сохраняется в файл и виден в «О приложении» — его можно скопировать и отправить автору.
+ */
+object CrashLog {
+    private const val FILE = "last_crash.txt"
+
+    private class Handler(private val app: android.content.Context, private val prev: Thread.UncaughtExceptionHandler?) : Thread.UncaughtExceptionHandler {
+        override fun uncaughtException(t: Thread, e: Throwable) {
+            runCatching {
+                val version = runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull() ?: "?"
+                val text = buildString {
+                    append(java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date()))
+                    append("  v").append(version).append("  Android ").append(android.os.Build.VERSION.RELEASE)
+                    append("  ").append(android.os.Build.MODEL).append("\nпоток: ").append(t.name).append("\n\n")
+                    append(android.util.Log.getStackTraceString(e))
+                }
+                java.io.File(app.filesDir, FILE).writeText(text.take(20_000))
+            }
+            prev?.uncaughtException(t, e)
+        }
+    }
+
+    fun install(context: android.content.Context) {
+        val app = context.applicationContext
+        val prev = Thread.getDefaultUncaughtExceptionHandler()
+        if (prev is Handler) return
+        Thread.setDefaultUncaughtExceptionHandler(Handler(app, prev))
+    }
+
+    fun read(context: android.content.Context): String? =
+        runCatching { java.io.File(context.applicationContext.filesDir, FILE).takeIf { it.exists() }?.readText() }.getOrNull()?.takeIf { it.isNotBlank() }
+
+    fun clear(context: android.content.Context) {
+        runCatching { java.io.File(context.applicationContext.filesDir, FILE).delete() }
+    }
+}
