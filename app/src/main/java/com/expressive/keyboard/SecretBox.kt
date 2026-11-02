@@ -22,22 +22,35 @@ object SecretBox {
     private const val ALIAS = "expressive_keyboard_secrets"
     private const val PREFIX = "enc1:"
     /** Ключи настроек, которые храним зашифрованными и не выгружаем в резервную копию. */
-    val SECRET_PREFS = setOf("anthropic_key", "gemini_key", "openai_key", "groq_key", "giphy_key", "klipy_key")
+    val SECRET_PREFS = setOf("anthropic_key", "gemini_key", "openai_key", "groq_key", "openrouter_key", "giphy_key", "klipy_key", "ai_custom")
 
     private val plainCache = ConcurrentHashMap<String, String>()
 
+    /**
+     * Ключ из Android Keystore нужен на каждый ключ API при чтении настроек. Раньше Keystore открывался
+     * заново для каждого секрета — на холодном запуске это заметная пауза перед первым кадром клавиатуры.
+     */
+    @Volatile private var cachedKey: SecretKey? = null
+
     private fun key(): SecretKey {
-        val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (ks.getKey(ALIAS, null) as? SecretKey)?.let { return it }
-        val gen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
-        gen.init(
-            KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256)
-                .build()
-        )
-        return gen.generateKey()
+        cachedKey?.let { return it }
+        synchronized(this) {
+            cachedKey?.let { return it }
+            val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            val k = (ks.getKey(ALIAS, null) as? SecretKey) ?: run {
+                val gen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+                gen.init(
+                    KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                        .setKeySize(256)
+                        .build()
+                )
+                gen.generateKey()
+            }
+            cachedKey = k
+            return k
+        }
     }
 
     fun encrypt(plain: String): String {

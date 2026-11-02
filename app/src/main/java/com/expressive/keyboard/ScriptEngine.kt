@@ -191,6 +191,10 @@ private class Mod(val plugin: KeyboardPlugin) {
     var nextPlayer = 1
     /** Мод хочет касания по клавиатуре (kb.captureTouches): пока так, печатать нельзя. */
     var touches = false
+    /** Эффекты клавиш (kb.keyEffects). */
+    var keyFx: Map<String, KeyFx> = emptyMap()
+    /** Мод слушает микрофон (kb.audio.start). */
+    var audio = false
     fun has(p: String) = p in plugin.permissions
 }
 
@@ -232,6 +236,19 @@ object ScriptHost {
      * start, clipboard) модам не приходят — даже с разрешением read_text.
      */
     @Volatile var privateMode = false
+        set(value) {
+            if (field == value) return
+            field = value
+            main.post { syncDevices() }
+        }
+
+    /** Открыт голосовой ввод: микрофон нужен ему, моды его не занимают. */
+    var voiceBusy = false
+        set(value) {
+            if (field == value) return
+            field = value
+            syncDevices()
+        }
 
     // --- поле ввода мода (kb.prompt, элемент input)
     private class Prompt(val m: Mod, val onSubmit: JsFunction?, val onChange: JsFunction?, val call: ScriptCall?, val change: ScriptCall?)
@@ -272,7 +289,10 @@ object ScriptHost {
     private val EVENT_PERMS = mapOf(
         "key" to "read_text", "word" to "read_text", "suggest" to "read_text", "start" to "read_text", "press" to "read_text",
         "selection" to "read_text", "pick" to "read_text", "voice" to "read_text", "autocorrect" to "read_text", "glide" to "read_text",
-        "clipboard" to "clipboard"
+        // координаты пальца на клавиатуре — это и есть набираемый текст
+        "pointer" to "read_text",
+        "clipboard" to "clipboard",
+        "tilt" to "sensors", "gyro" to "sensors", "audio" to "microphone", "app" to "app_info"
     )
 
     fun log(pluginId: String, line: String) {
@@ -355,6 +375,7 @@ object ScriptHost {
             bridge?.scriptPrompt(false)
         }
         touchCapture = false
+        ModFx.reset()
         val next = LinkedHashMap<String, Mod>()
         for (p in plugins) {
             val src = p.script ?: continue
@@ -369,6 +390,7 @@ object ScriptHost {
             }.onSuccess { log(p.id, "✓ " + tr("загружен за {0} мс", SystemClock.uptimeMillis() - started)) }
         }
         mods = next
+        lastApp = ""
         publish()
         renderTick++
     }
@@ -383,20 +405,97 @@ object ScriptHost {
         if (lay != layoutOverrides) layoutOverrides = lay
         val skin = mods.values.firstNotNullOfOrNull { it.skin }
         if (skin !== skinOverride) skinOverride = skin
+        publishKeyFx()
+        syncDevices()
     }
+
+    private fun publishKeyFx() {
+        val fx = HashMap<String, KeyFx>()
+        for (m in mods.values) fx.putAll(m.keyFx)
+        ModFx.updateKeyFx(fx)
+    }
+
+    private fun listens(event: String): Boolean {
+        val perm = EVENT_PERMS[event]
+        return mods.values.any { m -> m.handlers[event]?.isNotEmpty() == true && (perm == null || m.has(perm)) }
+    }
+
+    /** Датчики, микрофон и слежение за пальцем: только пока клавиатура на экране и они кому-то нужны. */
+    private fun syncDevices() {
+        val ctx = appContext ?: return
+        if (!shown) ModFx.clearPointers()
+        val usable = shown && !privateMode
+        val nativeTilt = ModFx.usesTilt() || ModFx.shaderItems || ModFx.post != null
+        ModSensors.sync(ctx, shown && nativeTilt || usable && listens("tilt"), usable && listens("gyro"))
+        ModAudio.sync(ctx, usable && !voiceBusy && mods.values.any { it.audio && it.has("microphone") })
+        ModFx.usesPointer(!privateMode && listens("pointer"))
+    }
+
+    private fun parseItems(m: Mod, raw: Any?): List<OverlayItem> {
+        val list = raw as? List<*> ?: listOfNotNull(raw)
+        return list.take(4000).mapNotNull { v ->
+            OverlayItem.parse(v) ?: null.also {
+                val o = v as? Map<*, *>
+                if (o?.get("type") == "shader") {
+                    val src = o["src"]?.toString().orEmpty()
+                    log(m.plugin.id, "✕ shader: " + (ModShaders.error(src) ?: tr("нужен Android 13 или новее")))
+                }
+            }
+        }
+    }
+
+    private var lastPointerEvent = 0L
+
+    /** Палец на клавиатуре: движения — не чаще 30 раз в секунду, нажатие и отпускание — всегда. */
+    fun pointerEvent(type: String, x: Float, y: Float, id: Int) {
+        if (!has("pointer")) return
+        val now = SystemClock.uptimeMillis()
+        if (type == "move" && now - lastPointerEvent < 33L) return
+        lastPointerEvent = now
+        emit("pointer", mapOf("type" to type, "x" to x, "y" to y, "pointer" to id))
+    }
+
+    private var lastApp = ""
+
+    /** Открылось поле другого приложения: событие "app" с его названием и цветом значка. */
+    fun appChanged(pkg: String) {
+        if (pkg == lastApp || pkg.isEmpty()) return
+        lastApp = pkg
+        if (!has("app") || privateMode) return
+        val ctx = appContext ?: return
+        io.launch {
+            val info = appInfoOf(ctx, pkg)
+            withContext(Dispatchers.Main) { if (lastApp == pkg) emit("app", info) }
+        }
+    }
+
+    private fun appInfoOf(ctx: Context, pkg: String): Map<String, Any?> =
+        mapOf("package" to pkg, "name" to ModApps.label(ctx, pkg), "color" to ModApps.color(ctx, pkg))
 
     private fun publishOverlay() {
         val items = mods.values.flatMap { it.overlay }
         if (items.isNotEmpty() || overlayItems.isNotEmpty()) overlayItems = items
         val back = mods.values.flatMap { it.background }
         if (back.isNotEmpty() || backgroundItems.isNotEmpty()) backgroundItems = back
+        val shaders = items.any { it is OverlayItem.Shader } || back.any { it is OverlayItem.Shader }
+        if (shaders != ModFx.shaderItems) {
+            ModFx.shaderItems = shaders
+            syncDevices()
+        }
     }
 
     /** Клавиатура на экране. Пока скрыта, таймеры модов стоят: иначе мод с setInterval будит процесс каждый тик. */
     @Volatile var visible = true
         private set
 
+    /** Окно клавиатуры правда показано. Моды загружаются и из настроек: там микрофон и датчики включаться не должны. */
+    @Volatile private var shown = false
+
     fun setVisible(v: Boolean) {
+        if (shown != v) {
+            shown = v
+            syncDevices()
+        }
         if (visible == v) return
         visible = v
         if (!v) return
@@ -840,14 +939,14 @@ object ScriptHost {
 
         val kb = cx.newObject(s)
         ScriptableObject.putProperty(kb, "pluginId", id)
-        ScriptableObject.putProperty(kb, "apiVersion", 3)
+        ScriptableObject.putProperty(kb, "apiVersion", 4)
 
         // --- регистрация
         def(kb, "on") { _, a ->
             val ev = str(a, 0)
             val fn = a.getOrNull(1) as? JsFunction ?: throw IllegalArgumentException("kb.on(событие, функция)")
             m.handlers.getOrPut(ev) { ArrayList() } += fn
-            if (ev == "frame") main.post { publish() }
+            main.post { publish() }
             Unit
         }
         def(kb, "off") { _, a -> m.handlers.remove(str(a, 0)); main.post { publish() }; Unit }
@@ -916,22 +1015,106 @@ object ScriptHost {
 
         // --- слой поверх клавиатуры, клавиши и анимация
         def(kb, "overlay") { _, a ->
-            val v = fromJs(a.getOrNull(0))
-            val list = v as? List<*> ?: listOfNotNull(v)
-            m.overlay = list.take(4000).mapNotNull { OverlayItem.parse(it) }
+            m.overlay = parseItems(m, fromJs(a.getOrNull(0)))
             publishOverlay()
             Unit
         }
         def(kb, "clearOverlay") { _, _ -> m.overlay = emptyList(); publishOverlay(); Unit }
         // то же, но под клавишами: фон, волны, частицы — клавиши остаются сверху
         def(kb, "background") { _, a ->
-            val v = fromJs(a.getOrNull(0))
-            val list = v as? List<*> ?: listOfNotNull(v)
-            m.background = list.take(4000).mapNotNull { OverlayItem.parse(it) }
+            m.background = parseItems(m, fromJs(a.getOrNull(0)))
             publishOverlay()
             Unit
         }
         def(kb, "clearBackground") { _, _ -> m.background = emptyList(); publishOverlay(); Unit }
+        // --- наклон и эффекты клавиш, шейдер на всю клавиатуру
+        def(kb, "keyEffects") { _, a ->
+            val v = fromJs(a.getOrNull(0)) as? Map<*, *>
+            m.keyFx = v?.entries?.take(200)?.mapNotNull { (k, x) -> (x as? Map<*, *>)?.let { k.toString() to KeyFx.parse(it) } }?.toMap() ?: emptyMap()
+            publishKeyFx()
+            Unit
+        }
+        def(kb, "keyboardEffect") { _, a ->
+            ModFx.keyboardFx = (fromJs(a.getOrNull(0)) as? Map<*, *>)?.let { KeyFx.parse(it) }
+            Unit
+        }
+        def(kb, "postEffect") { _, a ->
+            val o = fromJs(a.getOrNull(0)) as? Map<*, *>
+            if (o == null) {
+                ModFx.post = null
+                syncDevices()
+                return@def true
+            }
+            val src = o["src"]?.toString().orEmpty()
+            val prog = ModShaders.program(src)
+            if (prog == null || !prog.hasContent) {
+                log(id, "✕ postEffect: " + (ModShaders.error(src) ?: if (prog == null) tr("нужен Android 13 или новее") else tr("в шейдере нужен uniform shader content")))
+                ModFx.post = null
+                syncDevices()
+                return@def false
+            }
+            ModFx.post = PostEffect(prog, (o["uniforms"] as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value } ?: emptyMap())
+            syncDevices()
+            true
+        }
+        def(kb, "shaderError") { _, a -> ModShaders.error(str(a, 0)) }
+        def(kb, "supports") { _, a ->
+            when (str(a, 0)) {
+                "shader", "postEffect" -> ModShaders.supported
+                "labelBlur" -> android.os.Build.VERSION.SDK_INT >= 31
+                "particles", "keyEffects", "pointer" -> true
+                "sensors" -> ModSensors.available(ctx)
+                "microphone" -> m.has("microphone") && ModAudio.hasPermission(ctx)
+                else -> false
+            }
+        }
+
+        // --- частицы: считаются клавиатурой, а не скриптом
+        val particles = cx.newObject(s)
+        fun sysKey(name: String) = "$id/$name"
+        def(particles, "set") { _, a ->
+            val name = str(a, 0, "default")
+            require(ModFx.system(sysKey(name)) != null || ModFx.systemsOf("$id/") < 8) { "particles: не больше 8 систем у мода" }
+            ModFx.setSystem(sysKey(name), ParticleConfig.parse(opts(a, 1)))
+            syncDevices()
+            Unit
+        }
+        def(particles, "emit") { _, a ->
+            val sys = ModFx.system(sysKey(str(a, 0, "default"))) ?: throw IllegalArgumentException("particles.emit: сначала particles.set")
+            val o = opts(a, 1)
+            fun f(k: String, def: Float) = (o[k] as? Number)?.toFloat() ?: def
+            sys.emit(f("count", 10f).toInt(), f("x", 0f), f("y", 0f), f("w", 0f), f("h", 0f), f("speed", 0f), f("angle", 0f), f("spread", 360f))
+            Unit
+        }
+        def(particles, "clear") { _, a -> ModFx.system(sysKey(str(a, 0, "default")))?.clear(); Unit }
+        def(particles, "remove") { _, a -> ModFx.removeSystem(sysKey(str(a, 0, "default"))); syncDevices(); Unit }
+        def(particles, "count") { _, a -> ModFx.system(sysKey(str(a, 0, "default")))?.count ?: 0 }
+        ScriptableObject.putProperty(kb, "particles", particles)
+
+        // --- микрофон: только громкость и полосы частот, не сам звук
+        val audio = cx.newObject(s)
+        def(audio, "start") { _, _ ->
+            need(m, "microphone")
+            if (!ModAudio.hasPermission(ctx)) return@def false
+            m.audio = true
+            syncDevices()
+            true
+        }
+        def(audio, "stop") { _, _ -> m.audio = false; syncDevices(); Unit }
+        def(audio, "level") { _, _ -> if (m.audio && m.has("microphone") && !privateMode) ModAudio.level else 0f }
+        ScriptableObject.putProperty(kb, "audio", audio)
+
+        def(kb, "tilt") { _, _ ->
+            need(m, "sensors")
+            if (privateMode) mapOf("x" to 0f, "y" to 0f, "z" to 0f)
+            else mapOf("x" to ModSensors.tiltX, "y" to ModSensors.tiltY, "z" to ModSensors.tiltZ)
+        }
+        def(kb, "appInfo") { _, _ ->
+            need(m, "app_info")
+            val pkg = lastApp
+            if (privateMode || pkg.isEmpty()) emptyMap<String, Any?>() else appInfoOf(ctx, pkg)
+        }
+
         def(kb, "keyboardSize") { _, _ ->
             val sz = KeyboardGeometry.size()
             mapOf("width" to (sz?.width ?: 0f), "height" to (sz?.height ?: 0f))
@@ -1211,6 +1394,11 @@ object ScriptHost {
             require(m.plugin.config.any { it.id == key }) { "setConfig: нет настройки «$key» в блоке config" }
             ModConfig.set(ctx, m.plugin, key, fromJs(a.getOrNull(1)))
             Unit
+        }
+        // несколько настроек разом (свой пресет): карточка мода сразу покажет новые значения
+        def(kb, "setConfigs") { _, a ->
+            val v = fromJs(a.getOrNull(0)) as? Map<*, *> ?: throw IllegalArgumentException("setConfigs: нужен объект")
+            ModConfig.setAll(ctx, m.plugin, v.entries.associate { it.key.toString() to it.value })
         }
         def(kb, "mods") { _, _ -> mods.values.map { mapOf("id" to it.plugin.id, "name" to it.plugin.name, "version" to it.plugin.version) } }
         def(kb, "broadcast") { _, a -> broadcast(m, str(a, 0), fromJs(a.getOrNull(1))); Unit }

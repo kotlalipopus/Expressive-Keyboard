@@ -269,7 +269,8 @@ internal val NAMED_ICONS: Map<String, ImageVector> by lazy {
         "dice" to Icons.Rounded.Casino, "palette" to Icons.Rounded.Palette, "extension" to Icons.Rounded.Extension,
         "keyboard" to Icons.Rounded.Keyboard, "language" to Icons.Rounded.Language, "add" to Icons.Rounded.Add,
         "delete" to Icons.Rounded.DeleteOutline, "edit" to Icons.Rounded.Edit, "share" to Icons.Rounded.Share,
-        "home" to Icons.Rounded.Home, "person" to Icons.Rounded.Person, "mail" to Icons.Rounded.Email
+        "home" to Icons.Rounded.Home, "person" to Icons.Rounded.Person, "mail" to Icons.Rounded.Email,
+        "rocket" to Icons.Rounded.RocketLaunch
     )
 }
 

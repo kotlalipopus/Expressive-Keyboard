@@ -53,6 +53,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -190,38 +191,102 @@ internal fun HeroCard(
             enter = expandVertically(spring(dampingRatio = 0.8f, stiffness = 400f)) + fadeIn(),
             exit = shrinkVertically(spring(dampingRatio = 0.9f, stiffness = 400f)) + fadeOut()
         ) {
-            Column(Modifier.clip(RoundedCornerShape(24.dp)), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                StepRow(1, "Включить в системе", imeEnabled, "Включить", onEnable)
-                StepRow(2, "Выбрать по умолчанию", imeSelected, "Выбрать", onSelect)
-                StepRow(3, "Микрофон для голосового ввода", micGranted, "Разрешить", onMic)
+            Column(Modifier.clip(RoundedCornerShape(24.dp)), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                // следующий шаг — тот, что ещё не сделан первым: только он залит цветом
+                val next = when { !imeEnabled -> 1; !imeSelected -> 2; !micGranted -> 3; else -> 0 }
+                StepRow(1, "Включить в системе", imeEnabled, "Включить", next == 1, ready, onEnable)
+                StepRow(2, "Выбрать по умолчанию", imeSelected, "Выбрать", next == 2, ready, onSelect)
+                StepRow(3, "Микрофон для голосового ввода", micGranted, "Разрешить", next == 3, ready, onMic)
             }
         }
     }
 }
 
 @Composable
-internal fun StepRow(n: Int, title: String, done: Boolean, action: String, onClick: () -> Unit) {
+internal fun StepRow(n: Int, title: String, done: Boolean, action: String, isNext: Boolean, ready: Boolean, onClick: () -> Unit) {
     val cs = MaterialTheme.colorScheme
+    // строки — светлее карточки того же оттенка, а не серые плашки поверх цветного фона
+    val accent = if (ready) cs.primary else cs.tertiary
+    val onAccent = if (ready) cs.onPrimary else cs.onTertiary
+    val text = if (ready) cs.onPrimaryContainer else cs.onTertiaryContainer
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).background(cs.surfaceBright.copy(alpha = 0.9f))
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).background(text.copy(alpha = 0.07f))
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Box(
-            Modifier.size(32.dp).clip(CircleShape).background(if (done) cs.primary else cs.secondaryContainer),
+            Modifier.size(32.dp).clip(CircleShape).background(if (done) accent else accent.copy(alpha = 0.16f)),
             contentAlignment = Alignment.Center
         ) {
-            if (done) Icon(Icons.Rounded.Check, null, tint = cs.onPrimary, modifier = Modifier.size(18.dp))
-            else Text("$n", color = cs.onSecondaryContainer, fontWeight = FontWeight.ExtraBold)
+            if (done) Icon(Icons.Rounded.Check, null, tint = onAccent, modifier = Modifier.size(18.dp))
+            else Text("$n", color = text, fontWeight = FontWeight.ExtraBold)
         }
-        Text(tr(title), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = cs.onSurface)
+        Text(
+            tr(title), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold,
+            color = if (done) text.copy(alpha = 0.6f) else text
+        )
         if (!done) {
-            Button(onClick = onClick, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
-                Text(tr(action), fontWeight = FontWeight.Bold)
-            }
+            // главный шаг — залитая кнопка, остальные — тональные: сразу видно, что нажать
+            if (isNext) Button(
+                onClick = onClick, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = onAccent)
+            ) { Text(tr(action), fontWeight = FontWeight.Bold) }
+            else FilledTonalButton(
+                onClick = onClick, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                colors = ButtonDefaults.filledTonalButtonColors(containerColor = accent.copy(alpha = 0.16f), contentColor = text)
+            ) { Text(tr(action), fontWeight = FontWeight.Bold) }
         }
     }
+}
+
+/** Поле-«таблетка» M3 Expressive: залитое, без рамки; при фокусе меняет оттенок и подсвечивает иконку. */
+@Composable
+internal fun PillField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+    singleLine: Boolean = true,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    /** Тональное поле (поиск) заметнее нейтрального (проба клавиатуры). */
+    tonal: Boolean = false
+) {
+    val cs = MaterialTheme.colorScheme
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val rest = if (tonal) cs.secondaryContainer else cs.surfaceContainerHighest
+    val bg by animateColorAsState(if (focused) cs.primaryContainer else rest, label = "pillBg")
+    val tint by animateColorAsState(
+        if (focused) cs.onPrimaryContainer else if (tonal) cs.onSecondaryContainer else cs.onSurfaceVariant, label = "pillTint"
+    )
+    TextField(
+        value = value,
+        onValueChange = onValueChange,
+        // многострочная проба клавиатуры не растёт бесконечно: после пары строк текст прокручивается внутри,
+        // а поле остаётся той же «таблеткой», а не вытягивается в овал
+        modifier = modifier.fillMaxWidth().then(
+            if (singleLine) Modifier.heightIn(min = 56.dp)
+            else Modifier.heightIn(min = 56.dp, max = 112.dp)
+        ),
+        shape = RoundedCornerShape(28.dp),
+        singleLine = singleLine,
+        interactionSource = interaction,
+        placeholder = { Text(tr(placeholder), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        leadingIcon = { Icon(icon, null, tint = tint, modifier = Modifier.padding(start = 6.dp)) },
+        trailingIcon = {
+            AnimatedVisibility(value.isNotEmpty(), enter = scaleIn(spring(dampingRatio = 0.5f, stiffness = 600f)) + fadeIn(), exit = scaleOut() + fadeOut()) {
+                IconButton(onClick = { onValueChange("") }) { Icon(Icons.Rounded.Close, tr("Очистить")) }
+            }
+        },
+        keyboardOptions = keyboardOptions,
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor = bg, unfocusedContainerColor = bg,
+            focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
+            disabledIndicatorColor = Color.Transparent
+        )
+    )
 }
 
 /** Группа в стиле Android 16: общие крупные скругления снаружи, мелкие между пунктами. */
@@ -250,7 +315,8 @@ internal fun SettingsSection(title: String?, content: @Composable ColumnScope.()
 internal fun GroupItem(onClick: (() -> Unit)? = null, content: @Composable () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val corner by animateDpAsState(if (pressed) 22.dp else 6.dp, spring(dampingRatio = 0.6f, stiffness = 700f), label = "itemCorner")
+    // внутренние углы 4 dp — спецификация списков M3; при нажатии углы «набухают»
+    val corner by animateDpAsState(if (pressed) 22.dp else 4.dp, spring(dampingRatio = 0.6f, stiffness = 700f), label = "itemCorner")
     Box(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(corner)).background(MaterialTheme.colorScheme.surfaceBright)
             .then(
@@ -508,7 +574,8 @@ internal fun StylePreview(settings: KeyboardSettings, spec: WavySpec) {
                     Box(
                         Modifier.weight(1f).fillMaxHeight()
                             .clip(if (pressed) CircleShape else RoundedCornerShape(corner))
-                            .background(if (pressed) palette.accent else palette.letter)
+                            // без подложки в предпросмотре видны только буквы, как и на самой клавиатуре
+                            .background(if (pressed) palette.accent else if (settings.keyBackground) palette.letter else Color.Transparent)
                             .then(
                                 if (settings.showKeyBorders) Modifier.border(1.dp, palette.outline, RoundedCornerShape(corner)) else Modifier
                             ),
@@ -552,7 +619,7 @@ internal fun StylePreview(settings: KeyboardSettings, spec: WavySpec) {
 
 /** Плитка категории на главном экране: иконка в фигуре Expressive своего цвета. */
 @Composable
-internal fun CategoryTile(page: SettingsPage, index: Int, onClick: () -> Unit) {
+internal fun CategoryTile(page: SettingsPage, index: Int, selected: Boolean = false, onClick: () -> Unit) {
     val cs = MaterialTheme.colorScheme
     val (bg, fg) = when (index % 3) {
         0 -> cs.primaryContainer to cs.onPrimaryContainer
@@ -567,9 +634,11 @@ internal fun CategoryTile(page: SettingsPage, index: Int, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val rot by animateFloatAsState(if (pressed) 40f else 0f, spring(dampingRatio = 0.5f, stiffness = 300f), label = "tileRot")
-    val corner by animateDpAsState(if (pressed) 22.dp else 6.dp, spring(dampingRatio = 0.6f, stiffness = 700f), label = "tileCorner")
+    // выбранный пункт (две панели на планшете) — primaryContainer и 16 dp на всех углах, как в спецификации списков M3
+    val corner by animateDpAsState(if (pressed) 22.dp else if (selected) 16.dp else 4.dp, spring(dampingRatio = 0.6f, stiffness = 700f), label = "tileCorner")
+    val tileBg by androidx.compose.animation.animateColorAsState(if (selected) cs.primaryContainer else cs.surfaceBright, label = "tileBg")
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(corner)).background(cs.surfaceBright)
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(corner)).background(tileBg)
             .clickable(interactionSource = interaction, indication = LocalIndication.current, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,

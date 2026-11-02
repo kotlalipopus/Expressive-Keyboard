@@ -173,6 +173,12 @@ sealed interface OverlayItem {
         override val alpha: Float, override val rotation: Float
     ) : OverlayItem
 
+    /** Шейдер AGSL (Android 13+): w и h 0 — вся область рисования. */
+    data class Shader(
+        val x: Float, val y: Float, val w: Float, val h: Float, val program: ShaderProgram, val uniforms: Map<String, Any?>,
+        override val alpha: Float, override val rotation: Float
+    ) : OverlayItem
+
     companion object {
         private fun f(o: Map<*, *>, k: String, def: Float) = (o[k] as? Number)?.toFloat()?.takeIf { !it.isNaN() } ?: def
         private fun color(o: Map<*, *>, k: String, def: Color) =
@@ -217,6 +223,11 @@ sealed interface OverlayItem {
                     val img = IconStore.decodeDataUri(o["src"]?.toString().orEmpty()) ?: return null
                     Picture(x, y, f(o, "w", 32f), f(o, "h", f(o, "w", 32f)), img, o["flipX"] == true, alpha, rot)
                 }
+                "shader" -> {
+                    val prog = ModShaders.program(o["src"]?.toString().orEmpty()) ?: return null
+                    val uniforms = (o["uniforms"] as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value } ?: emptyMap()
+                    Shader(x, y, f(o, "w", 0f), f(o, "h", 0f), prog, uniforms, alpha, rot)
+                }
                 else -> null
             }
         }
@@ -231,6 +242,7 @@ private fun DrawScope.withItem(it: OverlayItem, pivot: Offset, block: DrawScope.
 internal fun BoxScope.ScriptOverlayLayer() {
     val items = ScriptHost.overlayItems
     val capture = ScriptHost.touchCapture
+    ModParticleLayer(overlay = true)
     if (items.isEmpty() && !capture) return
     val measurer = rememberTextMeasurer()
     val path = remember { Path() }
@@ -268,6 +280,7 @@ internal fun BoxScope.ScriptOverlayLayer() {
 @Composable
 internal fun BoxScope.ScriptBackgroundLayer() {
     val items = ScriptHost.backgroundItems
+    ModParticleLayer(overlay = false)
     if (items.isEmpty()) return
     val measurer = rememberTextMeasurer()
     val path = remember { Path() }
@@ -330,6 +343,7 @@ internal fun DrawScope.drawOverlayItems(items: List<OverlayItem>, measurer: Text
                         }
                     }
                 }
+                is OverlayItem.Shader -> withItem(it, Offset((it.x + it.w / 2f) * d, (it.y + it.h / 2f) * d)) { drawShaderItem(it) }
                 is OverlayItem.Picture -> {
                     val tl = Offset(it.x * d, it.y * d)
                     val w = (it.w * d).roundToInt()

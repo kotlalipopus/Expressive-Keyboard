@@ -158,13 +158,16 @@ object PatternTiles {
 
     /** Мелкое зерно матового стекла: светлые и тёмные крапинки. */
     val grain: Brush by lazy {
-        val n = 96
+        val cells = 96
+        val cell = 2 // крапинка в один пиксель на плотном экране не видна
+        val n = cells * cell
         val rnd = java.util.Random(11)
-        val px = IntArray(n * n) {
+        val noise = IntArray(cells * cells) {
             val v = rnd.nextInt(256)
-            val a = (rnd.nextInt(56) + 8)
+            val a = (rnd.nextInt(80) + 16)
             (a shl 24) or (if (v > 128) 0xFFFFFF else 0x000000)
         }
+        val px = IntArray(n * n) { i -> noise[(i / n / cell) * cells + (i % n) / cell] }
         val bmp = android.graphics.Bitmap.createBitmap(px, n, n, android.graphics.Bitmap.Config.ARGB_8888).asImageBitmap()
         ShaderBrush(ImageShader(bmp, TileMode.Repeated, TileMode.Repeated))
     }
@@ -997,8 +1000,20 @@ private fun DrawScope.drawGlassBody(
             )
         })
     }
-    val grain = if (g.liquid > 0.01f) g.grain * (1f - g.liquid) else if (bmp == null) max(g.grain, 0.5f * frost) else g.grain
-    if (grain > 0.01f) drawPath(c.path, PatternTiles.grain, alpha = (grain * if (dark) 0.5f else 0.7f).coerceAtMost(1f))
+    if (g.grain > 0.01f) drawPath(c.path, PatternTiles.grain, alpha = (g.grain * if (dark) 0.7f else 0.9f).coerceAtMost(1f))
+    // приложение под клавиатурой ей недоступно, а однотонный фон при сдвиге не меняется, поэтому одного шейдера
+    // не видно: преломление показывает ещё и кромка линзы, её ширина и сила зависят от ползунка
+    val lens = g.refraction
+    if (lens > 0.01f) clipPath(c.path) {
+        val w = min(rect.width, rect.height) * 0.6f * lens
+        val brush = c.brush(Triple("lens", rect, lens to dark)) {
+            Brush.linearGradient(
+                listOf(Color.White.copy(alpha = 0.55f * lens), Color.Transparent, Color.Black.copy(alpha = (if (dark) 0.4f else 0.25f) * lens)),
+                rect.topLeft, rect.bottomRight
+            )
+        }
+        for (k in 1..3) drawPath(c.path, brush, alpha = 0.4f, style = Stroke(w * k / 3f))
+    }
     if (p > 0.001f) drawPath(c.path, c.fill(pressed, rect), alpha = 0.55f * p)
     // жидкое стекло светится там, где палец: блик «перетекает» к точке нажатия
     val t = c.touch

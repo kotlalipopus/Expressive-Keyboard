@@ -595,6 +595,8 @@ class ComposeKeyboardService : InputMethodService(),
     /** Фон окна, который мы поставили для размытия: если система или прошивка его подменили, ставим заново. */
     private var blurDrawable: android.graphics.drawable.Drawable? = null
     private var overflowStreak = 0
+    /** Пауза между проверками размытия: пока всё в порядке, растёт — не нужно будить главный поток каждые 1.5 с. */
+    private var blurWatchDelay = 1500L
     private val blurWatch = object : Runnable {
         override fun run() {
             val v = inputView ?: return
@@ -603,7 +605,8 @@ class ComposeKeyboardService : InputMethodService(),
                 fitBlurToKeyboard()
                 restoreBlurIfLost()
             }
-            v.postDelayed(this, 1500L)
+            v.postDelayed(this, blurWatchDelay)
+            blurWatchDelay = (blurWatchDelay + 1500L).coerceAtMost(6000L)
         }
     }
 
@@ -661,7 +664,25 @@ class ComposeKeyboardService : InputMethodService(),
 
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { syncClipboard() }
 
-    private val settings: KeyboardSettings get() = KeyboardPrefs.current(this)
+    /**
+     * forPower() копирует объект настроек при включённом энергосбережении, а settings читается на каждое нажатие
+     * и на каждую перерисовку. Держим последний результат: исходный объект меняется только при правке настроек.
+     */
+    private var settingsBase: KeyboardSettings? = null
+    private var settingsSaver: Boolean? = null
+    @Volatile private var settingsCached: KeyboardSettings? = null
+
+    private val settings: KeyboardSettings get() {
+        val base = KeyboardPrefs.current(this)
+        val saver = PowerState.saver
+        val cached = settingsCached
+        if (cached != null && base === settingsBase && saver == settingsSaver) return cached
+        return base.forPower(saver).also {
+            settingsBase = base
+            settingsSaver = saver
+            settingsCached = it
+        }
+    }
 
     /** Строка, в которую сейчас печатает клавиатура вместо поля: переводчик или поиск эмодзи. */
     private var panelInput: String?
@@ -749,9 +770,28 @@ class ComposeKeyboardService : InputMethodService(),
             val arr = JSONArray(dataPrefs().getString("pinned_clips", "[]"))
             for (i in 0 until arr.length()) kb.pinnedClips += arr.getString(i)
         }
-        // история буфера переживает закрытие клавиатуры системой
-        if (settings.clipboardHistory && !settings.incognito) kb.clipboard += ClipStore.load(this, settings).take(settings.clipboardSize)
-        ClipImages.cleanup(this, kb.pinnedClips + kb.clipboard)
+        // история буфера переживает закрытие клавиатуры системой. Диск и JSON-разбор уводим в фон:
+        // на длинной истории это заметная пауза перед первым кадром
+        val bootSettings = settings
+        val pinned = kb.pinnedClips.toList()
+        if (bootSettings.clipboardHistory && !bootSettings.incognito) {
+            serviceScope.launch(Dispatchers.IO) {
+                val loaded = ClipStore.load(this@ComposeKeyboardService, bootSettings).take(bootSettings.clipboardSize)
+                val keep = withContext(Dispatchers.Main.immediate) {
+                    // скопированное уже после запуска остаётся сверху и не дублируется
+                    val fresh = kb.clipboard.filter { it !in loaded }
+                    val older = loaded.filter { it !in fresh }
+                    kb.clipboard.clear()
+                    kb.clipboard.addAll(fresh + older)
+                    kb.pinnedClips + kb.clipboard
+                }
+                ClipImages.cleanup(this@ComposeKeyboardService, keep)
+            }
+        } else {
+            serviceScope.launch(Dispatchers.IO) {
+                ClipImages.cleanup(this@ComposeKeyboardService, pinned)
+            }
+        }
         voice = VoiceInput(this, onResult = ::commitVoice, onNoEngine = ::launchVoiceWindow)
         clipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
         clipboardManager?.addPrimaryClipChangedListener(clipListener)
@@ -765,6 +805,7 @@ class ComposeKeyboardService : InputMethodService(),
             androidx.compose.runtime.snapshotFlow { kb.panel }.collect { p ->
                 if (lastPanel == ActivePanel.SCRIPT_INPUT && p != ActivePanel.SCRIPT_INPUT) ScriptHost.promptClosed()
                 lastPanel = p
+                ScriptHost.voiceBusy = p == ActivePanel.VOICE
                 if (ScriptHost.has("panel")) ScriptHost.emit("panel", p.name.lowercase())
             }
         }
@@ -953,7 +994,7 @@ class ComposeKeyboardService : InputMethodService(),
         inputView?.postDelayed({ fitBlurToKeyboard() }, 450L)
         // проверка раз в полторы секунды, пока клавиатура на экране: размытие и подложка не должны пропадать
         // «в случайный момент», а высота окна могла измениться уже после первой проверки
-        inputView?.let { it.removeCallbacks(blurWatch); it.postDelayed(blurWatch, 1500L) }
+        inputView?.let { it.removeCallbacks(blurWatch); blurWatchDelay = 1500L; it.postDelayed(blurWatch, 1500L) }
         ScriptHost.setVisible(true)
         ScriptHost.emit("show")
         if (kb.instantUi) serviceScope.launch {
@@ -1078,6 +1119,8 @@ class ComposeKeyboardService : InputMethodService(),
         val bg = w.decorView.background
         if (blurDrawable != null && (bg == null || bg is ColorDrawable)) {
             appliedBg = null
+            // что-то изменилось — проверяем чаще, пока фон снова не устоится
+            blurWatchDelay = 1500L
             applyWindowColors()
         }
     }
@@ -1095,7 +1138,11 @@ class ComposeKeyboardService : InputMethodService(),
         // выключаем размытие только если окно высокое несколько проверок подряд: на миг оно бывает выше при анимации
         overflowStreak = if (overflow) overflowStreak + 1 else 0
         val off = overflowStreak >= 3
-        if (off != WindowBlur.overflow) WindowBlur.overflow = off
+        if (off != WindowBlur.overflow) {
+            WindowBlur.overflow = off
+            // окно изменилось — ближайшие проверки делаем чаще
+            blurWatchDelay = 1500L
+        }
     }
 
     // ------------------------------------------------------------------ поле ввода
@@ -1169,6 +1216,7 @@ class ComposeKeyboardService : InputMethodService(),
         noCorrectWord = false
         schedulePredictions()
         if (ScriptHost.has("start")) ScriptHost.emit("start", scriptField())
+        ScriptHost.appChanged(info?.packageName.orEmpty())
     }
 
     /**
@@ -1345,7 +1393,7 @@ class ComposeKeyboardService : InputMethodService(),
 
     private fun resolveCorrection(word: String): String? {
         if (!settings.autoCorrect || !flags.autoCorrect) return null
-        if (word == "i" && kb.language.id == "en") return "I"
+        if (word == "i" && kb.language.baseId == "en") return "I"
         if (noCorrectWord) return null
         val lang = Languages.withUser(kb.language)
         val strength = settings.autoCorrectStrength
@@ -2217,10 +2265,14 @@ class ComposeKeyboardService : InputMethodService(),
                 val wasSingle = kb.shift == ShiftState.SINGLE
                 val pi = panelInput
                 if (pi != null) {
-                    panelInput = if (text == "-" && pi.endsWith('-') && settings.dashMerge) pi.dropLast(1) + "—" else pi + text
+                    panelInput = if (kb.language.id == "my") {
+                        val e = MyanmarInput.edit(pi, text, settings.myanmarVisual, myanmarPending)
+                        myanmarPending = e.pending
+                        pi.dropLast(e.delete) + e.insert
+                    } else if (text == "-" && pi.endsWith('-') && settings.dashMerge) pi.dropLast(1) + "—" else pi + text
                 } else {
                     val t = if (ScriptHost.has("key") && !flags.isPassword) ScriptHost.filterKey(text) ?: return else text
-                    if (t.isNotEmpty()) typeCharacter(t, pendingTouch)
+                    if (t.isNotEmpty() && (kb.language.id != "my" || !typeMyanmar(t))) typeCharacter(t, pendingTouch)
                 }
                 pendingTouch = null
                 if (wasSingle && kb.shift == ShiftState.SINGLE && text.any { isWordLetter(it) || it.isDigit() }) kb.shift = ShiftState.OFF
@@ -2246,6 +2298,25 @@ class ComposeKeyboardService : InputMethodService(),
             }
             KeyType.SPACER -> Unit
         }
+    }
+
+    /** Сколько букв ေ и ြ ждут следующую согласную. */
+    private var myanmarPending = 0
+
+    /** true — буква уже вставлена с перестановкой; false — вставлять как обычно. */
+    private fun typeMyanmar(text: String): Boolean {
+        val ic = currentInputConnection ?: return false
+        val before = ic.getTextBeforeCursor(16, 0)?.toString().orEmpty()
+        val e = MyanmarInput.edit(before, text, settings.myanmarVisual, myanmarPending)
+        myanmarPending = e.pending
+        if (e.delete == 0) return false
+        ic.beginBatchEdit()
+        finishComposing(ic)
+        icDeleteBefore(ic, e.delete)
+        icCommit(ic, e.insert)
+        ic.endBatchEdit()
+        schedulePredictions()
+        return true
     }
 
     override fun keyTouch(fx: Float, fy: Float) {
@@ -2437,7 +2508,8 @@ class ComposeKeyboardService : InputMethodService(),
             val glue = composing.isEmpty() && ic.getTextBeforeCursor(1, 0)?.lastOrNull()?.let { isWordLetter(it) || it.isDigit() } == true
             icCommit(ic, (if (glue) " " else "") + "$word ")
             charBeforeAutoSpace = word.lastOrNull()
-            learn(lastCommittedWord, word, if (chip.isKeepExact) WordPredictorEngine.LEARNED_TYPO else 1)
+            // выбранная подсказка — сигнал сильнее, чем просто набранное слово
+            learn(lastCommittedWord, word, if (chip.isKeepExact) WordPredictorEngine.LEARNED_TYPO else 2)
             lastCommittedWord = word
         }
         undo = null
@@ -2468,6 +2540,12 @@ class ComposeKeyboardService : InputMethodService(),
         HapticsEngine.keyPress(this, inputView, settings, false)
         EmojiRecents.add(this, emoji)
         commitText(emoji)
+        // как в Gboard: выбрали эмодзи — сразу вернулись к буквам, не закрывая панель вручную
+        if (settings.emojiReturnToKeyboard && (kb.panel == ActivePanel.EMOJI || kb.panel == ActivePanel.EMOJI_SEARCH)) {
+            kb.panel = ActivePanel.KEYBOARD
+            kb.emojiQuery = ""
+            kb.toolbarOpen = false
+        }
     }
 
     override fun headerMenu() {
@@ -2706,6 +2784,7 @@ class ComposeKeyboardService : InputMethodService(),
     override fun spaceHold() {
         when (settings.spaceLongAction) {
             "AI_FIX" -> aiFix()
+            "LANGUAGE" -> toggleLanguage()
             "VOICE" -> togglePanel(ActivePanel.VOICE)
             "EMOJI" -> togglePanel(ActivePanel.EMOJI)
             "CLIPBOARD" -> togglePanel(ActivePanel.CLIPBOARD)
@@ -3023,6 +3102,8 @@ class ComposeKeyboardService : InputMethodService(),
             return
         }
         val ic = currentInputConnection ?: return
+        // бирманская буква могла уйти внутрь слога: конец текста уже не она, и стирать там нечего
+        if (kb.language.id == "my" && ic.getTextBeforeCursor(old.length, 0)?.toString() != old) return
         ic.beginBatchEdit()
         if (composing.isNotEmpty() && composing.endsWith(old)) {
             val rest = composing.dropLast(old.length)

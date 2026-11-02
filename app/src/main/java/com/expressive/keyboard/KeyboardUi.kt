@@ -307,6 +307,23 @@ internal fun keyColors(type: KeyType, shift: ShiftState, p: KeyPalette): KeyColo
     KeyType.SPACER -> KeyColors(Color.Transparent, Color.Transparent, Color.Transparent, Color.Transparent)
 }
 
+/**
+ * Клавиша без подложки: ни плашки, ни тени, ни обводки — только подпись на фоне клавиатуры.
+ * Нажатие при этом по-прежнему подсвечивается акцентом (или цветом нажатия из темы).
+ */
+internal fun KeyStyle.withoutPlate(): KeyStyle = copy(
+    material = SkinMaterial.NONE,
+    fill = null,
+    border = null,
+    borderWidth = 0f,
+    shadow = 0f,
+    shadowColor = null,
+    glow = null,
+    glass = null,
+    bevel = 0f,
+    inset = 0f
+)
+
 /** Доля скругления от меньшей стороны: в покое → при нажатии (морфинг формы). */
 internal fun shapeFractions(type: KeyType): Pair<Float, Float> = when (type) {
     KeyType.CHARACTER, KeyType.SHIFT -> 0.38f to 0.5f
@@ -443,18 +460,31 @@ internal fun KeyView(
     val scope = rememberCoroutineScope()
     val skin = LocalSkin.current
     val backdrop = LocalBackdrop.current
-    val colors = remember(key.type, shift, palette) { keyColors(key.type, shift, palette) }
-    val style = remember(skin, key.type, key.label, shift, colors) {
+    // без подложки плашки нет у обычных клавиш; Enter и включённый Shift остаются акцентными
+    val plate = settings.keyBackground
+    val accentKey = key.type == KeyType.ENTER || (key.type == KeyType.SHIFT && shift != ShiftState.OFF)
+    val colors = remember(key.type, shift, palette, plate) {
+        val c = keyColors(key.type, shift, palette)
+        if (!plate && !accentKey) c.copy(bg = Color.Transparent) else c
+    }
+    val style = remember(skin, key.type, key.label, shift, colors, plate) {
         val st = skin?.styleFor(key.type, key.label)
         // включённый Shift заливается акцентом, иначе в стекле и контурах его состояние не видно
-        if (st != null && key.type == KeyType.SHIFT && shift != ShiftState.OFF) {
+        val merged = if (st != null && key.type == KeyType.SHIFT && shift != ShiftState.OFF) {
             st.copy(
                 fill = SkinFill.Solid(if (st.material == SkinMaterial.GLASS) colors.bg.copy(alpha = 0.85f) else colors.bg),
                 text = colors.fg, textGlow = null
             )
         } else st
+        if (merged != null && !plate && !accentKey) merged.withoutPlate() else merged
     }
     val skinCache = remember { SkinKeyCache() }
+    // слияние с соседними клавишами: только у стекла, и только пока идёт анимация нажатия
+    val merges = settings.glassMerge && style?.material == SkinMaterial.GLASS && Build.VERSION.SDK_INT >= 33
+    if (merges) {
+        LaunchedEffect(holder) { snapshotFlow { anim.value }.collect { GlassMerge.update(holder, it) } }
+        DisposableEffect(holder) { onDispose { GlassMerge.remove(holder) } }
+    }
     val isChar = key.type == KeyType.CHARACTER
     val upHint = if (isChar) remember(label, variants, hold) { hold ?: hintFor(label, variants) } else null
     val cKey by rememberUpdatedState(key)
@@ -472,8 +502,8 @@ internal fun KeyView(
     val capPx = with(LocalDensity.current) { settings.cornerRadiusDp.dp.toPx() }
     val border = settings.showKeyBorders
     val borderColor = palette.outline
-    // в энергосбережении (и с включённой экономией заряда) клавиши не анимируются: только смена цвета
-    val press = if (settings.ecoMode && PowerState.saver) 0f else settings.pressAnimation
+    // в энергосбережении pressAnimation = 0: только смена цвета
+    val press = settings.pressAnimation
     // анимация нажатия: выбранная в настройках «Анимации» или из темы
     val pressAnim = remember(settings.animPress, settings.customAnims, style?.press, style?.pressScale) { Anims.forKey(settings, style) }
     val cPressAnim by rememberUpdatedState(pressAnim)
@@ -559,7 +589,7 @@ internal fun KeyView(
                     // Shift и ⌫ не «перекатываются», но нажатая до них буква срабатывает раньше них
                     if (k.type == KeyType.SHIFT || k.type == KeyType.BACKSPACE) Rollover.press(holder, null)
                     // нажатие видно в ближайшем же кадре: без запуска корутины «на потом» и без разгона пружины с нуля
-                    if (cSettings.pressAnimation <= 0f || (cSettings.ecoMode && PowerState.saver)) scope.launch(start = CoroutineStart.UNDISPATCHED) { anim.snapTo(1f) }
+                    if (cSettings.pressAnimation <= 0f) scope.launch(start = CoroutineStart.UNDISPATCHED) { anim.snapTo(1f) }
                     else scope.launch(start = CoroutineStart.UNDISPATCHED) {
                         anim.snapTo(max(anim.value, 0.6f))
                         anim.animateTo(1f, spring(dampingRatio = 1f, stiffness = 4000f * cSpeed2))
@@ -925,7 +955,7 @@ internal fun KeyView(
                         if (k.type == KeyType.CHARACTER) glide.trail.clear()
                         act.keyUp()
                         val pa = cPressAnim
-                        if (cSettings.pressAnimation <= 0f || (cSettings.ecoMode && PowerState.saver)) scope.launch { anim.snapTo(0f) }
+                        if (cSettings.pressAnimation <= 0f) scope.launch { anim.snapTo(0f) }
                         else scope.launch { anim.animateTo(0f, spring(dampingRatio = pa.damping, stiffness = pa.stiffness * cSpeed2)) }
                     }
                 }
@@ -936,7 +966,10 @@ internal fun KeyView(
         modifier = Modifier.fillMaxSize()
             .padding(horizontal = gapX / 2, vertical = gapY / 2)
             .onGloballyPositioned { holder.coords = it }
-            .graphicsLayer { Anims.apply(this, pressAnim, anim.value.coerceIn(-0.6f, 1.3f), press) }
+            .graphicsLayer {
+                Anims.apply(this, pressAnim, anim.value.coerceIn(-0.6f, 1.3f), press)
+                applyKeyFx(KeyboardGeometry.nameOf(key, label), key.type == KeyType.CHARACTER)
+            }
             // тени и свечение — снаружи кэшируемого слоя (иначе обрежутся по краю клавиши)
             .drawBehind {
                 val st = style ?: return@drawBehind
@@ -979,7 +1012,8 @@ internal fun KeyView(
         }
         val w = st?.fontWeight?.let { FontWeight(it) } ?: weight
         // буквы из точек, как на точечной матрице: текст рисуется в слой и вырезается сеткой точек
-        val labelFx = if (st?.labelEffect == LabelEffect.DOTS) Modifier.dotMatrix() else Modifier
+        val labelFx = (if (st?.labelEffect == LabelEffect.DOTS) Modifier.dotMatrix() else Modifier)
+            .then(if (ModFx.labelActive) Modifier.modLabel(KeyboardGeometry.nameOf(key, label), key.type == KeyType.CHARACTER) else Modifier)
         when {
             custom != null && key.type != KeyType.CHARACTER -> Text(
                 custom, color = fg, fontFamily = font, fontWeight = w, fontSize = (16f * scale).sp, maxLines = 1,
@@ -1375,7 +1409,8 @@ internal fun HeaderBar(
     val translating = panel == ActivePanel.TRANSLATE && settings.showSuggestions
     val tools = !showCandidates && offer == null && inline == null &&
         (state.toolbarOpen || (!translating && (panel != ActivePanel.KEYBOARD || !settings.showSuggestions || (state.fieldEmpty && !state.toolsDismissed && !settings.pinnedTools))))
-    val button = if (settings.landscape) 38.dp else 46.dp
+    val headerH = (if (settings.landscape) settings.headerHeightDp - 8f else settings.headerHeightDp).dp
+    val button = headerH - 2.dp
     val skinButtons = LocalSkin.current?.buttons
     val btnFg = skinButtons?.let { it.text ?: palette.onFunc } ?: palette.onAccent
     val headerButton: @Composable (() -> Unit, (() -> Unit)?, @Composable BoxScope.() -> Unit) -> Unit = { onClick, onLong, content ->
@@ -1384,7 +1419,7 @@ internal fun HeaderBar(
     }
     val context = LocalContext.current
     Row(
-        modifier = Modifier.fillMaxWidth().height(if (settings.landscape) 40.dp else 48.dp),
+        modifier = Modifier.fillMaxWidth().height(headerH),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
@@ -1726,7 +1761,8 @@ internal fun PlainSuggestionStrip(chips: List<SuggestionChipModel>, actions: Key
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .clip(RoundedCornerShape(12.dp))
+                    .padding(vertical = 2.dp)
+                    .clip(CircleShape)
                     .background(if (down) fg.copy(alpha = 0.1f) else Color.Transparent)
                     .combinedClickable(
                         interactionSource = interaction,
@@ -1961,14 +1997,9 @@ internal fun ToolbarPill(state: KeyboardState, actions: KeyboardActions, setting
 
 @Composable
 internal fun ToolButton(def: ToolDef, selected: Boolean, palette: KeyPalette, tint: Color, onClick: () -> Unit) {
-    val corner by animateDpAsState(if (selected) 12.dp else 18.dp, spring(dampingRatio = 0.6f, stiffness = 600f), label = "toolCorner")
-    val color = if (selected) palette.onAccent else tint
+    val color by animateColorAsState(if (selected) palette.onAccent else tint, tween(160), label = "toolFg")
     Box(
-        modifier = Modifier
-            .size(width = 40.dp, height = 36.dp)
-            .clip(RoundedCornerShape(corner))
-            .background(if (selected) palette.accent else Color.Transparent)
-            .clickable(onClick = onClick),
+        modifier = Modifier.toolHighlight(selected, palette.accent).clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         val slot = def.slot
@@ -1982,17 +2013,37 @@ internal fun ToolButton(def: ToolDef, selected: Boolean, palette: KeyPalette, ti
 
 @Composable
 internal fun ToolIcon(icon: ImageVector, selected: Boolean, palette: KeyPalette, tint: Color = palette.onFunc, onClick: () -> Unit) {
-    val corner by animateDpAsState(if (selected) 12.dp else 18.dp, spring(dampingRatio = 0.6f, stiffness = 600f), label = "toolCorner")
+    val color by animateColorAsState(if (selected) palette.onAccent else tint, tween(160), label = "toolFg")
     Box(
-        modifier = Modifier
-            .size(width = 40.dp, height = 36.dp)
-            .clip(RoundedCornerShape(corner))
-            .background(if (selected) palette.accent else Color.Transparent)
-            .clickable(onClick = onClick),
+        modifier = Modifier.toolHighlight(selected, palette.accent).clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Icon(icon, null, tint = if (selected) palette.onAccent else tint, modifier = Modifier.size(20.dp))
+        Icon(icon, null, tint = color, modifier = Modifier.size(20.dp))
     }
+}
+
+/**
+ * Кнопка панели 40×36 в «таблетке» 44 dp: подсветка выбранной — тоже таблетка с отступом 4 dp, то есть повторяет
+ * скругление панели и у краёв не торчит квадратом. Появляется пружинкой из центра, а не скачком.
+ */
+@Composable
+private fun Modifier.toolHighlight(selected: Boolean, accent: Color): Modifier {
+    val t by animateFloatAsState(if (selected) 1f else 0f, spring(dampingRatio = 0.55f, stiffness = 700f), label = "toolSel")
+    return this
+        .size(width = 40.dp, height = 36.dp)
+        .clip(CircleShape)
+        .drawBehind {
+            if (t > 0.01f) {
+                val s = 0.6f + 0.4f * t
+                val w = size.width * s
+                val h = size.height * s
+                drawRoundRect(
+                    accent.copy(alpha = accent.alpha * t.coerceIn(0f, 1f)),
+                    topLeft = Offset((size.width - w) / 2f, (size.height - h) / 2f),
+                    size = Size(w, h), cornerRadius = CornerRadius(h / 2f)
+                )
+            }
+        }
 }
 
 @Composable
@@ -2014,7 +2065,8 @@ fun KeyboardRoot(
     onBackground: (Color, Boolean) -> Unit,
     onWindowBlur: (Int, Color, Float) -> Unit = { _, _, _ -> }
 ) {
-    val raw by KeyboardPrefs.observe()
+    val prefs by KeyboardPrefs.observe()
+    val raw = remember(prefs, PowerState.saver) { prefs.forPower(PowerState.saver) }
     val systemDark = isSystemInDarkTheme()
     val dark = when (raw.themeMode) {
         "DARK", "AMOLED" -> true
@@ -2072,6 +2124,8 @@ fun KeyboardRoot(
                 backdrop.bitmap = null
                 return@LaunchedEffect
             }
+            // окно раскладывается за несколько кадров: пауза не даёт перерисовывать подложку на каждый промежуточный размер
+            delay(50L)
             val (bmp, s) = withContext(Dispatchers.Default) {
                 renderBackdrop(rootSize.width, rootSize.height, density, skin, palette.background, image, if (image != null) settings.bgDim else 0f)
             }
@@ -2166,17 +2220,23 @@ internal fun KeyboardScreen(
     }
     val gap = if (settings.landscape) 4.dp else 8.dp
 
-    Box(Modifier.fillMaxWidth().onGloballyPositioned { layer.coords = it }) {
+    Box(
+        Modifier.fillMaxWidth().onGloballyPositioned { layer.coords = it }
+            .then(if (ModFx.wantsPointer) Modifier.modPointerWatch() else Modifier)
+    ) {
         // слой мода под клавишами — первым, чтобы клавиши легли поверх
         ScriptBackgroundLayer()
+        GlassMergeLayer(settings.glassMerge && LocalSkin.current?.usesGlass == true, palette.background)
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = settings.sidePaddingDp.dp, vertical = gap),
+            modifier = Modifier.fillMaxWidth()
+                .then(if (ModFx.layerActive) Modifier.modKeyboardLayer() else Modifier)
+                .padding(horizontal = settings.sidePaddingDp.dp, vertical = gap),
             verticalArrangement = Arrangement.spacedBy(gap)
         ) {
             if (settings.editBar && !settings.landscape) EditBar(state, actions, palette)
             // закреплённая панель функций — одна: если строку инструментов открыли в заголовке, вторая не нужна
             if (settings.pinnedTools && panel == ActivePanel.KEYBOARD && !state.toolbarOpen) {
-                Box(Modifier.fillMaxWidth().height(if (settings.landscape) 40.dp else 48.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth().height((if (settings.landscape) settings.headerHeightDp - 8f else settings.headerHeightDp).dp), contentAlignment = Alignment.Center) {
                     ToolbarPill(state, actions, settings, palette)
                 }
             }
@@ -2223,6 +2283,7 @@ internal fun KeyboardScreen(
         ScriptOverlayLayer()
         PopupLayer(popup, palette, font, spec, settings.animPopup, settings.animSpeed)
         ScriptFrameTicker()
+        ModFxTicker()
     }
 }
 
@@ -2264,7 +2325,12 @@ internal fun KeyArea(
 ) {
     val mode = settings.oneHanded
     if (mode != "LEFT" && mode != "RIGHT") {
-        KeyGrid(state, actions, settings, palette, font, popup, layer, glide)
+        // своя ширина (на планшете клавиши во всю ширину слишком длинные) — клавиши по центру
+        if (settings.keyboardWidth < 0.99f) {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth(settings.keyboardWidth)) { KeyGrid(state, actions, settings, palette, font, popup, layer, glide) }
+            }
+        } else KeyGrid(state, actions, settings, palette, font, popup, layer, glide)
         return
     }
     val context = LocalContext.current

@@ -30,6 +30,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Backspace
 import androidx.compose.material.icons.automirrored.rounded.KeyboardReturn
+import androidx.compose.material.icons.rounded.AddCircleOutline
+import androidx.compose.material.icons.rounded.RemoveCircleOutline
 import androidx.compose.material.icons.rounded.EmojiEmotions
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.KeyboardCapslock
@@ -117,9 +119,15 @@ object UserLayouts {
     fun apply(rows: List<KeyRow>, order: List<String>?, tail: KeyRow? = null): List<KeyRow> {
         val all = if (tail != null) rows + tail else rows
         if (order.isNullOrEmpty()) return all
-        if (ROW !in order && order.none { it.startsWith(SERVICE) }) return applyOld(rows, order) + listOfNotNull(tail)
+        // старый формат — ровно столько символов, сколько мест; если клавиш больше (добавлены свои) — новый
+        if (ROW !in order && order.none { it.startsWith(SERVICE) } && order.size == editable(rows).size) {
+            return applyOld(rows, order) + listOfNotNull(tail)
+        }
         return applyFull(all, order)
     }
+
+    /** Сколько клавиш можно поставить в один ряд: дальше клавиши становятся слишком узкими. */
+    const val MAX_ROW = 14
 
     private fun applyOld(rows: List<KeyRow>, order: List<String>): List<KeyRow> {
         val original = editable(rows)
@@ -158,10 +166,22 @@ object UserLayouts {
                 val i = pool.indexOfFirst { token(it) == t }
                 when {
                     i >= 0 -> pool.removeAt(i)
-                    t.startsWith(SERVICE) || place.type != KeyType.CHARACTER -> null
+                    t.startsWith(SERVICE) -> null
                     else -> KeyModel(t)
                 }
             }.toMutableList()
+        }
+        // добавленные клавиши — записи сверх мест ряда: клавиша из раскладки (если её сюда переставили) или новая
+        val extras = rows.mapIndexed { ri, r ->
+            val places = r.keys.count { it.type != KeyType.SPACER }
+            (want.getOrNull(ri)?.drop(places) ?: emptyList()).take(MAX_ROW).mapNotNull { t ->
+                val i = pool.indexOfFirst { token(it) == t }
+                when {
+                    i >= 0 -> pool.removeAt(i)
+                    t.startsWith(SERVICE) -> null
+                    else -> KeyModel(t)
+                }
+            }
         }
         // свободные места: сначала новые клавиши (их нет в записи), потом остальные
         val wanted = order.toSet()
@@ -170,14 +190,21 @@ object UserLayouts {
         if (pool.any { it.type != KeyType.CHARACTER } || placed.any { r -> r.any { it == null } }) return rows
         return rows.mapIndexed { ri, r ->
             var j = 0
-            KeyRow(r.keys.map { place ->
+            val keys = r.keys.map { place ->
                 if (place.type == KeyType.SPACER) place
                 else {
                     val k = placed[ri][j++]!!
                     // буква на месте буквы — ширины места (ряды остаются ровными), остальные — своей ширины
                     if (k.type == KeyType.CHARACTER && place.type == KeyType.CHARACTER) k.copy(weight = place.weight) else k
                 }
-            }, r.heightWeight)
+            }
+            val add = extras[ri]
+            if (add.isEmpty()) return@mapIndexed KeyRow(keys, r.heightWeight)
+            // добавленные — после последней клавиши, перед отступом в конце ряда; ширина — как у букв ряда
+            val letterW = r.keys.firstOrNull { it.type == KeyType.CHARACTER }?.weight ?: 1f
+            val at = keys.indexOfLast { it.type != KeyType.SPACER } + 1
+            val sized = add.map { if (it.type == KeyType.CHARACTER) it.copy(weight = letterW) else it }
+            KeyRow(keys.subList(0, at) + sized + keys.subList(at, keys.size), r.heightWeight)
         }
     }
 
@@ -188,6 +215,18 @@ object UserLayouts {
         next.forEach { (k, v) -> o.put(k, JSONArray(v)) }
         KeyboardPrefs.edit(context) { putString(KEY, if (next.isEmpty()) "" else o.toString()) }
     }
+}
+
+/** Подпись клавиши для текста кнопок редактора. */
+private fun keyTitle(k: KeyModel, lang: KeyboardLanguage): String = when (k.type) {
+    KeyType.CHARACTER -> k.label
+    KeyType.SPACE -> lang.spaceLabel.ifBlank { tr("Пробел") }
+    KeyType.SHIFT -> "Shift"
+    KeyType.BACKSPACE -> "⌫"
+    KeyType.ENTER -> "Enter"
+    KeyType.GLOBE -> tr("Смена языка")
+    KeyType.STICKERS -> tr("Эмодзи")
+    else -> k.label
 }
 
 /** Клавиша редактора: раздел (раскладка или ряд цифр), ряд, место в ряду и сама клавиша. */
@@ -216,6 +255,16 @@ internal fun LayoutEditorPage(settings: KeyboardSettings) {
         )
     }
     val hasNumbers = settings.showNumberRow && page == 0
+    // сколько клавиш в рядах обычной раскладки — меньше этого ряд сделать нельзя (убираются только добавленные)
+    val baseCounts = remember(lang, page, settings.showGlobeKey, settings.showEmojiKey, settings.punctuationKeys, settings.spaceLeftKey, settings.spaceRightKey, hasNumbers, langLabels) {
+        val base = KeyboardLayouts.rows(
+            lang, page, hasNumbers, settings.showGlobeKey, settings.showEmojiKey, settings.punctuationKeys,
+            langLabels, settings.spaceLeftKey, settings.spaceRightKey, emptyMap()
+        ).map { r -> r.keys.count { it.type != KeyType.SPACER } }
+        if (hasNumbers) mapOf(UserLayouts.NUMBERS to base.take(1), id to base.drop(1)) else mapOf(id to base)
+    }
+    // добавление клавиши: раздел и ряд, куда она встанет
+    var adding by remember { mutableStateOf<Pair<String, Int>?>(null) }
     // клавиши по разделам; у каждой — постоянное имя (подпись + номер повтора), по нему клавиша «летит» на новое место
     val slots = remember(rows, id) {
         val seen = HashMap<String, Int>()
@@ -265,7 +314,8 @@ internal fun LayoutEditorPage(settings: KeyboardSettings) {
         Icons.Rounded.SwapHoriz,
         "Перетащите клавишу на другую или нажмите на две по очереди — они поменяются местами. Меняются любые клавиши: " +
             "буквы, цифры, знаки, пробел, запятая, эмодзи, смена языка, Shift, ⌫ и Enter. Чтобы заменить букву или знак " +
-            "другим символом, нажмите на неё и выберите «Заменить символ» (или удерживайте её)."
+            "другим символом, нажмите на неё и выберите «Заменить символ» (или удерживайте её). «Добавить клавишу» ставит " +
+            "новую клавишу после выбранной; добавленные можно убрать."
     )
     SettingsSection("Раскладка") {
         if (languages.size > 1) {
@@ -361,7 +411,26 @@ internal fun LayoutEditorPage(settings: KeyboardSettings) {
                 Icons.Rounded.Edit, tr("Заменить символ на клавише «{0}»", pickedSlot.key.label),
                 tr("Поставить на это место другую букву, цифру, знак или смайл"), onClick = { editing = pickedSlot }
             )
+            // убрать можно столько клавиш, сколько добавлено в этот ряд: меньше, чем в обычной раскладке, нельзя
+            val rowKeys = sectionRows(pickedSlot.section).getOrNull(pickedSlot.row).orEmpty()
+            val baseSize = baseCounts[pickedSlot.section]?.getOrNull(pickedSlot.row) ?: rowKeys.size
+            if (rowKeys.size > baseSize) {
+                ActionItem(
+                    Icons.Rounded.RemoveCircleOutline, tr("Убрать клавишу «{0}»", pickedSlot.key.label),
+                    tr("Ряд станет на одну клавишу короче"), onClick = {
+                        val grid = sectionRows(pickedSlot.section).map { r -> r.map { it.key }.toMutableList() }
+                        grid[pickedSlot.row].removeAt(pickedSlot.index)
+                        saveSection(pickedSlot.section, grid)
+                    }
+                )
+            }
         }
+        ActionItem(
+            Icons.Rounded.AddCircleOutline,
+            if (pickedSlot != null) tr("Добавить клавишу после «{0}»", keyTitle(pickedSlot.key, lang)) else tr("Добавить клавишу"),
+            tr("Новая клавиша с любым символом, словом или смайлом. Её можно перетащить на любое место"),
+            onClick = { adding = pickedSlot?.let { it.section to it.row } ?: (id to 0) }
+        )
         if (user.containsKey(id) || (hasNumbers && user.containsKey(UserLayouts.NUMBERS))) {
             ActionItem(Icons.Rounded.RestartAlt, "Вернуть как было", "Только для этой раскладки", onClick = {
                 var next = user - id
@@ -370,6 +439,49 @@ internal fun LayoutEditorPage(settings: KeyboardSettings) {
                 selected = null
             })
         }
+    }
+
+    adding?.let { start ->
+        var text by remember { mutableStateOf("") }
+        var where by remember { mutableStateOf(start) }
+        val after = selected?.let { sel -> slots.flatten().firstOrNull { it.id == sel } }
+        // ряды на выбор: ряд цифр (если есть) и ряды раскладки, включая нижний
+        val choices = buildList {
+            if (hasNumbers) add((UserLayouts.NUMBERS to 0) to tr("Цифры"))
+            sectionRows(id).indices.forEach { add((id to it) to (it + 1).toString()) }
+        }
+        val full = (sectionRows(where.first).getOrNull(where.second)?.size ?: 0) >= UserLayouts.MAX_ROW
+        AlertDialog(
+            onDismissRequest = { adding = null },
+            icon = { Icon(Icons.Rounded.AddCircleOutline, null) },
+            title = { Text(tr("Новая клавиша")) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = text, onValueChange = { if (it.length <= 8) text = it }, singleLine = true,
+                        label = { Text(tr("Буква, цифра, знак или смайл")) }, shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(tr("Ряд"), style = MaterialTheme.typography.labelLarge, color = cs.primary)
+                    ButtonGroup(choices.map { (k, label) -> "${k.first}|${k.second}" to label }, "${where.first}|${where.second}") { v ->
+                        where = v.substringBefore('|') to v.substringAfter('|').toInt()
+                    }
+                    if (full) Text(tr("В ряду уже {0} клавиш — больше не поместится", UserLayouts.MAX_ROW), color = cs.error, style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.Button(enabled = text.isNotBlank() && !full, onClick = {
+                    val grid = sectionRows(where.first).map { r -> r.map { it.key }.toMutableList() }
+                    val row = grid.getOrNull(where.second) ?: return@Button
+                    // после выбранной клавиши, если она в этом ряду, иначе — в конец ряда
+                    val pos = if (after != null && after.section == where.first && after.row == where.second) after.index + 1 else row.size
+                    row.add(pos, KeyModel(text.trim()))
+                    saveSection(where.first, grid)
+                    adding = null
+                }) { Text(tr("Добавить")) }
+            },
+            dismissButton = { TextButton(onClick = { adding = null }) { Text(tr("Отмена")) } }
+        )
     }
 
     val e = editing

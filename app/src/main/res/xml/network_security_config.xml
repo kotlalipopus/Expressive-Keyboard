@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Свои ИИ-сервисы (Ollama, LM Studio) часто работают в домашней сети по http без сертификата.
+     Все встроенные адреса клавиатуры — https; открытый http бывает только по адресу, который ввёл сам пользователь. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

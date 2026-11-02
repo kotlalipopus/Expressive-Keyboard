@@ -337,7 +337,7 @@ object KeyboardLayouts {
 
     private fun lettersFor(lang: KeyboardLanguage): List<KeyRow> = when {
         lang.id == "ru" && lang.fromPlugin == null && !lang.customLayout -> russianLetters
-        lang.id == "en" && lang.fromPlugin == null && !lang.customLayout -> englishLetters
+        lang.baseId == "en" && lang.fromPlugin == null && !lang.customLayout -> englishLetters
         else -> languageRows.getOrPut(lang.id to lang.rows) { Languages.buildRows(lang) }
     }
 

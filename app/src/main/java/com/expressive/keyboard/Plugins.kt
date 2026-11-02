@@ -172,15 +172,30 @@ data class PluginAction(
 data class ModOption(
     val id: String,
     val title: String,
-    /** toggle | text | choice | slider */
+    /** toggle | text | textarea | choice | slider | color — значения; preset | button | info — без значения. */
     val type: String,
     val default: Any?,
     val description: String = "",
     val choices: List<Pair<String, String>> = emptyList(),
     val min: Float = 0f,
     val max: Float = 100f,
-    val step: Float = 1f
-)
+    val step: Float = 1f,
+    /** Вкладка и раздел, в которых лежит настройка; пусто — без них. */
+    val tab: String = "",
+    val section: String = "",
+    val sectionCollapsed: Boolean = false,
+    /** Показывать, только если: "id", "!id" или "id=значение". */
+    val showIf: String = "",
+    /** Что задаёт пресет. */
+    val values: Map<String, Any?> = emptyMap(),
+    val hint: String = ""
+) {
+    val hasValue: Boolean get() = type !in NO_VALUE
+
+    companion object {
+        val NO_VALUE = setOf("preset", "button", "info")
+    }
+}
 
 /** Значения настроек модов: свой файл настроек на мод. */
 object ModConfig {
@@ -189,21 +204,73 @@ object ModConfig {
 
     fun get(context: Context, plugin: KeyboardPlugin, o: ModOption): Any? {
         val all = prefs(context, plugin.id).all
-        return all[o.id] ?: o.default
+        return normalize(o, all[o.id]) ?: o.default
     }
 
-    fun all(context: Context, plugin: KeyboardPlugin): Map<String, Any?> = plugin.config.associate { it.id to get(context, plugin, it) }
+    /** Увеличивается при любой смене значений, в том числе из скрипта: карточка мода показывает новые. */
+    var revision by mutableIntStateOf(0)
+        private set
+
+    fun all(context: Context, plugin: KeyboardPlugin): Map<String, Any?> =
+        plugin.config.filter { it.hasValue }.associate { it.id to get(context, plugin, it) }
+
+    /** Значение под тип настройки: скрипт мог передать 1 в переключатель или строку в ползунок. */
+    internal fun normalize(o: ModOption, v: Any?): Any? = when {
+        v == null -> null
+        o.type == "toggle" -> when (v) {
+            is Boolean -> v
+            is Number -> v.toDouble() != 0.0
+            else -> v.toString().trim().lowercase() in setOf("true", "1", "on", "yes")
+        }
+        o.type == "slider" -> when (v) {
+            is Number -> v.toFloat()
+            is Boolean -> if (v) o.max else o.min
+            else -> v.toString().trim().replace(',', '.').toFloatOrNull()
+        }?.takeIf { !it.isNaN() }?.coerceIn(minOf(o.min, o.max), maxOf(o.min, o.max))
+        else -> v.toString().take(MAX_TEXT)
+    }
+
+    private const val MAX_TEXT = 256 * 1024
+
+    private fun put(e: android.content.SharedPreferences.Editor, id: String, v: Any?) {
+        when (v) {
+            null -> e.remove(id)
+            is Boolean -> e.putBoolean(id, v)
+            is Number -> e.putFloat(id, v.toFloat())
+            else -> e.putString(id, v.toString())
+        }
+    }
+
+    /** Кнопка настроек: мод получает событие option, значение не хранится. */
+    fun press(plugin: KeyboardPlugin, id: String) = ScriptHost.optionChanged(plugin.id, id, true)
+
+    /** Пресет: несколько значений сразу. Возвращает, сколько настроек изменилось. */
+    fun setAll(context: Context, plugin: KeyboardPlugin, values: Map<String, Any?>): Int {
+        val changed = LinkedHashMap<String, Any?>()
+        val e = prefs(context, plugin.id).edit()
+        for ((k, raw) in values) {
+            val o = plugin.config.firstOrNull { it.id == k && it.hasValue } ?: continue
+            val v = normalize(o, raw) ?: continue
+            if (v != get(context, plugin, o)) {
+                put(e, k, v)
+                changed[k] = v
+            }
+        }
+        if (changed.isEmpty()) return 0
+        e.apply()
+        revision++
+        changed.forEach { (k, v) -> ScriptHost.optionChanged(plugin.id, k, v) }
+        return changed.size
+    }
 
     fun set(context: Context, plugin: KeyboardPlugin, id: String, value: Any?) {
-        prefs(context, plugin.id).edit().apply {
-            when (value) {
-                null -> remove(id)
-                is Boolean -> putBoolean(id, value)
-                is Number -> putFloat(id, value.toFloat())
-                else -> putString(id, value.toString())
-            }
-        }.apply()
-        ScriptHost.optionChanged(plugin.id, id, value)
+        val o = plugin.config.firstOrNull { it.id == id }
+        val v = if (o != null) normalize(o, value) else value
+        // то же значение — без события: иначе мод, который в "option" снова вызывает setConfig, зациклится
+        if (o != null && value != null && v == get(context, plugin, o)) return
+        prefs(context, plugin.id).edit().also { put(it, id, v) }.apply()
+        revision++
+        ScriptHost.optionChanged(plugin.id, id, v)
     }
 }
 
@@ -282,7 +349,7 @@ object PluginParser {
     )
     val LAYOUT_IDS = setOf("symbols", "symbols2")
     private val LANG_ID = Regex("^[a-z]{2,3}([-_][a-z0-9]{2,8})?$")
-    val PERMISSIONS = setOf("network", "read_text", "clipboard", "launch", "ai")
+    val PERMISSIONS = setOf("network", "read_text", "clipboard", "launch", "ai", "sensors", "microphone", "app_info")
     val KEYS = setOf(
         "tab", "enter", "left", "right", "up", "down", "home", "end", "select_all", "copy", "cut",
         "paste", "undo", "redo", "delete_word", "escape"
@@ -454,7 +521,7 @@ object PluginParser {
             version = o.optString("version", "1.0"),
             author = o.optString("author"),
             description = o.optString("description"),
-            icon = iconSpec(o.optString("icon", "🧩").ifBlank { "🧩" }),
+            icon = iconSpec(o.optString("icon", "@extension").ifBlank { "@extension" }),
             permissions = perms,
             actions = actions,
             shortcuts = shortcuts,
@@ -476,14 +543,38 @@ object PluginParser {
         )
     }
 
+    private const val MAX_OPTIONS = 300
+
     private fun parseConfig(a: JSONArray?): List<ModOption> {
         if (a == null) return emptyList()
-        return (0 until min(a.length(), 40)).mapNotNull { i ->
-            val c = a.optJSONObject(i) ?: return@mapNotNull null
-            val oid = c.optString("id").takeIf { Regex("^[A-Za-z0-9_.-]{1,40}$").matches(it) } ?: return@mapNotNull null
-            val type = c.optString("type", "toggle").lowercase().takeIf { it in setOf("toggle", "text", "choice", "slider") } ?: "toggle"
+        val out = ArrayList<ModOption>()
+        val types = setOf("toggle", "text", "textarea", "choice", "slider", "color", "preset", "button", "info")
+        var tab = ""
+        var section = ""
+        var collapsed = false
+        var auto = 0
+        for (i in 0 until a.length()) {
+            if (out.size >= MAX_OPTIONS) break
+            val c = a.optJSONObject(i) ?: continue
+            val rawType = c.optString("type", "toggle").lowercase()
+            // вкладка и раздел действуют на всё, что идёт за ними
+            if (rawType == "tab") {
+                tab = c.optString("title").take(40)
+                section = ""
+                collapsed = false
+                continue
+            }
+            if (rawType == "section") {
+                section = c.optString("title").take(60)
+                collapsed = c.optBoolean("collapsed", false)
+                continue
+            }
+            val type = rawType.takeIf { it in types } ?: "toggle"
+            val noValue = type in ModOption.NO_VALUE
+            val oid = c.optString("id").takeIf { Regex("^[A-Za-z0-9_.-]{1,40}$").matches(it) }
+                ?: if (noValue && type != "button") "_item${auto++}" else continue
             val choices = c.optJSONArray("choices")?.let { ch ->
-                (0 until min(ch.length(), 40)).mapNotNull { j ->
+                (0 until min(ch.length(), 100)).mapNotNull { j ->
                     when (val x = ch.opt(j)) {
                         is JSONObject -> x.optString("id").takeIf { it.isNotEmpty() }?.let { it to x.optString("title", it) }
                         is String -> x to x
@@ -495,13 +586,24 @@ object PluginParser {
                 "toggle" -> c.optBoolean("default", false)
                 "slider" -> c.optDouble("default", c.optDouble("min", 0.0)).toFloat()
                 "choice" -> c.optString("default", choices.firstOrNull()?.first.orEmpty())
+                "preset", "button", "info" -> null
                 else -> c.optString("default", "")
             }
-            ModOption(
-                oid, c.optString("title", oid).take(60), type, def, c.optString("description").take(200), choices,
-                c.optDouble("min", 0.0).toFloat(), c.optDouble("max", 100.0).toFloat(), c.optDouble("step", 1.0).toFloat()
+            val values = LinkedHashMap<String, Any?>()
+            c.optJSONObject("values")?.let { v -> v.keys().forEach { k -> v.opt(k)?.takeIf { it != JSONObject.NULL }?.let { x -> values[k] = x } } }
+            out += ModOption(
+                oid, c.optString("title", if (noValue) "" else oid).take(if (type == "info") 500 else 60), type, def,
+                c.optString("description").take(500), choices,
+                c.optDouble("min", 0.0).toFloat(), c.optDouble("max", 100.0).toFloat(), c.optDouble("step", 1.0).toFloat(),
+                tab = c.optString("tab", tab).take(40),
+                section = c.optString("section", section).take(60),
+                sectionCollapsed = collapsed,
+                showIf = c.optString("showIf").take(80),
+                values = values,
+                hint = c.optString("hint").take(200)
             )
         }
+        return out
     }
 
     private val JS_MANIFEST = Regex("/\\*\\s*@plugin\\s*([\\s\\S]*?)\\*/")
@@ -554,10 +656,10 @@ object PluginParser {
     fun iconSpec(s: String): String = if (s.startsWith("@") || s.startsWith("data:image")) s.take(400_000) else s.take(8)
 
     private fun defaultIcon(t: PluginActionType) = when (t) {
-        PluginActionType.INSERT -> "✏️"
-        PluginActionType.TRANSFORM -> "✨"
-        PluginActionType.KEY -> "⌨️"
-        PluginActionType.HTTP -> "🌐"
+        PluginActionType.INSERT -> "@edit"
+        PluginActionType.TRANSFORM -> "@magic"
+        PluginActionType.KEY -> "@keyboard"
+        PluginActionType.HTTP -> "@language"
     }
 }
 
@@ -972,13 +1074,13 @@ object PluginRepository {
   "version": "1.0",
   "author": "Я",
   "description": "Пример: действия, сокращения, символы, тема, оформление, настройки, варианты и раскладка",
-  "icon": "🚀",
+  "icon": "@rocket",
   "actions": [
-    { "title": "Подпись", "icon": "✍️", "type": "insert", "text": "С уважением,{newline}Иван", "pinned": true },
-    { "title": "Посчитать", "icon": "🧮", "type": "transform", "transform": "calc" },
-    { "title": "Сегодня", "icon": "📅", "type": "insert", "text": "{date:d MMMM yyyy}" },
+    { "title": "Подпись", "icon": "@note", "type": "insert", "text": "С уважением,{newline}Иван", "pinned": true },
+    { "title": "Посчитать", "icon": "@calc", "type": "transform", "transform": "calc" },
+    { "title": "Сегодня", "icon": "@date", "type": "insert", "text": "{date:d MMMM yyyy}" },
     { "title": "В кавычки", "icon": "«»", "type": "transform", "transform": "wrap", "prefix": "«", "suffix": "»" },
-    { "title": "КАПС", "icon": "🔠", "type": "transform", "transform": "upper" },
+    { "title": "КАПС", "icon": "@case", "type": "transform", "transform": "upper" },
     { "title": "Выделить всё", "icon": "▣", "type": "key", "key": "select_all" }
   ],
   "shortcuts": {

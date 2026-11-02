@@ -173,7 +173,7 @@ internal fun java.io.InputStream.readLimited(max: Int = 2 shl 20): String = use 
 }
 
 
-/** Включено ли энергосбережение системы — тогда клавиши нажимаются без анимаций. */
+/** Включено ли энергосбережение системы; что при этом выключается — KeyboardSettings.forPower. */
 object PowerState {
     var saver by androidx.compose.runtime.mutableStateOf(false)
         private set

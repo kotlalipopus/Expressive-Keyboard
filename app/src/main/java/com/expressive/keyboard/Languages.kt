@@ -49,6 +49,9 @@ class KeyboardLanguage(
         id, label, spaceLabel, title, locale, newRows, shiftMap, accents, dict, hasCase, composer, autoCorrect, rtl, fromPlugin, true
     )
 
+    /** Язык правил и словаря: все английские варианты ведут себя как "en". */
+    val baseId: String get() = if (dict == "en") "en" else id
+
     override fun equals(other: Any?): Boolean = other is KeyboardLanguage && other.id == id && other.fromPlugin == fromPlugin
     override fun hashCode(): Int = id.hashCode()
     override fun toString(): String = id
@@ -132,6 +135,14 @@ object Languages {
 
     val builtIn: List<KeyboardLanguage> = listOf(
         RU, EN,
+        // варианты английского: та же раскладка и словарь, свой язык голосового ввода и перевода
+        L("en-gb", "GBR", "English (UK)", "Английский (Великобритания)", "en-GB", QWERTY, dict = "en"),
+        L("en-au", "AUS", "English (AU)", "Английский (Австралия)", "en-AU", QWERTY, dict = "en"),
+        L("en-ca", "CAN", "English (CA)", "Английский (Канада)", "en-CA", QWERTY, dict = "en"),
+        L("en-in", "IND", "English (IN)", "Английский (Индия)", "en-IN", QWERTY, dict = "en"),
+        L("en-ie", "IRL", "English (IE)", "Английский (Ирландия)", "en-IE", QWERTY, dict = "en"),
+        L("en-nz", "NZL", "English (NZ)", "Английский (Новая Зеландия)", "en-NZ", QWERTY, dict = "en"),
+        L("en-za", "ZAF", "English (ZA)", "Английский (ЮАР)", "en-ZA", QWERTY, dict = "en"),
         L("uk", "UK", "Українська", "Украинский", "uk-UA", listOf("йцукенгшщзхї", "фівапролджє", "ячсмитьбю"), "гґ ь'ʼ"),
         L("be", "BE", "Беларуская", "Белорусский", "be-BY", listOf("йцукенгшўзх'", "фывапролджэ", "ячсмітьбю"), "её гґ", dict = null),
         L("kk", "KK", "Қазақ", "Казахский", "kk-KZ", listOf("әіңғүұқөһ", RU_ROWS_1 + "ъ", RU_ROWS_2, RU_ROWS_3 + "ё"), dict = "kk"),

@@ -40,10 +40,70 @@ enum class AiProvider(val id: String, val title: String) {
     CLAUDE("CLAUDE", "Claude"),
     OPENAI("OPENAI", "OpenAI"),
     GROQ("GROQ", "Groq"),
-    LANGUAGETOOL("LANGUAGETOOL", "LanguageTool");
+    OPENROUTER("OPENROUTER", "OpenRouter"),
+    LANGUAGETOOL("LANGUAGETOOL", "LanguageTool"),
+    /** Свой сервис из списка пользователя; в настройках хранится как «CUSTOM:<id>». */
+    CUSTOM("CUSTOM", "Свой сервис");
 
     companion object {
-        fun from(id: String) = entries.firstOrNull { it.id == id } ?: AUTO
+        fun from(id: String) = if (id.startsWith("CUSTOM:")) CUSTOM else entries.firstOrNull { it.id == id } ?: AUTO
+    }
+}
+
+/**
+ * Свой ИИ-провайдер: любой сервис с API как у OpenAI (DeepSeek, Mistral, xAI, Together, Cerebras, свой сервер,
+ * Ollama и LM Studio в домашней сети) или как у Anthropic. Ключ может быть пустым — для локальных серверов.
+ */
+data class CustomAi(
+    val id: String,
+    val name: String,
+    val url: String,
+    val key: String = "",
+    val model: String = "",
+    /** openai — /chat/completions; anthropic — /messages. */
+    val format: String = "openai"
+) {
+    /** Адрес API без хвоста /chat/completions; голый домен получает /v1. */
+    fun base(): String {
+        var u = url.trim().trimEnd('/')
+        if (!u.startsWith("http://") && !u.startsWith("https://")) u = "https://$u"
+        u = u.removeSuffix("/chat/completions").removeSuffix("/messages").removeSuffix("/models").trimEnd('/')
+        val path = u.substringAfter("://").substringAfter('/', "")
+        return if (path.isEmpty()) "$u/v1" else u
+    }
+
+    val title get() = name.ifBlank { url.substringAfter("://").substringBefore('/') }
+
+    fun toJson(): JSONObject = JSONObject().put("id", id).put("name", name).put("url", url).put("key", key)
+        .put("model", model).put("format", format)
+
+    companion object {
+        fun parse(json: String): List<CustomAi> = runCatching {
+            val a = JSONArray(json)
+            (0 until a.length()).mapNotNull { i ->
+                val o = a.optJSONObject(i) ?: return@mapNotNull null
+                CustomAi(
+                    o.optString("id").ifBlank { return@mapNotNull null }, o.optString("name"), o.optString("url"),
+                    o.optString("key"), o.optString("model"), o.optString("format", "openai")
+                ).takeIf { it.url.isNotBlank() }
+            }
+        }.getOrDefault(emptyList())
+
+        fun serialize(list: List<CustomAi>): String = JSONArray().apply { list.forEach { put(it.toJson()) } }.toString()
+
+        fun newId() = java.lang.Long.toString(System.currentTimeMillis(), 36)
+
+        /** Готовые заготовки: адрес и модель подставляются, остаётся вставить ключ. */
+        val PRESETS = listOf(
+            CustomAi("", "DeepSeek", "https://api.deepseek.com/v1", model = "deepseek-chat"),
+            CustomAi("", "Mistral", "https://api.mistral.ai/v1", model = "mistral-small-latest"),
+            CustomAi("", "xAI Grok", "https://api.x.ai/v1"),
+            CustomAi("", "Cerebras", "https://api.cerebras.ai/v1"),
+            CustomAi("", "Together", "https://api.together.xyz/v1"),
+            CustomAi("", "Ollama", "http://192.168.1.2:11434/v1"),
+            CustomAi("", "LM Studio", "http://192.168.1.2:1234/v1"),
+            CustomAi("", "Anthropic-совместимый", "https://api.anthropic.com/v1", format = "anthropic"),
+        )
     }
 }
 
@@ -79,18 +139,29 @@ enum class AiTask(val id: String, val title: String, val icon: String, val promp
 }
 
 /** Ключи и выбор сервиса — из настроек. */
-data class AiModels(val gemini: String = "", val claude: String = "", val openai: String = "", val groq: String = "")
+data class AiModels(val gemini: String = "", val claude: String = "", val openai: String = "", val groq: String = "", val openrouter: String = "")
 
 data class AiKeys(
-    val provider: AiProvider, val gemini: String, val claude: String, val openai: String, val groq: String,
-    val models: AiModels = AiModels()
+    val provider: AiProvider, val gemini: String, val claude: String, val openai: String, val groq: String, val openrouter: String,
+    val models: AiModels = AiModels(),
+    val custom: List<CustomAi> = emptyList(),
+    /** id своего сервиса, если выбран он. */
+    val customId: String = ""
 ) {
+    val selectedCustom get() = custom.firstOrNull { it.id == customId }
+
     companion object {
         fun of(s: KeyboardSettings) = AiKeys(
-            AiProvider.from(s.aiProvider), s.geminiKey, s.anthropicKey, s.openaiKey, s.groqKey,
-            AiModels(s.geminiModel, s.claudeModel, s.openaiModel, s.groqModel)
+            AiProvider.from(s.aiProvider), s.geminiKey, s.anthropicKey, s.openaiKey, s.groqKey, s.openrouterKey,
+            AiModels(s.geminiModel, s.claudeModel, s.openaiModel, s.groqModel, s.openrouterModel),
+            s.aiCustom, s.aiProvider.substringAfter("CUSTOM:", "")
         )
     }
+}
+
+/** Кому отправить запрос: встроенный сервис или свой. */
+data class AiTarget(val provider: AiProvider, val custom: CustomAi? = null) {
+    val title get() = custom?.title ?: provider.title
 }
 
 object AiFix {
@@ -98,7 +169,9 @@ object AiFix {
     const val GEMINI_MODEL = "gemini-flash-latest"
     const val OPENAI_MODEL = "gpt-4.1-mini"
     const val GROQ_MODEL = "llama-3.3-70b-versatile"
+    const val OPENROUTER_MODEL = "openrouter/auto"
     private const val MAX_CHARS = 8000
+    private val THINK = Regex("(?s)<think>.*?</think>")
 
     private val SYSTEM = """
         You fix text typed on a phone keyboard. Correct spelling, typos, grammar, punctuation and capitalization.
@@ -132,7 +205,25 @@ object AiFix {
     """.trimIndent()
 
     /** Есть ли ключ хоть одного ИИ-сервиса (без него доступно только исправление). */
-    fun hasLlm(keys: AiKeys): Boolean = listOf(keys.gemini, keys.claude, keys.openai, keys.groq).any { it.isNotBlank() }
+    fun hasLlm(keys: AiKeys): Boolean =
+        keys.custom.isNotEmpty() || listOf(keys.gemini, keys.claude, keys.openai, keys.groq, keys.openrouter).any { it.isNotBlank() }
+
+    private val CLOUD = listOf(AiProvider.GEMINI, AiProvider.CLAUDE, AiProvider.OPENAI, AiProvider.GROQ, AiProvider.OPENROUTER)
+
+    /** ИИ-сервисы по порядку: выбранный в настройках, потом встроенные с ключом, потом свои. */
+    fun llmOrder(keys: AiKeys): List<AiTarget> = buildList {
+        when (keys.provider) {
+            AiProvider.CUSTOM -> keys.selectedCustom?.let { add(AiTarget(AiProvider.CUSTOM, it)) }
+            in CLOUD -> add(AiTarget(keys.provider))
+            else -> {}
+        }
+        if (keys.gemini.isNotBlank()) add(AiTarget(AiProvider.GEMINI))
+        if (keys.claude.isNotBlank()) add(AiTarget(AiProvider.CLAUDE))
+        if (keys.openai.isNotBlank()) add(AiTarget(AiProvider.OPENAI))
+        if (keys.groq.isNotBlank()) add(AiTarget(AiProvider.GROQ))
+        if (keys.openrouter.isNotBlank()) add(AiTarget(AiProvider.OPENROUTER))
+        keys.custom.forEach { add(AiTarget(AiProvider.CUSTOM, it)) }
+    }.distinct()
 
     /**
      * Любая задача панели «ИИ». Для всего, кроме исправления, нужен ИИ по ключу: сначала выбранный в настройках
@@ -140,17 +231,11 @@ object AiFix {
      */
     suspend fun run(
         context: Context, text: String, keys: AiKeys, lang: String, task: AiTask, instruction: String = ""
-    ): Result<Pair<String, AiProvider>> = withContext(Dispatchers.IO) {
+    ): Result<Pair<String, AiTarget>> = withContext(Dispatchers.IO) {
         if (task == AiTask.PROOFREAD) return@withContext fix(context, text, keys, lang)
         if (text.isBlank() && task != AiTask.CUSTOM) return@withContext Result.failure(IllegalArgumentException(tr("Нет текста")))
         if (text.length > MAX_CHARS) return@withContext Result.failure(IllegalArgumentException(tr("Слишком длинный текст")))
-        val order = buildList {
-            if (keys.provider in listOf(AiProvider.GEMINI, AiProvider.CLAUDE, AiProvider.OPENAI, AiProvider.GROQ)) add(keys.provider)
-            if (keys.gemini.isNotBlank()) add(AiProvider.GEMINI)
-            if (keys.claude.isNotBlank()) add(AiProvider.CLAUDE)
-            if (keys.openai.isNotBlank()) add(AiProvider.OPENAI)
-            if (keys.groq.isNotBlank()) add(AiProvider.GROQ)
-        }.distinct()
+        val order = llmOrder(keys)
         if (order.isEmpty()) {
             return@withContext Result.failure(IllegalStateException(tr("Нужен ключ ИИ: Настройки → Набор текста → ключ Gemini (бесплатно)")))
         }
@@ -173,12 +258,42 @@ object AiFix {
         Result.failure(last ?: IllegalStateException(tr("Не удалось обработать текст")))
     }
 
-    private fun ask(p: AiProvider, system: String, user: String, keys: AiKeys): String = when (p) {
+    private fun ask(t: AiTarget, system: String, user: String, keys: AiKeys): String = when (t.provider) {
         AiProvider.GEMINI -> gemini(user, keys.gemini.trim(), system, keys.models.gemini.ifBlank { GEMINI_MODEL })
         AiProvider.CLAUDE -> claude(user, keys.claude.trim(), system, keys.models.claude.ifBlank { CLAUDE_MODEL })
         AiProvider.OPENAI -> openAiCompatible("https://api.openai.com/v1", keys.models.openai.ifBlank { OPENAI_MODEL }, user, keys.openai.trim(), "OpenAI", system)
         AiProvider.GROQ -> openAiCompatible("https://api.groq.com/openai/v1", keys.models.groq.ifBlank { GROQ_MODEL }, user, keys.groq.trim(), "Groq", system)
+        AiProvider.OPENROUTER -> openAiCompatible("https://openrouter.ai/api/v1", keys.models.openrouter.ifBlank { OPENROUTER_MODEL }, user, keys.openrouter.trim(), "OpenRouter", system)
+        AiProvider.CUSTOM -> custom(t.custom ?: throw Skip(tr("Свой сервис не найден")), user, system)
         else -> throw Skip("unsupported")
+    }
+
+    private fun custom(c: CustomAi, text: String, system: String): String =
+        if (c.format == "anthropic") anthropicHttp(c.base(), c.model.ifBlank { CLAUDE_MODEL }, text, c.key.trim(), c.title, system)
+        else openAiCompatible(c.base(), c.model.trim(), text, c.key.trim(), c.title, system)
+
+    /** Anthropic Messages API по HTTP — для своих адресов (прокси, совместимые сервисы). */
+    private fun anthropicHttp(base: String, model: String, text: String, key: String, name: String, system: String): String {
+        val body = JSONObject()
+            .put("model", model)
+            .put("max_tokens", 8000)
+            .put("system", system)
+            .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", text)))
+        val headers = buildMap {
+            put("anthropic-version", "2023-06-01")
+            if (key.isNotEmpty()) {
+                put("x-api-key", key)
+                put("Authorization", "Bearer $key")
+            }
+        }
+        val root = try {
+            post("$base/messages", body, headers, name)
+        } catch (e: ModelNotFound) {
+            throw IllegalStateException(e.message)
+        }
+        val content = root.optJSONArray("content") ?: throw IllegalStateException(tr("Пустой ответ"))
+        return (0 until content.length()).mapNotNull { content.optJSONObject(it)?.takeIf { o -> o.optString("type") == "text" }?.optString("text") }
+            .joinToString("").trim().ifEmpty { throw IllegalStateException(tr("Пустой ответ")) }
     }
 
     /** Ошибка, после которой в режиме «Авто» стоит попробовать следующий сервис (а не показывать её сразу). */
@@ -190,29 +305,23 @@ object AiFix {
     /** Модель, которую сервис сам предложил после 404: база URL → id модели. */
     private val pickedModel = java.util.concurrent.ConcurrentHashMap<String, String>()
 
-    /** Проверка подключения: короткий запрос выбранному сервису; ответ — исправленная фраза или причина ошибки. */
-    suspend fun test(context: Context, keys: AiKeys, provider: AiProvider): Result<String> = withContext(Dispatchers.IO) {
-        runCatching { run(provider, context, "helo wrold", keys, "en") }.recoverCatching { e ->
+    /** Проверка подключения: короткий запрос сервису; ответ — исправленная фраза или причина ошибки. */
+    suspend fun test(context: Context, keys: AiKeys, target: AiTarget): Result<String> = withContext(Dispatchers.IO) {
+        runCatching { run(target, context, "helo wrold", keys, "en") }.recoverCatching { e ->
             if (e is kotlinx.coroutines.CancellationException) throw e
             throw IllegalStateException(e.message ?: e.javaClass.simpleName)
         }
     }
 
     /** Исправленный текст и кто исправлял, или понятная ошибка. lang — код языка клавиатуры (ru, en, …). */
-    suspend fun fix(context: Context, text: String, keys: AiKeys, lang: String): Result<Pair<String, AiProvider>> =
+    suspend fun fix(context: Context, text: String, keys: AiKeys, lang: String): Result<Pair<String, AiTarget>> =
         withContext(Dispatchers.IO) {
             if (text.isBlank()) return@withContext Result.failure(IllegalArgumentException(tr("Нет текста")))
             if (text.length > MAX_CHARS) return@withContext Result.failure(IllegalArgumentException(tr("Слишком длинный текст")))
             val order = when (keys.provider) {
-                AiProvider.AUTO -> buildList {
-                    add(AiProvider.NANO)
-                    if (keys.gemini.isNotBlank()) add(AiProvider.GEMINI)
-                    if (keys.claude.isNotBlank()) add(AiProvider.CLAUDE)
-                    if (keys.openai.isNotBlank()) add(AiProvider.OPENAI)
-                    if (keys.groq.isNotBlank()) add(AiProvider.GROQ)
-                    add(AiProvider.LANGUAGETOOL)
-                }
-                else -> listOf(keys.provider)
+                AiProvider.AUTO -> listOf(AiTarget(AiProvider.NANO)) + llmOrder(keys) + AiTarget(AiProvider.LANGUAGETOOL)
+                AiProvider.CUSTOM -> listOf(AiTarget(AiProvider.CUSTOM, keys.selectedCustom))
+                else -> listOf(AiTarget(keys.provider))
             }
             var last: Throwable? = null
             for (p in order) {
@@ -230,7 +339,8 @@ object AiFix {
             Result.failure(last ?: IllegalStateException(tr("Не удалось исправить текст")))
         }
 
-    private fun run(p: AiProvider, context: Context, text: String, keys: AiKeys, lang: String): String = when (p) {
+    private fun run(t: AiTarget, context: Context, text: String, keys: AiKeys, lang: String): String = when (val p = t.provider) {
+        AiProvider.CUSTOM -> custom(t.custom ?: throw Skip(tr("Свой сервис не найден")), text, SYSTEM)
         AiProvider.NANO -> nano(context, text, lang)
         AiProvider.GEMINI -> gemini(text, keys.gemini.trim().ifBlank { throw Skip(tr("Не задан ключ {0}", "Gemini")) }, SYSTEM, keys.models.gemini.ifBlank { GEMINI_MODEL })
         AiProvider.CLAUDE -> claude(text, keys.claude.trim().ifBlank { throw Skip(tr("Не задан ключ {0}", "Claude")) }, SYSTEM, keys.models.claude.ifBlank { CLAUDE_MODEL })
@@ -241,6 +351,10 @@ object AiFix {
         AiProvider.GROQ -> openAiCompatible(
             "https://api.groq.com/openai/v1", keys.models.groq.ifBlank { GROQ_MODEL }, text,
             keys.groq.trim().ifBlank { throw Skip(tr("Не задан ключ {0}", "Groq")) }, "Groq"
+        )
+        AiProvider.OPENROUTER -> openAiCompatible(
+            "https://openrouter.ai/api/v1", keys.models.openrouter.ifBlank { OPENROUTER_MODEL }, text,
+            keys.openrouter.trim().ifBlank { throw Skip(tr("Не задан ключ {0}", "OpenRouter")) }, "OpenRouter"
         )
         AiProvider.LANGUAGETOOL -> languageTool(text, lang)
         AiProvider.AUTO -> throw IllegalStateException("auto")
@@ -406,13 +520,18 @@ object AiFix {
      * у сервиса список моделей, доступных ключу, берём подходящую и запоминаем её.
      */
     private fun openAiCompatible(base: String, model: String, text: String, key: String, name: String, system: String = SYSTEM): String {
-        val current = pickedModel[base] ?: model
+        val slot = "$base|$model"
+        // модель не указана (свой сервис) — берём первую, что сервис отдаёт в /models
+        val current = pickedModel[slot] ?: model.ifBlank {
+            availableModel(base, key, name, preferred = emptyList())?.also { pickedModel[slot] = it }
+                ?: throw IllegalStateException(tr("{0}: укажите модель", name))
+        }
         return try {
             chat(base, current, text, key, name, system)
         } catch (e: ModelNotFound) {
-            val other = availableModel(base, key, name, preferred = listOf(model)) ?: throw IllegalStateException(e.message)
+            val other = availableModel(base, key, name, preferred = listOfNotNull(model.ifBlank { null })) ?: throw IllegalStateException(e.message)
             if (other == current) throw IllegalStateException(e.message)
-            pickedModel[base] = other
+            pickedModel[slot] = other
             try {
                 chat(base, other, text, key, name, system)
             } catch (e2: ModelNotFound) {
@@ -426,7 +545,7 @@ object AiFix {
         val conn = (URL("$base/models").openConnection() as HttpURLConnection).apply {
             connectTimeout = 10000
             readTimeout = 15000
-            setRequestProperty("Authorization", "Bearer $key")
+            if (key.isNotEmpty()) setRequestProperty("Authorization", "Bearer $key")
         }
         try {
             if (conn.responseCode !in 200..299) return@runCatching null
@@ -455,9 +574,10 @@ object AiFix {
                     .put(JSONObject().put("role", "system").put("content", system))
                     .put(JSONObject().put("role", "user").put("content", text))
             )
-        val root = post("$base/chat/completions", body, mapOf("Authorization" to "Bearer $key"), name)
-        return root.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")?.optString("content")?.trim()
-            ?.ifEmpty { null } ?: throw IllegalStateException(tr("Пустой ответ"))
+        val root = post("$base/chat/completions", body, if (key.isEmpty()) emptyMap() else mapOf("Authorization" to "Bearer $key"), name)
+        // рассуждающие модели (DeepSeek R1, Qwen в Ollama) присылают ход мыслей в <think>…</think> — он не нужен
+        return root.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")?.optString("content")
+            ?.replace(THINK, "")?.trim()?.ifEmpty { null } ?: throw IllegalStateException(tr("Пустой ответ"))
     }
 
     // ------------------------------------------------------------------ LanguageTool (бесплатно, не ИИ)

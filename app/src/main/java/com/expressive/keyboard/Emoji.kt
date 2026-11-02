@@ -53,7 +53,12 @@ class EmojiItem(
     val haystack: String,
     /** Системный шрифт умеет рисовать этот эмодзи (новые эмодзи на старом Android — нет). */
     val system: Boolean
-)
+) {
+    // Имена в нижнем регистре считаются один раз при загрузке каталога: поиск идёт на каждую введённую букву,
+    // и раньше lowercase() вызывался для каждого из ~3800 эмодзи на каждый запрос.
+    val nameEnLower: String = nameEn.lowercase()
+    val nameRuLower: String = nameRu.lowercase()
+}
 
 @Immutable
 data class EmojiCategory(val id: String, val icon: String, val items: List<EmojiItem>) {
@@ -80,6 +85,8 @@ object EmojiCatalog {
     /** Эмодзи и его варианты (с FE0F и без) → номер в листах. */
     @Volatile private var indices: Map<String, Int> = emptyMap()
     @Volatile private var items: Map<String, EmojiItem> = emptyMap()
+    /** Плоский список основных эмодзи: поиск не обходит категории и списки вариантов. */
+    @Volatile private var allItems: List<EmojiItem> = emptyList()
 
     /** Панель эмодзи открыта — грузить сейчас же, без отсрочки. */
     @Volatile private var urgent = false
@@ -109,6 +116,7 @@ object EmojiCatalog {
         val out = ArrayList<EmojiCategory>()
         val idx = HashMap<String, Int>(8192)
         val byEmoji = HashMap<String, EmojiItem>(4096)
+        val flat = ArrayList<EmojiItem>(4096)
         var group: String? = null
         var groupItems = ArrayList<EmojiItem>()
         var n = 0
@@ -133,6 +141,7 @@ object EmojiCatalog {
                 val ok = runCatching { paint.hasGlyph(emoji) }.getOrDefault(true)
                 val item = EmojiItem(emoji, n, variants, p[2], p[3], hay, ok)
                 groupItems += item
+                flat += item
                 byEmoji[emoji] = item
                 idx[emoji] = n
                 idx.putIfAbsent(emoji.replace("️", ""), n)
@@ -148,6 +157,7 @@ object EmojiCatalog {
         flush()
         indices = idx
         items = byEmoji
+        allItems = flat
         return out
     }
 
@@ -156,16 +166,40 @@ object EmojiCatalog {
     /** Основной эмодзи (для варианта тона — его основа). */
     fun item(emoji: String): EmojiItem? = items[emoji]
 
+    /**
+     * Последние запросы: панель поиска пересчитывается на каждую введённую букву, а полный перебор каталога
+     * с сортировкой — самая дорогая часть. Кэш маленький, поэтому память не растёт.
+     */
+    private val cache = object : LinkedHashMap<String, List<EmojiItem>>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<EmojiItem>>?): Boolean = size > 24
+    }
+
+    /** Разбиение запроса по пробелам без Regex: он компилировался на каждый вызов поиска. */
+    private fun words(query: String): List<String> {
+        val out = ArrayList<String>(4)
+        val sb = StringBuilder()
+        for (ch in query) {
+            if (ch.isWhitespace()) {
+                if (sb.isNotEmpty()) { out += sb.toString(); sb.clear() }
+            } else sb.append(ch)
+        }
+        if (sb.isNotEmpty()) out += sb.toString()
+        return out
+    }
+
     /** Поиск по названиям и ключевым словам на английском и русском: «кот», «heart», «смех». */
     fun search(query: String, limit: Int = 120): List<EmojiItem> {
-        val tokens = query.trim().lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
-        if (tokens.isEmpty()) return emptyList()
+        val tokens = words(query.trim().lowercase())
+        val list = allItems
+        if (tokens.isEmpty() || list.isEmpty()) return emptyList()
+        val key = "$limit|${tokens.joinToString(" ")}"
+        synchronized(cache) { cache[key] }?.let { return it }
         val scored = ArrayList<Pair<Int, EmojiItem>>()
-        for (c in categories) for (it in c.items) {
+        for (it in list) {
             var score = 0
             for (t in tokens) {
                 val s = when {
-                    it.nameRu.lowercase() == t || it.nameEn.lowercase() == t -> 0
+                    it.nameRuLower == t || it.nameEnLower == t -> 0
                     it.haystack.contains(" $t ") -> 1
                     it.haystack.contains(" $t") -> 2
                     it.haystack.contains(t) -> 4
@@ -176,7 +210,9 @@ object EmojiCatalog {
             }
             if (score >= 0) scored += score to it
         }
-        return scored.sortedWith(compareBy({ it.first }, { it.second.index })).take(limit).map { it.second }
+        val result = scored.sortedWith(compareBy({ it.first }, { it.second.index })).take(limit).map { it.second }
+        synchronized(cache) { cache[key] = result }
+        return result
     }
 }
 

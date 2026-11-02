@@ -157,6 +157,7 @@ class MainActivity : ComponentActivity() {
 
 enum class SettingsPage(val title: String, val subtitle: String, val icon: ImageVector, val shape: ExpressiveShapePreset) {
     HOME("Expressive Keyboard", "", Icons.Rounded.Keyboard, ExpressiveShapePreset.COOKIE_12),
+    WHATS_NEW("Новое", "Всё, что появилось в этом обновлении, можно настроить прямо здесь", Icons.Rounded.NewReleases, ExpressiveShapePreset.SUNNY_8),
     THEMES("Темы", "Светлая или тёмная; Minecraft, Samsung, Nothing, стекло; настройки темы и свои темы", Icons.Rounded.Style, ExpressiveShapePreset.FLOWER_6),
     THEME_EDITOR("Редактор темы", "Всё оформление: фон, клавиши, форма, тени, шрифт", Icons.Rounded.Brush, ExpressiveShapePreset.SUNNY_8),
     COLORS("Цвета и фон", "Акцентный цвет, палитра Material You, цвета клавиш, картинка и размытие", Icons.Rounded.ColorLens, ExpressiveShapePreset.FLOWER_6),
@@ -165,10 +166,12 @@ enum class SettingsPage(val title: String, val subtitle: String, val icon: Image
     ANIMATIONS("Анимации", "Нажатие клавиш, свои анимации, скорость, подсказки и панели", Icons.Rounded.Animation, ExpressiveShapePreset.CLOVER_4),
     TOOLBAR("Панель, эмодзи и иконки", "Кнопки панели инструментов, стиль эмодзи, свои иконки", Icons.Rounded.DragIndicator, ExpressiveShapePreset.FLOWER_6),
     LANGUAGES("Языки", "Раскладки, китайский и японский ввод, словари подсказок", Icons.Rounded.Language, ExpressiveShapePreset.COOKIE_12),
+    MY_WORDS("Мой словарь", "Добавьте свои слова: с диакритикой, имена, термины", Icons.Rounded.MenuBook, ExpressiveShapePreset.SUNNY_8),
     TYPING("Подсказки и исправления", "Автоисправление, тире, заглавные буквы, ИИ-исправление, инкогнито", Icons.Rounded.Spellcheck, ExpressiveShapePreset.SUNNY_8),
     GESTURES("Жесты и скорость", "Свайп-набор, свайпы по пробелу и ⌫, удержание, парные скобки", Icons.Rounded.Gesture, ExpressiveShapePreset.CLOVER_4),
     CLIPBOARD("Буфер обмена и GIF", "История, сколько хранить, скриншоты в буфере, GIF", Icons.Rounded.ContentPaste, ExpressiveShapePreset.FLOWER_6),
     FEEDBACK("Вибрация и звук", "Сила, длительность и характер отклика", Icons.Rounded.Vibration, ExpressiveShapePreset.COOKIE_12),
+    POWER("Энергосбережение", "Когда включается и что при этом выключается", Icons.Rounded.BatterySaver, ExpressiveShapePreset.CLOVER_4),
     PLUGINS("Плагины и моды", "Скрипты, свои панели и кнопки, рисование поверх клавиатуры, темы", Icons.Rounded.Extension, ExpressiveShapePreset.FLOWER_6),
     BACKUP("Резервная копия", "Экспорт и импорт настроек, сброс, выученные слова", Icons.Rounded.Backup, ExpressiveShapePreset.CLOVER_4),
     ABOUT("О приложении", "Версия, возможности и лицензии", Icons.Rounded.Info, ExpressiveShapePreset.CIRCLE);
@@ -236,6 +239,28 @@ internal fun importBackground(context: Context, uri: Uri): Boolean = runCatching
 @Composable
 fun SettingsScreen(settings: KeyboardSettings) {
     var page by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(SettingsPage.HOME) }
+    // M3, классы размера окна: от 840 dp (expanded) — две панели «список — подробности»,
+    // слева разделы, справа выбранный; на 600–839 dp — одна панель, но не шире 720 dp (строки не растягиваются)
+    val widthDp = LocalConfiguration.current.screenWidthDp
+    if (widthDp >= 840) {
+        val detail = if (page == SettingsPage.HOME) SettingsPage.THEMES else page
+        androidx.activity.compose.BackHandler(enabled = detail.parent != SettingsPage.HOME) { page = detail.parent }
+        Row(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer)) {
+            Box(Modifier.width(if (widthDp >= 1200) 420.dp else 360.dp).fillMaxHeight()) {
+                SettingsPageScaffold(SettingsPage.HOME, settings, onNavigate = { page = it }, selected = detail)
+            }
+            Box(Modifier.weight(1f).fillMaxHeight()) {
+                AnimatedContent(
+                    targetState = detail,
+                    transitionSpec = { (fadeIn(tween(220)) + scaleIn(spring(dampingRatio = 0.85f, stiffness = 380f), 0.96f)) togetherWith fadeOut(tween(120)) },
+                    label = "detailPane"
+                ) { p ->
+                    SettingsPageScaffold(p, settings, onNavigate = { page = it }, showBack = p.parent != SettingsPage.HOME)
+                }
+            }
+        }
+        return
+    }
     androidx.activity.compose.BackHandler(enabled = page != SettingsPage.HOME) {
         page = page.parent
     }
@@ -254,16 +279,22 @@ fun SettingsScreen(settings: KeyboardSettings) {
         },
         label = "settingsPage"
     ) { p ->
-        SettingsPageScaffold(p, settings, onNavigate = { page = it })
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer), contentAlignment = Alignment.TopCenter) {
+            Box(Modifier.widthIn(max = 720.dp)) { SettingsPageScaffold(p, settings, onNavigate = { page = it }) }
+        }
     }
 }
 
 @Composable
-internal fun SettingsPageScaffold(page: SettingsPage, settings: KeyboardSettings, onNavigate: (SettingsPage) -> Unit) {
+internal fun SettingsPageScaffold(
+    page: SettingsPage, settings: KeyboardSettings, onNavigate: (SettingsPage) -> Unit,
+    selected: SettingsPage? = null, showBack: Boolean = page != SettingsPage.HOME
+) {
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val cs = MaterialTheme.colorScheme
     var testText by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
-    val showTest = page != SettingsPage.ABOUT && page != SettingsPage.BACKUP
+    // в двух панелях поле проверки — только в правой, чтобы не было двух одинаковых полей
+    val showTest = page != SettingsPage.ABOUT && page != SettingsPage.BACKUP && selected == null
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         containerColor = cs.surfaceContainer,
@@ -271,7 +302,7 @@ internal fun SettingsPageScaffold(page: SettingsPage, settings: KeyboardSettings
             LargeTopAppBar(
                 title = { Text(tr(page.title), fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
-                    if (page != SettingsPage.HOME) {
+                    if (showBack) {
                         FilledTonalIconButton(onClick = { onNavigate(page.parent) }, modifier = Modifier.padding(start = 8.dp)) {
                             Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад")
                         }
@@ -284,16 +315,10 @@ internal fun SettingsPageScaffold(page: SettingsPage, settings: KeyboardSettings
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (showTest) {
-                OutlinedTextField(
-                    value = testText,
-                    onValueChange = { testText = it },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                    shape = RoundedCornerShape(28.dp),
-                    placeholder = { Text(tr("Проверьте клавиатуру здесь…")) },
-                    leadingIcon = { Icon(Icons.Rounded.Keyboard, null) },
-                    trailingIcon = {
-                        if (testText.isNotEmpty()) IconButton(onClick = { testText = "" }) { Icon(Icons.Rounded.Close, null) }
-                    },
+                PillField(
+                    testText, { testText = it }, "Проверьте клавиатуру здесь…", Icons.Rounded.Keyboard,
+                    Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    singleLine = false,
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
                 )
             }
@@ -303,7 +328,9 @@ internal fun SettingsPageScaffold(page: SettingsPage, settings: KeyboardSettings
             ) {
                 Spacer(Modifier.height(4.dp))
                 when (page) {
-                    SettingsPage.HOME -> HomePage(settings, onNavigate)
+                    SettingsPage.HOME -> HomePage(settings, onNavigate, selected)
+                    SettingsPage.WHATS_NEW -> WhatsNewPage(settings, onNavigate)
+                    SettingsPage.POWER -> PowerPage(settings)
                     SettingsPage.THEMES -> ThemesPage(settings, onNavigate)
                     SettingsPage.THEME_EDITOR -> ThemeEditorPage(settings, onNavigate)
                     SettingsPage.ANIMATIONS -> AnimationsPage(settings)
@@ -315,6 +342,7 @@ internal fun SettingsPageScaffold(page: SettingsPage, settings: KeyboardSettings
                         IconsPage(settings)
                     }
                     SettingsPage.LANGUAGES -> LanguagesPage(settings)
+                    SettingsPage.MY_WORDS -> MyWordsPage(settings)
                     SettingsPage.TYPING -> TypingPage(settings, SettingsPage.TYPING)
                     SettingsPage.GESTURES -> TypingPage(settings, SettingsPage.GESTURES)
                     SettingsPage.CLIPBOARD -> TypingPage(settings, SettingsPage.CLIPBOARD)
@@ -354,7 +382,7 @@ internal fun PreviewSection(settings: KeyboardSettings) {
 // ----------------------------------------------------------------------- главная
 
 @Composable
-internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> Unit) {
+internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> Unit, selected: SettingsPage? = null) {
     val context = LocalContext.current
     val focused = LocalWindowInfo.current.isWindowFocused
     var imeEnabled by remember { mutableStateOf(isImeEnabled(context)) }
@@ -370,30 +398,17 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
     }
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { micGranted = it }
     var query by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    // автор и канал — сверху; поиск — сразу под ними; язык — внизу, в «Прочем»
     AuthorLine()
+    PillField(query, { query = it }, "Найти настройку: вибрация, шрифт, свайп…", Icons.Rounded.Search, tonal = true)
     UpdateCard()
-    SettingsSection(null) {
-        ChoiceItem(
-            Icons.Rounded.Translate, "Язык приложения", null,
-            listOf("SYSTEM" to "Как в системе", "ru" to "Русский", "en" to "English"), settings.appLanguage
-        ) { v -> KeyboardPrefs.edit(context) { putString("app_language", v) } }
-    }
-    OutlinedTextField(
-        value = query,
-        onValueChange = { query = it },
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
-        placeholder = { Text(tr("Найти настройку: вибрация, шрифт, свайп…")) },
-        leadingIcon = { Icon(Icons.Rounded.Search, null) },
-        trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Rounded.Close, null) } },
-        singleLine = true
-    )
     if (query.isNotBlank()) {
         val found = SettingsSearch.find(query)
         SettingsSection(tr("Найдено: {0}", found.size)) {
             if (found.isEmpty()) GroupItem { Text(tr("Ничего не нашлось"), Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
             found.forEach { (title, p) ->
-                ActionItem(p.icon, title, tr(p.title), onClick = { onNavigate(p) })
+                // найден сам раздел — под заголовком его описание, а не то же название ещё раз
+                ActionItem(p.icon, title, if (title == tr(p.title)) tr(p.subtitle) else tr(p.title), onClick = { onNavigate(p) })
             }
         }
         return
@@ -411,9 +426,10 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
     )
     PreviewSection(settings)
     val groups = listOf(
+        "Обновление" to listOf(SettingsPage.WHATS_NEW),
         "Внешний вид" to listOf(SettingsPage.THEMES, SettingsPage.COLORS, SettingsPage.KEYS, SettingsPage.LAYOUT, SettingsPage.ANIMATIONS, SettingsPage.TOOLBAR),
-        "Набор текста" to listOf(SettingsPage.LANGUAGES, SettingsPage.TYPING, SettingsPage.GESTURES, SettingsPage.CLIPBOARD),
-        "Отклик и расширения" to listOf(SettingsPage.FEEDBACK, SettingsPage.PLUGINS),
+        "Набор текста" to listOf(SettingsPage.LANGUAGES, SettingsPage.MY_WORDS, SettingsPage.TYPING, SettingsPage.GESTURES, SettingsPage.CLIPBOARD),
+        "Отклик и расширения" to listOf(SettingsPage.FEEDBACK, SettingsPage.POWER, SettingsPage.PLUGINS),
         "Прочее" to listOf(SettingsPage.BACKUP, SettingsPage.ABOUT)
     )
     var i = 0
@@ -421,8 +437,12 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         SettingsSection(title) {
             for (p in pages) {
                 val idx = i++
-                CategoryTile(p, idx) { onNavigate(p) }
+                CategoryTile(p, idx, selected = p == selected || p == selected?.parent) { onNavigate(p) }
             }
+            if (SettingsPage.BACKUP in pages) ChoiceItem(
+                Icons.Rounded.Translate, "Язык приложения", null,
+                listOf("SYSTEM" to "Как в системе", "ru" to "Русский", "en" to "English"), settings.appLanguage
+            ) { v -> KeyboardPrefs.edit(context) { putString("app_language", v) } }
         }
     }
 }
@@ -602,6 +622,12 @@ internal fun ColorsPage(settings: KeyboardSettings) {
         ColorRow("Текст на буквах", settings.colorKeyText, auto.onLetter) { picker = ColorTarget("color_key_text", "Текст на буквах") }
         ColorRow("Служебные клавиши", settings.colorFunc, auto.func) { picker = ColorTarget("color_func", "Служебные клавиши") }
         ColorRow("Текст служебных", settings.colorFuncText, auto.onFunc) { picker = ColorTarget("color_func_text", "Текст служебных") }
+        ToggleItem(
+            Icons.Rounded.Layers, "Подложка клавиш",
+            if (settings.keyBackground) "Плашки под буквами — как в теме"
+            else "Без плашек: только буквы на фоне. Их не видно и при размытии",
+            settings.keyBackground
+        ) { on -> KeyboardPrefs.edit(context) { putBoolean("key_background", on) } }
         SliderItem(
             icon = Icons.Rounded.Opacity, title = "Непрозрачность клавиш",
             value = settings.keyOpacity, range = 0.2f..1f,
@@ -701,10 +727,18 @@ internal fun KeysPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
     SettingsSection("Размеры") {
         SliderItem(
             icon = Icons.Rounded.Height, title = "Высота клавиш",
-            value = settings.keyHeightDp, range = 32f..68f,
+            // на планшете (от 600 dp) клавиши можно сделать заметно выше
+            value = settings.keyHeightDp, range = 32f..(if (LocalConfiguration.current.smallestScreenWidthDp >= 600) 96f else 68f),
             format = { "${it.roundToInt()} dp" },
             onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("key_height_dp", v) } }
         )
+        SliderItem(
+            icon = Icons.Rounded.Straighten, title = "Ширина клавиатуры",
+            value = settings.keyboardWidth, range = 0.5f..1f,
+            format = { "${(it * 100).roundToInt()}%" },
+            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("keyboard_width", if (v > 0.98f) 1f else v) } }
+        )
+        LandscapeScaleItem(settings)
         SliderItem(
             icon = Icons.Rounded.RoundedCorner, title = "Скругление клавиш",
             value = settings.cornerRadiusDp, range = 6f..30f,
@@ -897,7 +931,7 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
             KeyboardPrefs.edit(context) { putBoolean("swipe_up_hint", it) }
         }
         val spaceActions = listOf(
-            "PICKER" to "Выбор клавиатуры", "AI_FIX" to "Улучшить текст", "VOICE" to "Голосовой ввод", "EMOJI" to "Эмодзи",
+            "PICKER" to "Выбор клавиатуры", "LANGUAGE" to "Смена языка", "AI_FIX" to "Улучшить текст", "VOICE" to "Голосовой ввод", "EMOJI" to "Эмодзи",
             "CLIPBOARD" to "Буфер обмена", "TOOLBAR" to "Панель функций", "SETTINGS" to "Настройки", "OFF" to "Ничего"
         )
         ChoiceItem(
@@ -917,11 +951,12 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
     if (part == SettingsPage.TYPING) SettingsSection("Исправление текста ИИ") {
         InfoCard(
             Icons.Rounded.AutoFixHigh,
-            "Кнопка ✨ на панели инструментов открывает панель ИИ: исправить, деловой или дружелюбный тон, короче, эмоциональнее, эмодзи, " +
+            "Кнопка ИИ на панели инструментов открывает панель ИИ: исправить, деловой или дружелюбный тон, короче, эмоциональнее, эмодзи, " +
                 "подробнее, дописать и своё указание. Работает с выделенным текстом, а если ничего не выделено — со всем текстом в поле. " +
                 "Исправлять умеют все сервисы, остальное — только ИИ по ключу. Облачные сервисы получают обрабатываемый текст."
         )
-        val providers = AiProvider.entries.map { it.id to it.title }
+        val providers = AiProvider.entries.filter { it != AiProvider.CUSTOM }.map { it.id to it.title } +
+            settings.aiCustom.map { "CUSTOM:${it.id}" to it.title }
         val nanoText = when (nanoStatus) {
             -1 -> "проверяю…"
             FEATURE_AVAILABLE -> "готово"
@@ -937,10 +972,14 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
                 AiProvider.CLAUDE -> tr("Claude от Anthropic — платный ключ")
                 AiProvider.OPENAI -> tr("OpenAI — платный ключ")
                 AiProvider.GROQ -> tr("Groq — быстрый, есть бесплатный ключ")
+                AiProvider.OPENROUTER -> tr("OpenRouter — одна учётка для сотен моделей, есть бесплатные")
                 AiProvider.LANGUAGETOOL -> tr("Бесплатная проверка без ключа (не ИИ)")
+                AiProvider.CUSTOM -> AiKeys.of(settings).selectedCustom?.let { tr("Свой сервис: {0}", it.base().substringAfter("://")) }
+                    ?: tr("Свой сервис удалён — выберите другой")
             },
             providers, settings.aiProvider
         ) { v -> KeyboardPrefs.edit(context) { putString("ai_provider", v) } }
+        CustomAiItems(settings)
         ActionItem(
             Icons.Rounded.Key, "Ключ Gemini",
             if (settings.geminiKey.isBlank()) "Бесплатно: aistudio.google.com → Get API key" else "Задан",
@@ -962,6 +1001,11 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
             onClick = { keyDialog = "groq_key" }
         )
         ActionItem(
+            Icons.Rounded.Key, "Ключ OpenRouter",
+            if (settings.openrouterKey.isBlank()) "openrouter.ai/keys — есть бесплатные модели" else "Задан",
+            onClick = { keyDialog = "openrouter_key" }
+        )
+        ActionItem(
             Icons.Rounded.Tune, "Модель Gemini", settings.geminiModel.ifBlank { tr("По умолчанию: {0}", AiFix.GEMINI_MODEL) },
             onClick = { modelDialog = "gemini_model" }
         )
@@ -978,23 +1022,18 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
             onClick = { modelDialog = "groq_model" }
         )
         ActionItem(
+            Icons.Rounded.Tune, "Модель OpenRouter", settings.openrouterModel.ifBlank { tr("По умолчанию: {0}", AiFix.OPENROUTER_MODEL) },
+            onClick = { modelDialog = "openrouter_model" }
+        )
+        ActionItem(
             Icons.Rounded.NetworkCheck, "Проверить подключение",
             if (testing) tr("Проверяю…") else tr("Отправит тестовую фразу выбранному сервису и покажет ответ или причину ошибки"),
             onClick = {
                 if (testing) return@ActionItem
                 testing = true
                 val keys = AiKeys.of(settings)
-                // «Авто» и «На телефоне» — первый сервис, у которого есть ключ
-                val p = when (keys.provider) {
-                    AiProvider.GEMINI, AiProvider.CLAUDE, AiProvider.OPENAI, AiProvider.GROQ -> keys.provider
-                    else -> when {
-                        keys.gemini.isNotBlank() -> AiProvider.GEMINI
-                        keys.claude.isNotBlank() -> AiProvider.CLAUDE
-                        keys.openai.isNotBlank() -> AiProvider.OPENAI
-                        keys.groq.isNotBlank() -> AiProvider.GROQ
-                        else -> null
-                    }
-                }
+                // выбранный сервис; при «Авто» и «На телефоне» — первый, у которого есть ключ
+                val p = AiFix.llmOrder(keys).firstOrNull()
                 if (p == null) {
                     testing = false
                     Toast.makeText(context, tr("Сначала вставьте ключ"), Toast.LENGTH_LONG).show()
@@ -1003,7 +1042,7 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
                     testing = false
                     Toast.makeText(
                         context,
-                        r.fold({ "✓ ${p.title}: $it" }, { "✕ ${p.title}: ${it.message}" }),
+                        r.fold({ "${p.title}: $it" }, { "${tr("Ошибка: {0}", it.message ?: "")} · ${p.title}" }),
                         Toast.LENGTH_LONG
                     ).show()
                 }
@@ -1020,6 +1059,7 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
             "gemini_key" -> Triple("Ключ Gemini", settings.geminiKey, "Ключ с aistudio.google.com")
             "openai_key" -> Triple("Ключ OpenAI", settings.openaiKey, "Ключ с platform.openai.com")
             "groq_key" -> Triple("Ключ Groq", settings.groqKey, "Ключ с console.groq.com")
+            "openrouter_key" -> Triple("Ключ OpenRouter", settings.openrouterKey, "Ключ с openrouter.ai/keys")
             else -> Triple("Ключ Claude API", settings.anthropicKey, "Ключ с console.anthropic.com")
         }
         TextInputDialog(title, current, hint, onDismiss = { keyDialog = null }) { v ->
@@ -1032,6 +1072,7 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
             "gemini_model" -> "Модель Gemini" to settings.geminiModel
             "openai_model" -> "Модель OpenAI" to settings.openaiModel
             "groq_model" -> "Модель Groq" to settings.groqModel
+            "openrouter_model" -> "Модель OpenRouter" to settings.openrouterModel
             else -> "Модель Claude" to settings.claudeModel
         }
         TextInputDialog(title, current, "Пусто — модель по умолчанию", onDismiss = { modelDialog = null }) { v ->
@@ -1308,7 +1349,7 @@ internal fun PluginsPage() {
         r.onSuccess { p ->
             Toast.makeText(context, tr("Плагин «{0}» установлен", p.name), Toast.LENGTH_SHORT).show()
             expanded = p.id
-            if (p.usesNetwork || p.permissions.any { it in setOf("read_text", "clipboard", "launch", "ai") }) pendingNetwork = p
+            if (p.usesNetwork || p.permissions.any { it in setOf("read_text", "clipboard", "launch", "ai", "sensors", "microphone", "app_info") }) pendingNetwork = p
         }.onFailure { Toast.makeText(context, tr("Ошибка: {0}", it.message), Toast.LENGTH_LONG).show() }
     }
     val modExampleLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/javascript")) { uri: Uri? ->
@@ -1338,7 +1379,7 @@ internal fun PluginsPage() {
         Icons.Rounded.Extension,
         "Как установить: нажмите «Импорт из файла» и выберите плагин (.json, .js или .zip) или скопируйте его текст " +
             "и нажмите «Импорт из буфера обмена». Плагин появится в списке ниже — его можно включить, выключить или удалить.\n\n" +
-            "Как пользоваться: на клавиатуре нажмите кнопку с сеткой слева вверху, затем 🧩 — откроются вкладки плагинов " +
+            "Как пользоваться: на клавиатуре нажмите кнопку с сеткой слева вверху, затем кнопку «Плагины» — откроются вкладки плагинов " +
             "с их кнопками и панелями. Кнопки, отмеченные плагином, появляются прямо на панели инструментов.\n\n" +
             "Как сделать свой: сохраните пример кнопкой ниже, отредактируйте и импортируйте. Описание формата — в файле PLUGINS.md."
     )
@@ -1413,6 +1454,9 @@ internal fun PluginsPage() {
                         if ("clipboard" in p.permissions) add("• " + tr("читать историю буфера обмена"))
                         if ("launch" in p.permissions) add("• " + tr("открывать ссылки, приложения и окно «Поделиться»"))
                         if ("ai" in p.permissions) add("• " + tr("отправлять запросы ИИ по вашему ключу (расходует лимит ключа)"))
+                        if ("sensors" in p.permissions) add("• " + tr("видеть наклон и движение телефона, пока открыта клавиатура"))
+                        if ("microphone" in p.permissions) add("• " + tr("слышать громкость и частоты с микрофона, пока открыта клавиатура (сам звук мод не получает)"))
+                        if ("app_info" in p.permissions) add("• " + tr("знать, в каком приложении вы печатаете"))
                         if ("network" in p.permissions) add(
                             "• " + tr("выходить в интернет") + p.actions.filter { it.type == PluginActionType.HTTP }
                                 .joinToString("") { "\n   ${it.title}: ${Uri.parse(it.url).host}" }
@@ -1485,6 +1529,9 @@ internal fun PluginCard(p: KeyboardPlugin, expanded: Boolean, onExpand: () -> Un
                                     "clipboard" -> tr("буфер обмена")
                                     "launch" -> tr("открывает приложения")
                                     "ai" -> tr("ИИ по вашему ключу")
+                                    "sensors" -> tr("датчики движения")
+                                    "microphone" -> tr("громкость микрофона")
+                                    "app_info" -> tr("видит приложение")
                                     else -> tr("интернет")
                                 }
                             },
@@ -1585,7 +1632,7 @@ internal fun BackupPage() {
             val r = withContext(Dispatchers.IO) {
                 runCatching {
                     val raw = context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) } ?: error("Файл не открылся")
-                    KeyboardPrefs.importJson(context, raw)
+                    KeyboardPrefs.importJson(context, raw.trimStart { it.code == 0xFEFF || it.isWhitespace() })
                 }
             }
             r.onSuccess { Toast.makeText(context, tr("Восстановлено параметров: {0}", it), Toast.LENGTH_SHORT).show() }
@@ -1597,7 +1644,10 @@ internal fun BackupPage() {
             exportLauncher.launch("expressive-keyboard-settings.json")
         })
         ActionItem(Icons.Rounded.Download, "Импорт настроек", "Восстановить из файла", onClick = {
-            importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+            // список из нескольких типов вместе с */* на части телефонов (MIUI, One UI) прячет или блокирует файлы
+            runCatching { importLauncher.launch(arrayOf("*/*")) }.onFailure {
+                Toast.makeText(context, tr("На телефоне нет приложения для выбора файлов"), Toast.LENGTH_LONG).show()
+            }
         })
         ActionItem(Icons.Rounded.RestartAlt, "Сбросить настройки", "Словарь, плагины и недавние эмодзи сохранятся", onClick = { confirm = "settings" })
     }
@@ -1646,61 +1696,121 @@ internal fun BackupPage() {
 
 // ----------------------------------------------------------------------- о приложении
 
-/** Настройки мода из его блока "config": переключатели, выбор, ползунки и текст. */
+/** Условие showIf: "id", "!id" или "id=значение". */
+internal fun modOptionVisible(rule: String, values: Map<String, Any?>): Boolean {
+    if (rule.isEmpty()) return true
+    if ('=' in rule) return values[rule.substringBefore('=').trim()]?.toString() == rule.substringAfter('=').trim()
+    val negate = rule.startsWith("!")
+    val v = values[rule.removePrefix("!").trim()]
+    val on = v == true || (v is Number && v.toDouble() != 0.0) || (v is String && v.isNotEmpty())
+    return on != negate
+}
+
+/** Настройки мода из его блока "config": вкладки, разделы, переключатели, выбор, ползунки, текст и пресеты. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ModConfigEditor(p: KeyboardPlugin) {
     val context = LocalContext.current
     val cs = MaterialTheme.colorScheme
-    var tick by remember { mutableIntStateOf(0) }
+    // значения могли поменять пресет и сам скрипт (kb.setConfig): их надо показывать сразу
+    val rev = ModConfig.revision
+    val values = remember(rev, p) { ModConfig.all(context, p) }
+    val tabs = remember(p) { p.config.map { it.tab }.distinct() }
+    var tab by remember(p.id) { mutableStateOf(tabs.firstOrNull().orEmpty()) }
+    var toggled by remember(p.id) { mutableStateOf(emptySet<String>()) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        for (o in p.config) {
-            val value = remember(tick, o) { ModConfig.get(context, p, o) }
-            fun set(v: Any?) {
-                ModConfig.set(context, p, o.id, v)
-                tick++
-            }
-            Column(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(cs.surfaceContainerHighest).padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                when (o.type) {
-                    "toggle" -> Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(o.title, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                        Switch(checked = value == true, onCheckedChange = { set(it) })
-                    }
-                    "choice" -> {
-                        Text(o.title, style = MaterialTheme.typography.bodyMedium)
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            for ((cid, ctitle) in o.choices) {
-                                FilterChip(selected = value?.toString() == cid, onClick = { set(cid) }, label = { Text(ctitle) })
-                            }
-                        }
-                    }
-                    "slider" -> {
-                        var v by remember(tick, o) { mutableFloatStateOf((value as? Number)?.toFloat() ?: o.min) }
-                        Text("${o.title}: " + if (o.step >= 1f) v.roundToInt().toString() else "%.2f".format(v), style = MaterialTheme.typography.bodyMedium)
-                        Slider(
-                            value = v.coerceIn(o.min, o.max),
-                            onValueChange = { x -> v = if (o.step > 0f) (kotlin.math.round((x - o.min) / o.step) * o.step + o.min).coerceIn(o.min, o.max) else x },
-                            onValueChangeFinished = { set(v) },
-                            valueRange = o.min..maxOf(o.max, o.min + 0.001f)
-                        )
-                    }
-                    else -> {
-                        var t by remember(tick, o) { mutableStateOf(value?.toString().orEmpty()) }
-                        OutlinedTextField(
-                            value = t, onValueChange = { t = it }, label = { Text(o.title) }, singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            trailingIcon = {
-                                if (t != value?.toString().orEmpty()) IconButton(onClick = { set(t) }) { Icon(Icons.Rounded.Check, null) }
-                            }
-                        )
-                    }
-                }
-                if (o.description.isNotEmpty()) Text(o.description, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+        if (tabs.size > 1) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (t in tabs) FilterChip(selected = t == tab, onClick = { tab = t }, label = { Text(t.ifEmpty { tr("Основное") }) })
             }
         }
+        var current: String? = null
+        for (o in p.config) {
+            if (o.tab != tab) continue
+            if (o.section != current) {
+                current = o.section
+                if (o.section.isNotEmpty()) {
+                    val name = o.section
+                    val open = o.sectionCollapsed == (name in toggled)
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { toggled = if (name in toggled) toggled - name else toggled + name }
+                            .padding(horizontal = 8.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(name, style = MaterialTheme.typography.titleSmall, color = cs.primary, modifier = Modifier.weight(1f))
+                        Text(if (open) "▾" else "▸", color = cs.primary)
+                    }
+                }
+            }
+            if (o.section.isNotEmpty() && o.sectionCollapsed != (o.section in toggled)) continue
+            if (!modOptionVisible(o.showIf, values)) continue
+            key(o.id) { ModOptionRow(p, o, values[o.id], rev) }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ModOptionRow(p: KeyboardPlugin, o: ModOption, value: Any?, rev: Int) {
+    val context = LocalContext.current
+    val cs = MaterialTheme.colorScheme
+    fun set(v: Any?) = ModConfig.set(context, p, o.id, v)
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(cs.surfaceContainerHighest).padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        when (o.type) {
+            "toggle" -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(o.title, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Switch(checked = value == true, onCheckedChange = { set(it) })
+            }
+            "choice" -> {
+                Text(o.title, style = MaterialTheme.typography.bodyMedium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for ((cid, ctitle) in o.choices) {
+                        FilterChip(selected = value?.toString() == cid, onClick = { set(cid) }, label = { Text(ctitle) })
+                    }
+                }
+            }
+            "slider" -> {
+                var v by remember(rev, value) { mutableFloatStateOf((value as? Number)?.toFloat() ?: o.min) }
+                Text("${o.title}: " + if (o.step >= 1f) v.roundToInt().toString() else "%.2f".format(v), style = MaterialTheme.typography.bodyMedium)
+                Slider(
+                    value = v.coerceIn(o.min, o.max),
+                    onValueChange = { x -> v = if (o.step > 0f) (kotlin.math.round((x - o.min) / o.step) * o.step + o.min).coerceIn(o.min, o.max) else x },
+                    onValueChangeFinished = { set(v) },
+                    valueRange = o.min..maxOf(o.max, o.min + 0.001f)
+                )
+            }
+            "preset" -> FilledTonalButton(
+                onClick = {
+                    val n = ModConfig.setAll(context, p, o.values)
+                    ModConfig.press(p, o.id)
+                    Toast.makeText(context, tr("Пресет «{0}»: изменено настроек — {1}", o.title, n), Toast.LENGTH_SHORT).show()
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(o.title) }
+            "button" -> OutlinedButton(onClick = { ModConfig.press(p, o.id) }, modifier = Modifier.fillMaxWidth()) { Text(o.title) }
+            "info" -> Text(o.title, style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
+            else -> {
+                val multi = o.type == "textarea"
+                var t by remember(rev, value) { mutableStateOf(value?.toString().orEmpty()) }
+                val swatch = if (o.type == "color") PluginParser.parseColor(t) else null
+                OutlinedTextField(
+                    value = t, onValueChange = { t = it }, label = { Text(o.title) }, singleLine = !multi,
+                    minLines = if (multi) 3 else 1, maxLines = if (multi) 10 else 1,
+                    placeholder = if (o.hint.isNotEmpty()) ({ Text(o.hint) }) else null,
+                    modifier = Modifier.fillMaxWidth(),
+                    leadingIcon = if (swatch != null) ({
+                        Box(Modifier.size(22.dp).clip(RoundedCornerShape(6.dp)).background(androidx.compose.ui.graphics.Color(swatch)))
+                    }) else null,
+                    trailingIcon = {
+                        if (t != value?.toString().orEmpty()) IconButton(onClick = { set(t) }) { Icon(Icons.Rounded.Check, null) }
+                    }
+                )
+            }
+        }
+        if (o.description.isNotEmpty()) Text(o.description, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
     }
 }
 
@@ -1819,6 +1929,8 @@ internal fun AboutPage() {
                     "Emoji names: Unicode CLDR — Unicode License\n" +
                     "Pinyin: mozillazg/pinyin-data, phrase-pinyin-data — MIT; OpenCC — Apache 2.0\n" +
                     "Word frequencies: hermitdave/FrequencyWords — MIT\n" +
+                    "Russian word pairs: Google Books Ngram Viewer (v20200217) — CC BY 3.0\n" +
+                    "English word pairs: Peter Norvig, count_1w / count_2w (from Google Web 1T)\n" +
                     "Nunito font — SIL OFL 1.1",
                 Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant
             )

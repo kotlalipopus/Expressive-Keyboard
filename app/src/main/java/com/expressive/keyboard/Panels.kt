@@ -188,9 +188,9 @@ private class TranslateLang(val code: String, val name: String, val sub: String)
 private fun translateLanguages(settings: KeyboardSettings): Triple<List<TranslateLang>, List<TranslateLang>, List<TranslateLang>> {
     fun of(l: KeyboardLanguage) = TranslateLang(l.id, l.spaceLabel.substringBefore(" · "), l.displayTitle().substringBefore(" ("))
     val english = EnglishVariants.LIST.map { (code, name, sub) -> TranslateLang(code, name, tr(sub)) }
-    val mine = Languages.enabled(settings).filter { it.id != "en" }.map(::of)
+    val mine = Languages.enabled(settings).filter { !it.id.startsWith("en-") && it.id != "en" }.map(::of)
     val mineIds = mine.map { it.code }.toSet()
-    val rest = Languages.all.filter { it.id != "en" && it.id !in mineIds }.sortedBy { it.displayTitle() }.map(::of)
+    val rest = Languages.all.filter { !it.id.startsWith("en-") && it.id != "en" && it.id !in mineIds }.sortedBy { it.displayTitle() }.map(::of)
     return Triple(mine, english, rest)
 }
 
@@ -431,7 +431,7 @@ internal fun EmojiPanel(actions: KeyboardActions, settings: KeyboardSettings, pa
             ) {
                 item {
                     Box(
-                        Modifier.size(width = 40.dp, height = 36.dp).clip(RoundedCornerShape(12.dp))
+                        Modifier.size(width = 40.dp, height = 36.dp).clip(CircleShape)
                             .clickable { actions.togglePanel(ActivePanel.EMOJI_SEARCH) },
                         contentAlignment = Alignment.Center
                     ) { Icon(Icons.Rounded.Search, tr("Поиск эмодзи"), tint = palette.onLetter, modifier = Modifier.size(22.dp)) }
@@ -449,7 +449,7 @@ internal fun EmojiPanel(actions: KeyboardActions, settings: KeyboardSettings, pa
 @Composable
 private fun EmojiTab(sel: Boolean, palette: KeyPalette, slot: String, icon: String, style: String, font: FontFamily?, onClick: () -> Unit) {
     Box(
-        Modifier.size(width = 40.dp, height = 36.dp).clip(RoundedCornerShape(if (sel) 18.dp else 12.dp))
+        Modifier.size(width = 40.dp, height = 36.dp).clip(CircleShape)
             .background(if (sel) palette.accentSoft else Color.Transparent).clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
@@ -465,8 +465,18 @@ internal fun EmojiSearchBar(state: KeyboardState, actions: KeyboardActions, sett
     val cats = EmojiCatalog.categories
     val style = settings.emojiStyle
     val emojiFont = remember(settings.emojiFontVersion) { FontRepository.emoji(context, settings.emojiFontVersion) }
-    val results = remember(query, cats) {
-        if (query.isBlank()) EmojiRecents.items.mapNotNull { EmojiCatalog.item(it) }.distinct() else EmojiCatalog.search(query)
+    // Поиск по всему каталогу — не работа для главного потока: пока он идёт, клавиатура должна успевать набирать.
+    // Небольшая пауза склеивает быстрый набор: следующая буква отменяет предыдущий запрос.
+    val results by produceState(
+        initialValue = if (query.isBlank()) EmojiRecents.items.mapNotNull { EmojiCatalog.item(it) }.distinct() else emptyList(),
+        query, cats
+    ) {
+        if (query.isBlank()) {
+            value = EmojiRecents.items.mapNotNull { EmojiCatalog.item(it) }.distinct()
+        } else {
+            delay(40L)
+            value = withContext(Dispatchers.Default) { EmojiCatalog.search(query) }
+        }
     }
     Column(
         Modifier.fillMaxWidth().panelSurface(palette).padding(6.dp),
@@ -836,18 +846,20 @@ internal fun PluginsPanel(state: KeyboardState, actions: KeyboardActions, palett
             ) {
                 itemsIndexed(tabs, key = { _, t -> t.key }) { i, t ->
                     val sel = i == selected
-                    val corner by animateDpAsState(if (sel) 12.dp else 20.dp, spring(dampingRatio = 0.6f, stiffness = 600f), label = "ptab")
+                    // вкладка всегда таблетка: квадратная выбранная вкладка выбивалась из скруглённой панели
+                    val bg by animateColorAsState(if (sel) palette.accent else palette.func, tween(180), label = "ptabBg")
+                    val fg by animateColorAsState(if (sel) palette.onAccent else palette.onFunc, tween(180), label = "ptabFg")
                     Row(
-                        Modifier.height(36.dp).clip(RoundedCornerShape(corner))
-                            .background(if (sel) palette.accent else palette.func)
+                        Modifier.height(36.dp).clip(CircleShape)
+                            .background(bg)
                             .clickable { state.pluginTab = t.key }
-                            .padding(horizontal = 12.dp),
+                            .padding(horizontal = 14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        SpecIcon(t.icon, if (sel) palette.onAccent else palette.onFunc, 18.dp)
+                        SpecIcon(t.icon, fg, 18.dp)
                         Text(
-                            t.title, color = if (sel) palette.onAccent else palette.onFunc, fontFamily = font,
+                            t.title, color = fg, fontFamily = font,
                             fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1
                         )
                     }

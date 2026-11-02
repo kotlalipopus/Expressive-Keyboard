@@ -140,7 +140,20 @@ import kotlin.math.sqrt
 // ============================================================================
 
 @Composable
+internal fun MyanmarOrderSection(settings: KeyboardSettings) {
+    val context = LocalContext.current
+    SettingsSection("Бирманский") {
+        ToggleItem(
+            Icons.Rounded.Language, "ေ и ြ перед согласной",
+            "Печатайте как видите на экране: в поле текст попадёт в правильном порядке Unicode. Выключите, если набираете согласную первой",
+            settings.myanmarVisual
+        ) { KeyboardPrefs.edit(context) { putBoolean("myanmar_visual", it) } }
+    }
+}
+
+@Composable
 internal fun LanguagesPage(settings: KeyboardSettings) {
+    if (Languages.enabled(settings).any { it.id == "my" }) MyanmarOrderSection(settings)
     val context = LocalContext.current
     val cs = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
@@ -165,7 +178,7 @@ internal fun LanguagesPage(settings: KeyboardSettings) {
     InfoCard(
         Icons.Rounded.Language,
         tr(
-            "Язык меняется кнопкой 🌐 (удержание — список языков) или свайпом по пробелу. Всего языков: {0}. " +
+            "Язык меняется кнопкой смены языка (удержание — список языков) или свайпом по пробелу. Всего языков: {0}. " +
                 "Подсказки работают по частотному словарю: русский, английский и китайский встроены, остальные скачиваются " +
                 "(~0,3–0,8 МБ). Китайский набирается пиньинем (nihao → 你好), японский — ромадзи (konnichiha → こんにちは), " +
                 "корейский собирает слоги сам, вьетнамский — по Telex.", Languages.all.size
@@ -308,11 +321,22 @@ internal fun DefaultSlotIcon(slot: String, tint: Color, size: Dp) {
         slot == "enter" -> GlyphIcon(Glyph.RETURN, tint, size)
         slot == "go" -> GlyphIcon(Glyph.ARROW, tint, size)
         slot == "layout_swap" -> LayoutSwapIcon(tint, size)
-        slot == "emoji_recent" -> Text("🕒", fontSize = 20.sp)
-        slot.startsWith("emoji_cat_") -> Text(
-            EmojiCategory.ICONS.values.toList().getOrElse(slot.removePrefix("emoji_cat_").toIntOrNull() ?: 0) { "😀" },
-            fontSize = 20.sp
-        )
+        slot == "emoji_recent" -> Icon(Icons.Rounded.History, null, tint = tint, modifier = Modifier.size(size))
+        slot.startsWith("emoji_cat_") -> {
+            // Вкладки эмодзи в настройках показываем векторными значками, как остальные иконки.
+            val v = when (slot.removePrefix("emoji_cat_").toIntOrNull() ?: 0) {
+                1 -> Icons.Rounded.People
+                2 -> Icons.Rounded.Pets
+                3 -> Icons.Rounded.Restaurant
+                4 -> Icons.Rounded.Flight
+                5 -> Icons.Rounded.SportsSoccer
+                6 -> Icons.Rounded.Lightbulb
+                7 -> Icons.Rounded.Favorite
+                8 -> Icons.Rounded.Flag
+                else -> Icons.Rounded.Mood
+            }
+            Icon(v, null, tint = tint, modifier = Modifier.size(size))
+        }
     }
 }
 
@@ -353,6 +377,11 @@ internal fun IconsPage(settings: KeyboardSettings) {
 
     SettingsSection("Стиль эмодзи") {
         GroupItem { EmojiStylePicker(settings) { emojiFontLauncher.launch("*/*") } }
+        ToggleItem(
+            Icons.Rounded.Keyboard, "Возврат к буквам после эмодзи",
+            "Как в Gboard: выбрали эмодзи — панель закрылась, и можно сразу печатать дальше",
+            settings.emojiReturnToKeyboard
+        ) { on -> KeyboardPrefs.edit(context) { putBoolean("emoji_return_keyboard", on) } }
         if (settings.emojiFontVersion != 0L) {
             ActionItem(
                 Icons.Rounded.DeleteOutline, "Удалить свой шрифт эмодзи", null,
@@ -470,6 +499,14 @@ internal fun ToolbarPage(settings: KeyboardSettings) {
         "Порядок кнопок на панели инструментов (кнопка с сеткой слева вверху). На самой клавиатуре порядок тоже " +
             "меняется: удерживайте кнопку и перетащите её влево или вправо."
     )
+    SettingsSection("Размер") {
+        SliderItem(
+            icon = Icons.Rounded.Height, title = "Толщина верхней панели",
+            value = settings.headerHeightDp, range = 40f..60f,
+            format = { "${it.roundToInt()} dp" },
+            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("header_height_dp", v) } }
+        )
+    }
     SettingsSection("Кнопка панели") {
         ToggleItem(
             Icons.Rounded.Apps, "Кнопка панели функций",
@@ -635,4 +672,98 @@ internal fun LangLayoutDialog(lang: KeyboardLanguage, settings: KeyboardSettings
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(tr("Отмена")) } }
     )
+}
+
+private const val MY_WORDS_SHOWN = 200
+
+/** «Мой словарь»: слова, которых нет в словаре языка (с диакритикой, имена, термины). */
+@Composable
+internal fun MyWordsPage(settings: KeyboardSettings) {
+    val context = LocalContext.current
+    val cs = MaterialTheme.colorScheme
+    val langs = Languages.enabled(settings)
+    var langId by remember { mutableStateOf(langs.firstOrNull { it.id != "ru" && it.id != "en" }?.id ?: langs.firstOrNull()?.id.orEmpty()) }
+    val lang = langs.firstOrNull { it.id == langId } ?: langs.firstOrNull() ?: return
+    val code = lang.dict ?: lang.id
+    var all by remember { mutableStateOf(WordPredictorEngine.readMyWords(context)) }
+    var adding by remember { mutableStateOf(false) }
+    var confirmClear by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val words = all[code].orEmpty()
+    val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) scope.launch {
+            val r = withContext(Dispatchers.IO) {
+                runCatching {
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error(tr("Файл не открылся"))
+                    WordPredictorEngine.importMyWords(context, lang, bytes)
+                }
+            }
+            all = WordPredictorEngine.readMyWords(context)
+            r.onSuccess { Toast.makeText(context, if (it > 0) tr("Добавлено слов: {0}", it) else tr("Нечего добавлять"), Toast.LENGTH_SHORT).show() }
+                .onFailure { Toast.makeText(context, tr("Ошибка: {0}", it.message), Toast.LENGTH_LONG).show() }
+        }
+    }
+
+    InfoCard(
+        Icons.Rounded.MenuBook,
+        "Добавьте слова, которых не хватает в словаре языка: с ударениями и диакритикой (você, ação), имена, термины. " +
+            "Они появятся в подсказках и не будут исправляться. Можно добавить сразу несколько — через пробел или запятую."
+    )
+    if (langs.size > 1) {
+        ChoiceItem(
+            Icons.Rounded.Language, "Язык", null,
+            langs.map { it.id to it.spaceLabel }, lang.id
+        ) { langId = it }
+    }
+    SettingsSection(tr("Слова: {0}", words.size)) {
+        ActionItem(Icons.Rounded.Add, "Добавить слова", lang.spaceLabel, onClick = { adding = true })
+        ActionItem(Icons.Rounded.UploadFile, "Загрузить словарь из файла", "Файл .txt: слова по строкам или через пробел, подходит выгрузка Gboard", onClick = {
+            runCatching { fileLauncher.launch(arrayOf("*/*")) }.onFailure {
+                Toast.makeText(context, tr("На телефоне нет приложения для выбора файлов"), Toast.LENGTH_LONG).show()
+            }
+        })
+        if (words.isNotEmpty()) ActionItem(Icons.Rounded.DeleteForever, "Удалить все слова", lang.spaceLabel, onClick = { confirmClear = true })
+        // большой загруженный словарь целиком не показываем: длинный список тормозит страницу
+        if (words.size > MY_WORDS_SHOWN) Text(
+            tr("Показаны последние {0}", MY_WORDS_SHOWN), Modifier.padding(horizontal = 16.dp),
+            style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant
+        )
+        words.take(MY_WORDS_SHOWN).forEach { w ->
+            GroupItem {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(w, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = cs.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    IconButton(onClick = {
+                        WordPredictorEngine.removeMyWord(context, lang, w)
+                        all = WordPredictorEngine.readMyWords(context)
+                    }) { Icon(Icons.Rounded.Close, tr("Удалить")) }
+                }
+            }
+        }
+    }
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text(tr("Удалить все слова?")) },
+            text = { Text(tr("Мой словарь языка «{0}» станет пустым", lang.spaceLabel)) },
+            confirmButton = {
+                Button(onClick = {
+                    confirmClear = false
+                    WordPredictorEngine.clearMyWords(context, lang)
+                    all = WordPredictorEngine.readMyWords(context)
+                }) { Text(tr("Удалить")) }
+            },
+            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text(tr("Отмена")) } }
+        )
+    }
+    if (adding) {
+        TextInputDialog("Добавить слова", "", "Например: você ação coração", onDismiss = { adding = false }) { v ->
+            adding = false
+            val n = WordPredictorEngine.addMyWords(context, lang, v)
+            all = WordPredictorEngine.readMyWords(context)
+            Toast.makeText(context, if (n > 0) tr("Добавлено слов: {0}", n) else tr("Нечего добавлять"), Toast.LENGTH_SHORT).show()
+        }
+    }
 }

@@ -111,12 +111,32 @@ object Anims {
         return parsed
     }
 
-    fun all(settings: KeyboardSettings): List<PressAnim> = presets + custom(settings)
+    fun all(settings: KeyboardSettings): List<PressAnim> = cached(settings)
+
+    /** Готовый список и карта id → анимация: forKey вызывается для каждой клавиши, а список собирался заново. */
+    @Volatile private var allRaw = ""
+    @Volatile private var allCached: List<PressAnim> = presets
+    @Volatile private var byId: Map<String, PressAnim> = presets.associateBy { it.id }
+
+    private fun cached(settings: KeyboardSettings): List<PressAnim> {
+        val raw = settings.customAnims
+        if (raw != allRaw) {
+            val list = presets + custom(settings)
+            val map = HashMap<String, PressAnim>(list.size * 2)
+            // при совпадении id побеждает первый, как и раньше в firstOrNull
+            list.forEach { map.putIfAbsent(it.id, it) }
+            byId = map
+            allCached = list
+            allRaw = raw
+        }
+        return allCached
+    }
 
     /** Анимация нажатия для клавиши: выбранная в настройках или из темы. */
     fun forKey(settings: KeyboardSettings, style: KeyStyle?): PressAnim {
+        cached(settings)
         val id = settings.animPress
-        if (id != "THEME") all(settings).firstOrNull { it.id == id }?.let { return it }
+        if (id != "THEME") byId[id]?.let { return it }
         return fromEffect(style?.press, style?.pressScale)
     }
 

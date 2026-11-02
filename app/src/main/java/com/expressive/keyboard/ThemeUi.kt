@@ -367,6 +367,11 @@ internal fun ThemesPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -
             "Клавиши — стеклянные линзы: гнут и размазывают фон, с объёмными бликами. Размытие приложения под клавиатурой включается само",
             settings.liquidGlass
         ) { KeyboardPrefs.edit(context) { putBoolean("liquid_glass", it) } }
+        ToggleItem(
+            Icons.Rounded.BlurOn, "Слияние клавиш",
+            "Нажатая стеклянная клавиша сливается с соседними, как капли",
+            settings.glassMerge
+        ) { KeyboardPrefs.edit(context) { putBoolean("glass_merge", it) } }
     }
 
     // настройки выбранной темы
