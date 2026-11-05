@@ -117,7 +117,11 @@ sealed interface UiNode {
     data class Scroll(val children: List<UiNode>, val horizontal: Boolean, val height: Float) : UiNode
     data class Row(val children: List<UiNode>) : UiNode
     data class Column(val children: List<UiNode>) : UiNode
-    data class Grid(val items: List<GridItem>, val minWidth: Float, val height: Float, val action: ScriptCall?) : UiNode
+    /** columns > 0 — ровно столько колонок одинаковой ширины (калькулятор не «прыгает» на другом dpi). */
+    data class Grid(
+        val items: List<GridItem>, val minWidth: Float, val height: Float, val action: ScriptCall?,
+        val columns: Int = 0
+    ) : UiNode
     data class Spacer(val size: Float) : UiNode
     data class Image(val src: String, val size: Float, val action: ScriptCall?, val value: Any?) : UiNode
     data class Error(val message: String) : UiNode
@@ -1715,7 +1719,8 @@ object ScriptHost {
                 } ?: emptyList(),
                 f("minWidth", 46f).coerceIn(24f, 400f),
                 f("height", 46f).coerceIn(24f, 200f),
-                call(m, o["onClick"])
+                call(m, o["onClick"]),
+                f("columns", 0f).toInt().coerceIn(0, 20)
             )
             "spacer" -> UiNode.Spacer(f("size", 8f).coerceIn(0f, 200f))
             "image" -> UiNode.Image(s("src"), f("size", 48f).coerceIn(8f, 300f), call(m, o["onClick"]), o["value"])

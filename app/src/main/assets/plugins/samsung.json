@@ -1,15 +1,23 @@
 {
   "id": "builtin.samsung",
   "name": "Samsung One UI",
-  "version": "1.0",
+  "version": "2.0",
   "author": "Expressive Keyboard",
   "description": "Как клавиатура Samsung: светлые плоские клавиши со скруглением, серые служебные, синий акцент One UI. Светлый и тёмный вариант, в настройках — синий Enter и контуры.",
   "icon": "📱",
   "skin": {
-    "keyboard": { "corner": 22, "font": "sans" },
+    "keyboard": {
+      "corner": 22,
+      "font": "sans"
+    },
     "colors": {
-      "background": "#F1F1F3", "key": "#FFFFFF", "keyText": "#111111",
-      "func": "#DEDEE3", "funcText": "#1A1A1A", "accent": "#3E91FF", "accentText": "#FFFFFF"
+      "background": "#ECECEF",
+      "key": "#FFFFFF",
+      "keyText": "#111111",
+      "func": "#DCDCE2",
+      "funcText": "#1A1A1A",
+      "accent": "#3E91FF",
+      "accentText": "#FFFFFF"
     },
     "keys": {
       "*": {
@@ -22,56 +30,180 @@
         "press": "none",
         "fontWeight": 400,
         "fontScale": 1.06,
-        "inset": 0.5
+        "inset": 1,
+        "shadow": 1.5,
+        "shadowY": 1,
+        "shadowColor": "#1F000000"
       },
-      "func": { "background": "#DEDEE3", "pressedBackground": "#C7C8CE", "text": "#1A1A1A" },
-      "mode": { "fontWeight": 500, "fontScale": 0.95 },
-      "space": { "background": "#FFFFFF" },
-      "enter": { "background": "#DEDEE3", "pressedBackground": "#C7C8CE", "text": "#1A1A1A" },
-      "shift": { "text": "#1A1A1A" }
+      "func": {
+        "background": "#DCDCE2",
+        "pressedBackground": "#C7C8CE",
+        "text": "#1A1A1A"
+      },
+      "mode": {
+        "fontWeight": 500,
+        "fontScale": 0.95
+      },
+      "space": {
+        "background": "#FFFFFF"
+      },
+      "enter": {
+        "background": "#DCDCE2",
+        "pressedBackground": "#C7C8CE",
+        "text": "#1A1A1A"
+      },
+      "shift": {
+        "text": "#1A1A1A"
+      }
     },
-    "popup": { "radius": 10, "background": "#FFFFFF", "text": "#111111", "pressedBackground": "#3E91FF", "pressedText": "#FFFFFF" },
-    "chips": { "material": "none", "text": "#1A1A1A" },
-    "buttons": { "material": "none", "text": "#55565C" },
-    "panel": { "background": "#FFFFFF", "radius": 18 },
+    "popup": {
+      "radius": 10,
+      "background": "#FFFFFF",
+      "text": "#111111",
+      "pressedBackground": "#3E91FF",
+      "pressedText": "#FFFFFF"
+    },
+    "chips": {
+      "material": "none",
+      "text": "#1A1A1A"
+    },
+    "buttons": {
+      "material": "none",
+      "text": "#55565C"
+    },
+    "panel": {
+      "background": "#FFFFFF",
+      "radius": 18
+    },
     "dark": {
       "colors": {
-        "background": "#151517", "key": "#2B2B2E", "keyText": "#F2F2F2",
-        "func": "#202022", "funcText": "#E6E6E6", "accent": "#3E91FF", "accentText": "#FFFFFF"
+        "background": "#101012",
+        "key": "#2B2B2E",
+        "keyText": "#F2F2F2",
+        "func": "#202022",
+        "funcText": "#E6E6E6",
+        "accent": "#3E91FF",
+        "accentText": "#FFFFFF"
       },
       "keys": {
-        "*": { "background": "#2B2B2E", "pressedBackground": "#46464B", "text": "#F2F2F2" },
-        "func": { "background": "#202022", "pressedBackground": "#3A3A3E", "text": "#E6E6E6" },
-        "space": { "background": "#2B2B2E" },
-        "enter": { "background": "#202022", "pressedBackground": "#3A3A3E", "text": "#E6E6E6" },
-        "shift": { "text": "#E6E6E6" }
+        "*": {
+          "background": "#2B2B2E",
+          "pressedBackground": "#46464B",
+          "text": "#F2F2F2",
+          "shadowColor": "#66000000"
+        },
+        "func": {
+          "background": "#202022",
+          "pressedBackground": "#3A3A3E",
+          "text": "#E6E6E6"
+        },
+        "space": {
+          "background": "#2B2B2E"
+        },
+        "enter": {
+          "background": "#202022",
+          "pressedBackground": "#3A3A3E",
+          "text": "#E6E6E6"
+        },
+        "shift": {
+          "text": "#E6E6E6"
+        }
       },
-      "popup": { "background": "#3A3A3E", "text": "#FFFFFF" },
-      "chips": { "text": "#EDEDED" },
-      "buttons": { "text": "#C2C3C8" },
-      "panel": { "background": "#1F1F21" }
+      "popup": {
+        "background": "#3A3A3E",
+        "text": "#FFFFFF"
+      },
+      "chips": {
+        "text": "#EDEDED"
+      },
+      "buttons": {
+        "text": "#C2C3C8"
+      },
+      "panel": {
+        "background": "#1F1F21"
+      }
     },
     "options": [
       {
-        "id": "blueEnter", "title": "Синий Enter", "type": "toggle", "default": false,
+        "id": "blueEnter",
+        "title": "Синий Enter",
+        "type": "toggle",
+        "default": false,
         "on": {
-          "keys": { "enter": { "background": "#3E91FF", "pressedBackground": "#2F7BE6", "text": "#FFFFFF" } },
-          "dark": { "keys": { "enter": { "background": "#3E91FF", "pressedBackground": "#2F7BE6", "text": "#FFFFFF" } } }
+          "keys": {
+            "enter": {
+              "background": "#3E91FF",
+              "pressedBackground": "#2F7BE6",
+              "text": "#FFFFFF"
+            }
+          },
+          "dark": {
+            "keys": {
+              "enter": {
+                "background": "#3E91FF",
+                "pressedBackground": "#2F7BE6",
+                "text": "#FFFFFF"
+              }
+            }
+          }
         }
       },
       {
-        "id": "outlines", "title": "Контуры клавиш", "type": "toggle", "default": false,
+        "id": "outlines",
+        "title": "Контуры клавиш",
+        "type": "toggle",
+        "default": false,
         "on": {
-          "keys": { "*": { "border": "#CFCFD5", "borderWidth": 1 } },
-          "dark": { "keys": { "*": { "border": "#3E3E43", "borderWidth": 1 } } }
+          "keys": {
+            "*": {
+              "border": "#CFCFD5",
+              "borderWidth": 1
+            }
+          },
+          "dark": {
+            "keys": {
+              "*": {
+                "border": "#3E3E43",
+                "borderWidth": 1
+              }
+            }
+          }
         }
       },
       {
-        "id": "style", "title": "Стиль клавиш", "type": "choice", "default": "flat",
+        "id": "style",
+        "title": "Стиль клавиш",
+        "type": "choice",
+        "default": "raised",
         "choices": [
-          { "id": "flat", "title": "Плоские" },
-          { "id": "raised", "title": "С тенью", "patch": { "keys": { "*": { "shadow": 2, "shadowY": 1, "shadowColor": "#33000000" } }, "dark": { "keys": { "*": { "shadowColor": "#80000000" } } } } },
-          { "id": "round", "title": "Круглее", "patch": { "keys": { "*": { "radius": 14, "pressedRadius": 14 } } } }
+          {
+            "id": "flat",
+            "title": "Плоские",
+            "patch": {
+              "keys": {
+                "*": {
+                  "shadow": 0,
+                  "shadowY": 0
+                }
+              }
+            }
+          },
+          {
+            "id": "raised",
+            "title": "С тенью"
+          },
+          {
+            "id": "round",
+            "title": "Круглее",
+            "patch": {
+              "keys": {
+                "*": {
+                  "radius": 14,
+                  "pressedRadius": 14
+                }
+              }
+            }
+          }
         ]
       }
     ]

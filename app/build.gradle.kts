@@ -14,8 +14,8 @@ android {
         applicationId = "com.expressive.keyboard"
         minSdk = 26
         targetSdk = 35
-        versionCode = 23
-        versionName = "11.1.9"
+        versionCode = 24
+        versionName = "11.1.10"
         vectorDrawables {
             useSupportLibrary = true
         }
@@ -80,6 +80,8 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+        // API Material 3 Expressive (MaterialShapes, MotionScheme.expressive, LoadingIndicator) пока помечены экспериментальными
+        freeCompilerArgs += "-opt-in=androidx.compose.material3.ExperimentalMaterial3ExpressiveApi"
     }
 
     buildFeatures {
@@ -90,6 +92,11 @@ android {
     testOptions {
         // проверки качества исправлений и свайпа гоняются на компьютере, без телефона
         unitTests.isReturnDefaultValues = true
+    }
+
+    lint {
+        // lint-проверки из material3 1.5 (Expressive) собраны под более новый AGP и роняют lintVital — сборку не прерываем
+        checkReleaseBuilds = false
     }
 
     dependenciesInfo {
@@ -117,7 +124,7 @@ composeCompiler {
 }
 
 dependencies {
-    val composeBom = platform("androidx.compose:compose-bom:2024.09.02")
+    val composeBom = platform("androidx.compose:compose-bom:2025.06.00")
     implementation(composeBom)
 
     implementation("androidx.core:core-ktx:1.13.1")
@@ -132,7 +139,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.compose.material3:material3:1.3.0")
+    implementation("androidx.compose.material3:material3:1.5.0-alpha13")
     implementation("androidx.compose.material:material-icons-extended")
 
     // пароли и логины из Google Паролей (и других служб автозаполнения) в строке подсказок, как в Gboard

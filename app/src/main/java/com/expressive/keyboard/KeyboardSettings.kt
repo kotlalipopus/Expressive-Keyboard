@@ -207,6 +207,13 @@ data class KeyboardSettings(
     val sidePaddingDp: Float = 6f,
     val oneHanded: String = "OFF",                // OFF | LEFT | RIGHT
     val oneHandedWidth: Float = 0.7f,
+    /** Плавающая клавиатура: небольшое окно, которое можно перетащить в любое место экрана. */
+    val floating: Boolean = false,
+    /** Ширина плавающей клавиатуры — доля ширины экрана. */
+    val floatWidth: Float = 0.8f,
+    /** Где стоит плавающая клавиатура: доли свободного места по горизонтали и снизу вверх. */
+    val floatX: Float = 0.5f,
+    val floatY: Float = 0.15f,
     /** Ширина клавиш (доля экрана, по центру) — для планшетов и широких экранов; 1 — во всю ширину. */
     val keyboardWidth: Float = 1f,
     /** Верхняя панель над клавиатурой: подсказки, микрофон и кнопка меню. */
@@ -216,7 +223,7 @@ data class KeyboardSettings(
     /** «Жидкое стекло» на любой теме: клавиши-линзы с объёмными бликами (Android 13+). */
     val liquidGlass: Boolean = false,
     /** Стеклянные клавиши при нажатии сливаются с соседними, как капли (Android 13+). */
-    val glassMerge: Boolean = true,
+    val glassMerge: Boolean = false,
     /** Бирманский: ေ и ြ набираются перед согласной, как на экране, а в поле попадают в порядке Unicode. */
     val myanmarVisual: Boolean = true,
     val showSuggestions: Boolean = true,
@@ -295,6 +302,8 @@ data class KeyboardSettings(
     val spaceLongAction: String = "PICKER",
     /** Свой звук нажатия: версия файла (0 — системный звук). */
     val customSoundVersion: Long = 0L,
+    /** Звук нажатия: SYSTEM | SOFT | BUBBLE | WOOD | MECHANICAL | GLASS | CUSTOM (см. KeySoundStyle). */
+    val soundStyle: String = "SYSTEM",
     val autoPair: Boolean = false,                // ( → () и курсор внутрь
     val incognito: Boolean = false,               // не учить слова и не запоминать буфер
     // --- оформление из плагина ---
@@ -343,10 +352,12 @@ data class KeyboardSettings(
     /** SYSTEM, CUSTOM (свой шрифт) или встроенный набор: twemoji, noto, blob, openmoji. */
     val emojiStyle: String = "SYSTEM",
     /** После вставки эмодзи клавиатура сразу возвращается к буквам, как в Gboard. */
-    val emojiReturnToKeyboard: Boolean = true,
+    val emojiReturnToKeyboard: Boolean = false,
     // --- интерфейс ---
     val appLanguage: String = "SYSTEM",           // SYSTEM | ru | en
     val designStyle: String = "EXPRESSIVE",
+    /** Сколько выразительных форм: FULL, ACCENTS или NONE (см. ShapeAmount). */
+    val shapeAmount: String = ShapeAmount.FULL,
     /** Не хранится: клавиатура в альбомной ориентации — ниже клавиши и шапка. */
     val landscape: Boolean = false
 ) {
@@ -411,7 +422,7 @@ data class KeyboardSettings(
 
     fun accentSpec(): WavySpec {
         val p = ExpressiveShapePreset.fromId(shapePreset)
-        return WavySpec(p.profile, waveCount, waveAmplitudePercent / 100f)
+        return WavySpec(p.profile, waveCount, waveAmplitudePercent / 100f, p)
     }
 }
 
@@ -432,16 +443,32 @@ object KeyboardPrefs {
         state.value = read(sp)
         I18n.apply(state.value.appLanguage)
         val l = SharedPreferences.OnSharedPreferenceChangeListener { p, _ ->
-            // значение не того типа (из старой копии) не должно оставлять настройки застывшими
-            runCatching { read(p) }.onSuccess { state.value = it }
-            I18n.apply(state.value.appLanguage)
+            // одна правка меняет десятки ключей (тема, сброс, импорт), а слушатель зовётся на каждый:
+            // раньше все настройки перечитывались столько же раз подряд. Теперь — один раз, следующим сообщением
+            if (!dirty) {
+                dirty = true
+                mainHandler.post { refresh(p) }
+            }
         }
         listener = l
         sp.registerOnSharedPreferenceChangeListener(l)
     }
 
+    @Volatile private var dirty = false
+    private val mainHandler by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
+
+    private fun refresh(p: SharedPreferences) {
+        if (!dirty) return
+        dirty = false
+        // значение не того типа (из старой копии) не должно оставлять настройки застывшими
+        runCatching { read(p) }.onSuccess { if (it != state.value) state.value = it }
+        I18n.apply(state.value.appLanguage)
+    }
+
     fun current(context: Context): KeyboardSettings {
         ensureInit(context)
+        // правку только что записали, а сообщение ещё не дошло — читаем сразу, чтобы не отдать старое
+        if (dirty && android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) refresh(prefs(context))
         return state.value
     }
 
@@ -510,11 +537,15 @@ object KeyboardPrefs {
             sidePaddingDp = p.getFloat("side_padding_dp", 6f).coerceIn(0f, 32f),
             oneHanded = p.getString("one_handed", "OFF") ?: "OFF",
             oneHandedWidth = p.getFloat("one_handed_w", 0.7f).coerceIn(0.55f, 0.9f),
+            floating = p.getBoolean("floating_keyboard", false),
+            floatWidth = p.getFloat("float_width", 0.8f).coerceIn(0.5f, 1f),
+            floatX = p.getFloat("float_x", 0.5f).coerceIn(0f, 1f),
+            floatY = p.getFloat("float_y", 0.15f).coerceIn(0f, 1f),
             keyboardWidth = p.getFloat("keyboard_width", 1f).coerceIn(0.5f, 1f),
             showHeader = p.getBoolean("show_header", true),
             numberPad = p.getBoolean("number_pad", true),
             liquidGlass = p.getBoolean("liquid_glass", false),
-            glassMerge = p.getBoolean("glass_merge", true),
+            glassMerge = p.getBoolean("glass_merge", false),
             myanmarVisual = p.getBoolean("myanmar_visual", true),
             showSuggestions = p.getBoolean("show_suggestions", true),
             showMicButton = p.getBoolean("show_mic_button", true),
@@ -570,6 +601,9 @@ object KeyboardPrefs {
             spaceLongPress = p.getBoolean("space_long_press", true),
             spaceLongAction = if (!p.getBoolean("space_long_press", true)) "OFF" else p.getString("space_long_action", "PICKER") ?: "PICKER",
             customSoundVersion = p.getLong("custom_sound_version", 0L),
+            // до выбора стилей свой файл включался сам, как только его загрузили
+            soundStyle = p.getString("sound_style", null)
+                ?: if (p.getLong("custom_sound_version", 0L) != 0L) "CUSTOM" else "SYSTEM",
             autoPair = p.getBoolean("auto_pair", false),
             incognito = p.getBoolean("incognito", false),
             skinPlugin = p.getString("skin_plugin", "") ?: "",
@@ -599,9 +633,10 @@ object KeyboardPrefs {
             userLayouts = p.getString("user_layouts", "") ?: "",
             emojiFontVersion = p.getLong("emoji_font_version", 0L),
             emojiStyle = p.getString("emoji_style", null) ?: if (p.getLong("emoji_font_version", 0L) != 0L) "CUSTOM" else "SYSTEM",
-            emojiReturnToKeyboard = p.getBoolean("emoji_return_keyboard", true),
+            emojiReturnToKeyboard = p.getBoolean("emoji_return_keyboard", false),
             appLanguage = p.getString("app_language", "SYSTEM") ?: "SYSTEM",
-            designStyle = p.getString("design_style", "EXPRESSIVE") ?: "EXPRESSIVE"
+            designStyle = p.getString("design_style", "EXPRESSIVE") ?: "EXPRESSIVE",
+            shapeAmount = p.getString("shape_amount", ShapeAmount.FULL) ?: ShapeAmount.FULL
         )
     }
 
@@ -625,7 +660,7 @@ object KeyboardPrefs {
         listOf(
             "key_height_dp", "header_height_dp", "landscape_scale", "corner_radius_dp", "key_spacing_dp", "row_spacing_dp", "bottom_offset_dp",
             "wave_amplitude_percent", "vibration_ms", "vibration_amplitude", "long_press_ms", "key_opacity", "bg_transparency", "bg_dim",
-            "bg_blur_dp", "window_blur_dp", "key_label_scale", "side_padding_dp", "one_handed_w", "press_animation", "sound_volume", "anim_speed"
+            "bg_blur_dp", "window_blur_dp", "key_label_scale", "side_padding_dp", "one_handed_w", "float_width", "press_animation", "sound_volume", "anim_speed"
         ).forEach { put(it, 'f') }
         listOf(
             "wave_count", "seed_color", "color_background", "color_key", "color_key_text", "color_func",
@@ -634,7 +669,7 @@ object KeyboardPrefs {
         listOf(
             "show_number_row", "show_key_borders", "key_preview", "key_background", "emoji_return_keyboard", "auto_capitalize", "auto_correct_enabled",
             "double_space_period", "haptics_enabled", "vibrate_on_release", "strong_special_keys", "sound_enabled",
-            "show_hints", "show_header", "number_pad", "liquid_glass", "glass_merge", "myanmar_visual", "show_suggestions", "show_mic_button", "show_emoji_key", "show_globe_key", "panel_animations",
+            "show_hints", "show_header", "number_pad", "floating_keyboard", "liquid_glass", "glass_merge", "myanmar_visual", "show_suggestions", "show_mic_button", "show_emoji_key", "show_globe_key", "panel_animations",
             "backspace_swipe", "clipboard_history", "instant_input", "glide_typing", "glide_trail", "swipe_up_hint",
             "space_long_press", "auto_pair", "incognito", "dict_auto_download", "punctuation_keys", "smart_punctuation",
             "system_spellcheck", "edit_bar", "auto_space_punct", "eco_mode", "eco_press", "eco_panels", "eco_blur", "eco_trail", "eco_preview", "eco_haptics", "eco_sound", "eco_suggestions", "dash_merge", "clip_screenshots", "correct_everywhere", "dynamic_zones", "ai_voice_cleanup", "tools_button", "pinned_tools", "landscape_split"
@@ -642,7 +677,7 @@ object KeyboardPrefs {
         listOf(
             "theme_mode", "accent_shape_preset", "haptic_mode", "font_style", "color_source", "one_handed", "space_swipe",
             "eco_when", "globe_long_press", "tools_long_press", "window_blur", "hold_mode", "ai_provider", "space_long_action", "languages", "auto_correct_strength", "translate_target", "gemini_model", "anthropic_model", "openai_model", "groq_model", "openrouter_model", "toolbar_order", "toolbar_hidden", "user_layouts",
-            "space_left_key", "space_right_key", "emoji_style", "clipboard_keep", "app_language", "design_style", "skin_options", "anim_press", "anim_popup", "anim_panel", "custom_anims", "lang_layouts"
+            "space_left_key", "space_right_key", "sound_style", "emoji_style", "clipboard_keep", "app_language", "design_style", "shape_amount", "skin_options", "anim_press", "anim_popup", "anim_panel", "custom_anims", "lang_layouts"
         ).forEach { put(it, 's') }
     }
 

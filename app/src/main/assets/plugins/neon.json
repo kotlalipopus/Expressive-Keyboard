@@ -1,31 +1,52 @@
 {
   "id": "builtin.neon",
   "name": "Неон",
-  "version": "3.0",
+  "version": "3.1",
   "author": "Expressive Keyboard",
   "description": "Глубокий тёмно-фиолетовый фон, тонкие бирюзовые контуры и чёткие буквы. Клавиша загорается только под пальцем, Enter — переливается бирюзовым в сиреневый.",
   "icon": "🌃",
   "skin": {
     "keyboard": {
-      "background": { "colors": ["#0C0A17", "#120E22"], "angle": 90 },
+      "background": {
+        "colors": [
+          "#0C0A17",
+          "#120E22"
+        ],
+        "angle": 90
+      },
       "orbs": [
-        { "color": "#26A78BFA", "x": 0.85, "y": 1.1, "r": 0.6 },
-        { "color": "#1422D3EE", "x": 0.1, "y": -0.1, "r": 0.5 }
+        {
+          "color": "#26A78BFA",
+          "x": 0.85,
+          "y": 1.1,
+          "r": 0.6
+        },
+        {
+          "color": "#1422D3EE",
+          "x": 0.1,
+          "y": -0.1,
+          "r": 0.5
+        }
       ],
       "trail": "#22D3EE",
       "corner": 24
     },
     "colors": {
-      "background": "#0E0B1B", "key": "#161229", "keyText": "#E6FBFF",
-      "func": "#161229", "funcText": "#E9E1FF", "accent": "#22D3EE", "accentText": "#08131A"
+      "background": "#0E0B1B",
+      "key": "#161229",
+      "keyText": "#E6FBFF",
+      "func": "#161229",
+      "funcText": "#E9E1FF",
+      "accent": "#22D3EE",
+      "accentText": "#08131A"
     },
     "keys": {
       "*": {
         "material": "outline",
         "background": "#0DFFFFFF",
-        "border": "#7322D3EE",
-        "borderWidth": 1.1,
-        "glow": "#2E22D3EE",
+        "border": "#5922D3EE",
+        "borderWidth": 1,
+        "glow": "#1F22D3EE",
         "text": "#E6FBFF",
         "pressedBackground": "#22D3EE",
         "pressedText": "#08131A",
@@ -35,17 +56,60 @@
         "inset": 1.5,
         "hideHint": true
       },
-      "func": { "border": "#73A78BFA", "glow": "#2EA78BFA", "text": "#E9E1FF", "pressedBackground": "#A78BFA", "pressedText": "#120E22" },
-      "space": { "border": "#4D22D3EE" },
+      "func": {
+        "border": "#59A78BFA",
+        "glow": "#1FA78BFA",
+        "text": "#E9E1FF",
+        "pressedBackground": "#A78BFA",
+        "pressedText": "#120E22"
+      },
+      "space": {
+        "border": "#4022D3EE",
+        "text": "#9CEFFF",
+        "fontScale": 0.9
+      },
       "enter": {
         "material": "solid",
-        "background": { "colors": ["#22D3EE", "#A78BFA"], "angle": 0 },
-        "text": "#08131A", "glow": "#6622D3EE", "pressedBackground": "#E6FBFF"
+        "background": {
+          "colors": [
+            "#22D3EE",
+            "#A78BFA"
+          ],
+          "angle": 0
+        },
+        "text": "#08131A",
+        "glow": "#6622D3EE",
+        "pressedBackground": "#E6FBFF"
       }
     },
-    "popup": { "radius": 12, "background": "#1B1633", "border": "#22D3EE", "text": "#E6FBFF", "pressedBackground": "#22D3EE", "pressedText": "#08131A" },
-    "chips": { "material": "none", "text": "#C9F6FF" },
-    "buttons": { "material": "outline", "background": "#0DFFFFFF", "border": "#6622D3EE", "borderWidth": 1.1, "glow": "#2622D3EE", "text": "#9CEFFF", "pressedBackground": "#22D3EE" },
-    "panel": { "material": "outline", "background": "#B3141026", "border": "#4022D3EE", "borderWidth": 1, "glow": "#00000000", "radius": 20 }
+    "popup": {
+      "radius": 12,
+      "background": "#1B1633",
+      "border": "#22D3EE",
+      "text": "#E6FBFF",
+      "pressedBackground": "#22D3EE",
+      "pressedText": "#08131A"
+    },
+    "chips": {
+      "material": "none",
+      "text": "#C9F6FF"
+    },
+    "buttons": {
+      "material": "outline",
+      "background": "#0DFFFFFF",
+      "border": "#6622D3EE",
+      "borderWidth": 1.1,
+      "glow": "#2622D3EE",
+      "text": "#9CEFFF",
+      "pressedBackground": "#22D3EE"
+    },
+    "panel": {
+      "material": "outline",
+      "background": "#B3141026",
+      "border": "#4022D3EE",
+      "borderWidth": 1,
+      "glow": "#00000000",
+      "radius": 20
+    }
   }
 }

@@ -162,6 +162,7 @@ internal fun LanguagesPage(settings: KeyboardSettings) {
     val status = Dictionaries.status
     var query by remember { mutableStateOf("") }
     var layoutFor by remember { mutableStateOf<KeyboardLanguage?>(null) }
+    var showAll by remember { mutableStateOf(false) }
 
     fun save(list: List<KeyboardLanguage>) =
         KeyboardPrefs.edit(context) { putString("languages", list.joinToString(",") { it.id }) }
@@ -222,9 +223,15 @@ internal fun LanguagesPage(settings: KeyboardSettings) {
             )
         }
         val q = query.trim().lowercase()
-        Languages.all.filter { it !in enabled }
-            .filter { q.isEmpty() || it.title.lowercase().contains(q) || it.displayTitle().lowercase().contains(q) || it.spaceLabel.lowercase().contains(q) || it.id.startsWith(q) }
-            .forEach { lang ->
+        // строка поиска языка собирается один раз, а не на каждую букву для всех 120 языков
+        val searchKeys = remember(I18n.isEnglish, Languages.all.size) {
+            Languages.all.associate { it.id to "${it.title}|${it.displayTitle()}|${it.spaceLabel}".lowercase() }
+        }
+        val available = Languages.all.filter { it !in enabled }
+            .filter { q.isEmpty() || searchKeys[it.id]?.contains(q) == true || it.id.startsWith(q) }
+        // весь список (больше сотни строк) строится только по просьбе: страница открывается сразу
+        val shown = if (q.isNotEmpty() || showAll) available else available.take(LANGS_PREVIEW)
+        shown.forEach { lang ->
                 key(dictVersion, lang.id) {
                     LanguageRow(lang, dictState(context, lang, status, enabled = false), trailing = {
                         FilledTonalIconButton(onClick = {
@@ -234,6 +241,9 @@ internal fun LanguagesPage(settings: KeyboardSettings) {
                     }, onDict = null)
                 }
             }
+        if (shown.size < available.size) {
+            ActionItem(Icons.Rounded.KeyboardArrowDown, tr("Показать все языки ({0})", available.size), null, onClick = { showAll = true })
+        }
     }
     SettingsSection("Словари") {
         ToggleItem(Icons.Rounded.CloudDownload, "Скачивать словарь автоматически", "При добавлении языка и при первом наборе на нём", settings.dictAutoDownload) {
@@ -243,6 +253,8 @@ internal fun LanguagesPage(settings: KeyboardSettings) {
     layoutFor?.let { l -> LangLayoutDialog(l, settings) { layoutFor = null } }
 }
 
+private const val LANGS_PREVIEW = 12
+
 private fun dictState(context: Context, lang: KeyboardLanguage, status: Map<String, String>, enabled: Boolean = true): String {
     if (lang.composer == Composer.PINYIN) return tr("Встроенный словарь пиньиня — 40 000 слов")
     if (lang.composer == Composer.KANA) return tr("Хирагана и катакана из латиницы")
@@ -250,6 +262,8 @@ private fun dictState(context: Context, lang: KeyboardLanguage, status: Map<Stri
     status[code]?.let { return if (it == "загрузка…") tr("Словарь загружается…") else tr("Ошибка: {0}", it) }
     return when {
         Dictionaries.bundled(context, code) -> tr("Словарь встроен")
+        // в списке «Добавить язык» диск не трогаем: проверка файла для каждой из сотни строк тормозила прокрутку
+        !enabled -> tr("Есть словарь подсказок")
         Dictionaries.isInstalled(context, code) -> tr("Словарь скачан")
         enabled -> tr("Словарь не скачан — нажмите, чтобы скачать")
         else -> tr("Есть словарь подсказок")

@@ -53,8 +53,8 @@
           "highlight": 0.75,
           "rim": 0.8,
           "tint": "#8CFFFFFF",
-          "grain": 0.22,
-          "frost": 0.3
+          "grain": 0.06,
+          "frost": 0.2
         },
         "pressedBackground": "#FFFFFF",
         "shadow": 5,
@@ -71,9 +71,9 @@
           "dispersion": 0.08,
           "highlight": 0.6,
           "rim": 0.7,
-          "frost": 0.3,
+          "frost": 0.2,
           "tint": "#59FFFFFF",
-          "grain": 0.22
+          "grain": 0.06
         }
       },
       "enter": {

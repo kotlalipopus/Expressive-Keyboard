@@ -177,26 +177,49 @@ object HapticsEngine {
     // ---------------------------------------------------------------- свой звук нажатия
 
     private var pool: android.media.SoundPool? = null
-    private var poolSound = 0
-    private var poolVersion = -1L
-    @Volatile private var poolReady = false
+    /** Звуки в пуле: [0] — буквы, [1] — пробел, Enter, ⌫ (у своего файла — один и тот же). */
+    private var poolSounds = IntArray(0)
+    private var poolKey = ""
+    private val loaded = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
+    private val jitter = java.util.Random()
+    /** Звук, который попросили сыграть до окончания загрузки: (id, громкость, когда). */
+    @Volatile private var pending: Triple<Int, Float, Long>? = null
 
     const val SOUND_FILE = "click_sound"
 
-    /** Свой звук из файла: SoundPool даёт минимальную задержку. Загружается один раз на версию файла. */
-    private fun customSound(context: Context, version: Long): Boolean {
-        if (version == 0L) return false
-        if (poolVersion != version) {
-            poolVersion = version
-            poolReady = false
-            runCatching { pool?.release() }
+    /** Что звучит сейчас: синтезированный стиль, свой файл или системный щелчок (null). */
+    private fun soundFiles(context: Context, s: KeyboardSettings): Pair<String, List<java.io.File>>? {
+        val style = KeySoundStyle.fromId(s.soundStyle)
+        if (style == KeySoundStyle.CUSTOM) {
+            if (s.customSoundVersion == 0L) return null
             val f = java.io.File(context.filesDir, SOUND_FILE)
-            if (!f.exists()) {
-                pool = null
-                return false
-            }
-            pool = android.media.SoundPool.Builder()
-                .setMaxStreams(4)
+            return if (f.exists()) "custom:${s.customSoundVersion}" to listOf(f, f) else null
+        }
+        if (style == KeySoundStyle.SYSTEM) return null
+        val files = KeySounds.files(context, style) ?: return null
+        return style.id to files
+    }
+
+    /** Пул SoundPool под нужные звуки: минимальная задержка; пересоздаётся только при смене звука. */
+    private fun ensurePool(context: Context, s: KeyboardSettings): Boolean {
+        // ключ считается без обращения к диску: проверка файлов — только когда звук сменили
+        val style = KeySoundStyle.fromId(s.soundStyle)
+        val quickKey = when (style) {
+            KeySoundStyle.SYSTEM -> ""
+            KeySoundStyle.CUSTOM -> if (s.customSoundVersion == 0L) "" else "custom:${s.customSoundVersion}"
+            else -> style.id
+        }
+        if (quickKey == poolKey) return pool != null
+        val want = soundFiles(context, s)
+        poolKey = quickKey
+        loaded.clear()
+        runCatching { pool?.release() }
+        pool = null
+        poolSounds = IntArray(0)
+        if (want == null) return false
+        pool = runCatching {
+            android.media.SoundPool.Builder()
+                .setMaxStreams(6)
                 .setAudioAttributes(
                     android.media.AudioAttributes.Builder()
                         .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
@@ -204,23 +227,53 @@ object HapticsEngine {
                         .build()
                 )
                 .build().also { sp ->
-                    sp.setOnLoadCompleteListener { _, _, status -> poolReady = status == 0 }
-                    poolSound = sp.load(f.absolutePath, 1)
+                    sp.setOnLoadCompleteListener { pool, id, status ->
+                        if (status != 0) return@setOnLoadCompleteListener
+                        loaded += id
+                        // нажали, пока звук грузился (выбор стиля в настройках, первая буква) — играем его, а не тишину
+                        val p = pending
+                        if (p != null && p.first == id && android.os.SystemClock.uptimeMillis() - p.third < 600L) {
+                            pending = null
+                            runCatching { pool.play(id, p.second, p.second, 1, 0, 1f) }
+                        }
+                    }
+                    val ids = want.second.map { it.absolutePath }.distinct().associateWith { sp.load(it, 1) }
+                    poolSounds = IntArray(want.second.size) { ids[want.second[it].absolutePath] ?: 0 }
                 }
-        }
+        }.getOrNull()
         return pool != null
     }
 
+    /** Звук без вибрации: при выборе стиля в настройках. */
+    fun previewSound(context: Context, s: KeyboardSettings, special: Boolean = false) {
+        playSound(context, s.copy(soundEnabled = true), special)
+    }
+
+    private fun playSound(context: Context, s: KeyboardSettings, special: Boolean) {
+        if (!s.soundEnabled) return
+        if (ensurePool(context, s)) {
+            val id = poolSounds.getOrElse(if (special) 1 else 0) { 0 }
+            if (id != 0 && id in loaded) {
+                // чуть разная высота у соседних нажатий — звук не «пулемётный»
+                val custom = poolKey.startsWith("custom:")
+                val rate = (if (special && custom) 0.92f else 1f) * (0.97f + jitter.nextFloat() * 0.06f)
+                runCatching { pool?.play(id, s.soundVolume, s.soundVolume, 1, 0, rate) }
+            } else if (id != 0) {
+                pending = Triple(id, s.soundVolume, android.os.SystemClock.uptimeMillis())
+            }
+        } else systemClick(context, s, special)
+    }
+
+    private fun systemClick(context: Context, s: KeyboardSettings, special: Boolean) = runCatching {
+        val audio = audio ?: (context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager).also { audio = it }
+        // системный звук — вызов в другой процесс: в свой поток, чтобы касание не ждало его
+        val fx = if (special) AudioManager.FX_KEYPRESS_SPACEBAR else AudioManager.FX_KEYPRESS_STANDARD
+        val vol = s.soundVolume
+        worker.post { runCatching { audio?.playSoundEffect(fx, vol) } }
+    }
+
     fun keyPress(context: Context, view: View?, s: KeyboardSettings, special: Boolean) {
-        if (s.soundEnabled && customSound(context, s.customSoundVersion)) {
-            if (poolReady) runCatching { pool?.play(poolSound, s.soundVolume, s.soundVolume, 1, 0, if (special) 0.92f else 1f) }
-        } else if (s.soundEnabled) runCatching {
-            val audio = audio ?: (context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager).also { audio = it }
-            // системный звук — вызов в другой процесс: в свой поток, чтобы касание не ждало его
-            val fx = if (special) AudioManager.FX_KEYPRESS_SPACEBAR else AudioManager.FX_KEYPRESS_STANDARD
-            val vol = s.soundVolume
-            worker.post { runCatching { audio?.playSoundEffect(fx, vol) } }
-        }
+        playSound(context, s, special)
         if (!s.hapticsEnabled) return
         runCatching {
             val v = motor(context)

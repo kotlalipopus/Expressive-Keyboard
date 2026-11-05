@@ -1,4 +1,5 @@
 @file:OptIn(
+    androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class,
     androidx.compose.material3.ExperimentalMaterial3Api::class,
     androidx.compose.foundation.ExperimentalFoundationApi::class,
     androidx.compose.ui.text.ExperimentalTextApi::class
@@ -280,6 +281,7 @@ fun ExpressiveTheme(settings: KeyboardSettings, appUi: Boolean = false, content:
     }
     val typography = remember(uiFont) { typographyWith(uiFont) }
     CompositionLocalProvider(LocalKeyFont provides font, LocalKeyWeight provides FontWeight(settings.fontWeight)) {
-        MaterialTheme(colorScheme = scheme, typography = typography, content = content)
+        // настоящая тема M3 Expressive: пружинные анимации MotionScheme.expressive() у всех компонентов material3
+        MaterialExpressiveTheme(colorScheme = scheme, motionScheme = MotionScheme.expressive(), typography = typography, content = content)
     }
 }

@@ -311,7 +311,8 @@ object KeyboardLayouts {
     private val englishLetters = listOf(
         KeyRow(c("q", "w", "e", "r", "t", "y", "u", "i", "o", "p")),
         KeyRow(listOf(gap(0.45f)) + c("a", "s", "d", "f", "g", "h", "j", "k", "l") + gap(0.45f)),
-        KeyRow(listOf(shift(1.35f), gap(0.2f)) + c("z", "x", "c", "v", "b", "n", "m") + listOf(gap(0.2f), back(1.55f)))
+        // без лишних промежутков у Shift и ⌫: строка совпадает по ширине со второй, а зазор до букв — общий
+        KeyRow(listOf(shift(1.35f)) + c("z", "x", "c", "v", "b", "n", "m") + back(1.55f))
     )
 
     private val russianLetters = listOf(
@@ -329,7 +330,9 @@ object KeyboardLayouts {
     private val symbols2 = listOf(
         KeyRow(c("~", "`", "|", "•", "√", "π", "÷", "×", "¶", "∆")),
         KeyRow(c("£", "€", "$", "¥", "^", "°", "=", "{", "}", "\\")),
-        KeyRow(listOf(KeyModel("?123", KeyType.SYMBOLS_PAGE, 1.45f)) + c("%", "©", "®", "™", "№", "[", "]") + back(1.5f))
+        // «<» и «>» в английской раскладке и в вариантах удержания недоступны, поэтому клавиши нужны здесь.
+        // «®» и «™» остаются доступны удержанием «р»/«т», «№» — удержанием «з»
+        KeyRow(listOf(KeyModel("?123", KeyType.SYMBOLS_PAGE, 1.45f)) + c("%", "©", "№", "[", "]", "<", ">") + back(1.5f))
     )
 
     /** Ряды по языку и его буквам: своя раскладка того же языка — другой ключ. */

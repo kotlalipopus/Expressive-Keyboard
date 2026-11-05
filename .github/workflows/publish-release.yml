@@ -1,0 +1,23 @@
+name: Publish scheduled release
+
+on:
+  schedule:
+    - cron: "0 14 7 11 *"   # 17:00 MSK, 7 November
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish draft release v11.1.10
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view v11.1.10 --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft | grep -q true; then
+            gh release edit v11.1.10 --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          else
+            echo "No draft v11.1.10, nothing to do"
+          fi

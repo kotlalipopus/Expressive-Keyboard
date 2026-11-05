@@ -241,7 +241,7 @@ internal fun UpdateCard() {
             }
             val p = Updater.progress
             if (p != null) {
-                LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth())
+                LinearWavyProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth())
                 Text(tr("Скачиваю… {0}%", (p * 100).toInt()), style = MaterialTheme.typography.bodySmall, color = cs.onTertiaryContainer)
             } else {
                 Button(onClick = { scope.launch { Updater.downloadAndInstall(context, u) } }) {

@@ -9,7 +9,7 @@ import kotlin.math.roundToInt
 // Страницы «Новое» и «Энергосбережение».
 
 /** Версия, о которой рассказывает «Новое»: страницу обновляем к каждому выпуску. */
-private const val NEW_IN_VERSION = "11.1.9"
+private const val NEW_IN_VERSION = "11.1.10"
 
 private val ENGLISH_VARIANTS = listOf(
     "en-gb" to "Великобритания", "en-au" to "Австралия", "en-ca" to "Канада", "en-in" to "Индия",
@@ -36,49 +36,49 @@ internal fun WhatsNewPage(settings: KeyboardSettings, onNavigate: (SettingsPage)
 
     InfoCard(Icons.Rounded.NewReleases, tr("В версии {0}", NEW_IN_VERSION))
 
-    SettingsSection("Подсказки умнее") {
+    SettingsSection("Material 3 Expressive") {
         ActionItem(
-            Icons.Rounded.Spellcheck, "Подсказки по смыслу фразы",
-            "Следующее слово и исправления учитывают предыдущее слово (русский и английский)",
-            onClick = { onNavigate(SettingsPage.TYPING) }
+            Icons.Rounded.Style, "Новые дизайны и формы",
+            "Material 3 Expressive, Material 3, Liquid Glass, Classic, Neon, Samsung, Nothing — в один тап",
+            onClick = { onNavigate(SettingsPage.THEMES) }
         )
-    }
-    SettingsSection("Свои клавиши") {
         ActionItem(
-            Icons.Rounded.AddCircleOutline, "Добавить клавишу",
-            "Новая клавиша с любым символом, словом или смайлом. Её можно перетащить на любое место",
-            onClick = { onNavigate(SettingsPage.LAYOUT) }
+            Icons.Rounded.ColorLens, "Сколько выразительных форм",
+            "Много форм, только акценты или совсем без них",
+            onClick = { onNavigate(SettingsPage.COLORS) }
         )
     }
-    SettingsSection("Планшеты") {
-        SliderItem(
-            icon = Icons.Rounded.Straighten, title = "Ширина клавиатуры",
-            value = settings.keyboardWidth, range = 0.5f..1f,
-            format = { "${(it * 100).roundToInt()}%" },
-            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("keyboard_width", if (v > 0.98f) 1f else v) } }
-        )
-    }
-    SettingsSection("Свои ИИ-сервисы") {
-        ActionItem(
-            Icons.Rounded.Hub, "Добавить свой сервис",
-            "DeepSeek, Mistral, xAI, Ollama, LM Studio или любой API как у OpenAI или Anthropic",
-            onClick = { onNavigate(SettingsPage.TYPING) }
-        )
-    }
-    SettingsSection("Слияние клавиш") {
+    SettingsSection("Эмодзи") {
         ToggleItem(
-            Icons.Rounded.BlurOn, "Слияние клавиш", "Соседние стеклянные клавиши перетекают друг в друга при нажатии",
-            settings.glassMerge
-        ) { KeyboardPrefs.edit(context) { putBoolean("glass_merge", it) } }
+            Icons.Rounded.Keyboard, "Возврат к буквам после эмодзи",
+            "Выключено: панель остаётся открытой, и можно выбрать несколько эмодзи подряд",
+            settings.emojiReturnToKeyboard
+        ) { on -> KeyboardPrefs.edit(context) { putBoolean("emoji_return_keyboard", on) } }
+    }
+    SettingsSection("Звуки нажатия") {
+        ActionItem(
+            Icons.Rounded.VolumeUp, "Новые звуки клавиш",
+            "Создаются прямо в приложении, отдельно для букв и для пробела, Enter и ⌫",
+            onClick = { onNavigate(SettingsPage.FEEDBACK) }
+        )
+    }
+    SettingsSection("Первый запуск") {
+        InfoCard(Icons.Rounded.AutoAwesome, "Новые пользователи выбирают тему, количество форм и нужные функции при первом запуске")
+    }
+    SettingsSection("Резервная копия") {
+        ActionItem(
+            Icons.Rounded.Backup, "Экспорт и импорт настроек",
+            "Переработанная страница резервной копии",
+            onClick = { onNavigate(SettingsPage.BACKUP) }
+        )
     }
     SettingsSection("Моды") {
         ActionItem(
-            Icons.Rounded.Extension, "API модов 4",
-            "Частицы, шейдеры, эффекты клавиш, вкладки и пресеты в настройках мода",
+            Icons.Rounded.Extension, "Настройки мода",
+            "Редактор параметров мода, обновлённые встроенные моды",
             onClick = { onNavigate(SettingsPage.PLUGINS) }
         )
     }
-
     SettingsSection("Размер клавиатуры в альбомной") {
         LandscapeScaleItem(settings)
     }

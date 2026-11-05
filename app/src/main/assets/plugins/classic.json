@@ -1,14 +1,15 @@
 {
   "id": "builtin.classic",
   "name": "Классика",
-  "version": "2.0",
+  "version": "2.1",
   "author": "Expressive Keyboard",
   "description": "Привычная нейтральная клавиатура: белые клавиши на сером фоне, синий Enter, лёгкая тень. Без цветов Material You, в светлой и тёмной теме.",
   "icon": "⌨️",
   "enabledByDefault": true,
   "skin": {
     "keyboard": {
-      "corner": 16
+      "corner": 16,
+      "font": "sans"
     },
     "colors": {
       "background": "#D1D4DA",
@@ -28,7 +29,9 @@
         "shadowColor": "#59000000",
         "pressedBackground": "#E6E8EC",
         "press": "none",
-        "hideHint": true
+        "hideHint": true,
+        "fontWeight": 400,
+        "fontScale": 1.08
       },
       "func": {
         "background": "#ACB1BB",
@@ -40,6 +43,10 @@
       },
       "enter": {
         "pressedBackground": "#3B95FF"
+      },
+      "mode": {
+        "fontWeight": 500,
+        "fontScale": 0.9
       }
     },
     "popup": {

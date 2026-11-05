@@ -1,6 +1,8 @@
 # Expressive Keyboard
 
-An Android keyboard in the Material 3 Expressive style, built with Kotlin and Jetpack Compose.
+An Android keyboard built with Kotlin, Jetpack Compose and the Material 3 Expressive components
+(`androidx.compose.material3` 1.5): `MaterialExpressiveTheme` with the expressive motion scheme,
+`MaterialShapes`, `LoadingIndicator`, wavy progress indicators and connected toggle button groups.
 Highly customizable and extensible with plugins and JavaScript mods.
 
 <!-- Add 2–3 screenshots here, for example:
@@ -21,7 +23,9 @@ Requires Android 8.0 or newer.
 - **Typing:** word suggestions, autocorrect, glide (swipe) typing
 - **Languages:** 90+ layouts; Chinese (Pinyin, simplified and traditional) and Japanese (Romaji → Kana) input; Indic scripts (InScript)
 - **Emoji:** all Unicode 16 emoji, search in English and Russian, skin tones, built-in styles (Twemoji, Noto, Blob, OpenMoji)
-- **Designs:** Material You Expressive, Material 3 (Google guidelines), Liquid Glass, Classic, Neon, Neumorphism — one tap
+- **First-run setup:** new users pick a theme, how many expressive shapes they want and which features to keep
+- **Designs:** Material 3 Expressive, Material 3 (Google guidelines), Liquid Glass, Classic, Neon, Neumorphism, Samsung-like, Nothing-like — one tap
+- **Shapes:** lots of shapes, accents only, or no shapes at all (Settings → Colors & background)
 - **App language:** Russian or English
 - **Panels:** emoji, GIFs, clipboard, translator, voice input
 - **Look:** Material You colors, themes and skins, custom fonts (.ttf/.otf), a photo from your gallery behind the keys
@@ -54,7 +58,8 @@ in [PLUGINS.md](PLUGINS.md) (in Russian); examples live in [`app/src/main/assets
 
 ## Building from source
 
-You need Android Studio (or JDK 17 and Android SDK 35).
+You need Android Studio (or JDK 17 and Android SDK 35). The Expressive APIs come from
+`material3:1.5.0-alpha13`, the newest version that still builds with compileSdk 35 and AGP 8.7.
 
 ```bash
 git clone https://github.com/kotlalipopus/Expressive-Keyboard.git
@@ -69,4 +74,4 @@ To enable GIF search, put your own Giphy key into `GIPHY_API_KEY` in
 
 ## License
 
-[MIT](LICENSE)# Expressive-Keyboard
+[MIT](LICENSE)

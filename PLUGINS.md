@@ -138,7 +138,7 @@ kb.addCommand(name, fn)                                      // команда �
 | `{ type: "text" }` | `text`, `size`, `bold`, `color`, `center` |
 | `{ type: "button" }` | `text`, `icon`, `accent`, `wide`, `onClick(value)`, `value` |
 | `{ type: "row" }` / `{ type: "column" }` | `children: [...]` (ряд переносится на новую строку, если не помещается) |
-| `{ type: "grid" }` | `items: ["😀", { text, icon, value }]`, `minWidth`, `height`, `onClick(value)` |
+| `{ type: "grid" }` | `items: ["😀", { text, icon, value }]`, `minWidth`, `height`, `columns`, `onClick(value)`. `columns` задаёт ровное число колонок (например, калькулятор: `columns: 4`), `minWidth` — минимальную ширину ячейки при переносе |
 | `{ type: "image" }` | `src` (`data:image/…` или `kb.asset("pic.png")`), `size`, `onClick` |
 | `{ type: "spacer" }` | `size` |
 | `{ type: "input" }` | `title`, `hint`, `value`, `onChange(text)`, `onSubmit(text)` — по нажатию клавиатура печатает в это поле |

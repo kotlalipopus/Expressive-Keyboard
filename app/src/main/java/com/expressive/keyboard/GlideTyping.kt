@@ -207,6 +207,8 @@ object GlideDecoder {
             ideal.clear()
             var ok = true
             for (ch in word) {
+                // апостроф и дефис свайпом не набираются — для росчерка они прозрачны («don't» = d-o-n-t)
+                if (ch == '\'' || ch == '-') continue
                 val k = norm[ch] ?: ALIASES[ch]?.let { norm[it] }
                 if (k == null) {
                     ok = false

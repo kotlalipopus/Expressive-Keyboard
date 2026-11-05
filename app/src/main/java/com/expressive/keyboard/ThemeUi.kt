@@ -289,11 +289,20 @@ internal fun SkinMiniPreview(skin: KeyboardSkin?, settings: KeyboardSettings, mo
 @Composable
 private fun ThemeCard(title: String, subtitle: String, selected: Boolean, skin: KeyboardSkin?, settings: KeyboardSettings, onClick: () -> Unit) {
     val cs = MaterialTheme.colorScheme
-    val corner by animateDpAsState(if (selected) 28.dp else 18.dp, spring(dampingRatio = 0.6f, stiffness = 500f), label = "themeCorner")
-    val bg by animateColorAsState(if (selected) cs.primaryContainer else cs.surfaceContainerHigh, label = "themeBg")
+    val corner = animateDpAsState(if (selected) 28.dp else 18.dp, spring(dampingRatio = 0.6f, stiffness = 500f), label = "themeCorner")
+    val bg = animateColorAsState(if (selected) cs.primaryContainer else cs.surfaceContainerHigh, label = "themeBg")
+    val outline = cs.primary
+    // угол и цвет читаются при отрисовке: карточка с мини-клавиатурой не перестраивается на каждом кадре анимации
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(corner)).background(bg)
-            .then(if (selected) Modifier.border(2.dp, cs.primary, RoundedCornerShape(corner)) else Modifier)
+        Modifier.fillMaxWidth().roundedLayer { corner.value }
+            .drawBehind {
+                drawRect(bg.value)
+                if (selected) {
+                    val r = corner.value.toPx()
+                    val w = 2.dp.toPx()
+                    drawRoundRect(outline, Offset(w / 2, w / 2), Size(size.width - w, size.height - w), CornerRadius(r - w / 2), style = Stroke(w))
+                }
+            }
             .clickable(onClick = onClick).padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -326,7 +335,7 @@ internal fun ThemesPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -
             val r = withContext(Dispatchers.IO) { PluginRepository.importFrom(context, uri) }
             r.onSuccess { p ->
                 if (p.skin != null) ThemeEditor.apply(context, p.id)
-                Toast.makeText(context, tr("Тема «{0}» установлена", p.name), Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, tr("Тема «{0}» установлена", tr(p.name)), Toast.LENGTH_SHORT).show()
             }.onFailure { Toast.makeText(context, tr("Ошибка: {0}", it.message), Toast.LENGTH_LONG).show() }
         }
     }
@@ -391,7 +400,7 @@ internal fun ThemesPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -
             importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream", "*/*"))
         })
         plugins.filter { it.skin != null && !it.builtIn }.forEach { p ->
-            ActionItem(Icons.Rounded.Palette, p.name, if (settings.skinPlugin == p.id) tr("Применена") else tr("Нажмите, чтобы применить"), onClick = {
+            ActionItem(Icons.Rounded.Palette, tr(p.name), if (settings.skinPlugin == p.id) tr("Применена") else tr("Нажмите, чтобы применить"), onClick = {
                 ThemeEditor.apply(context, p.id)
             }, trailing = {
                 Row {
@@ -410,7 +419,7 @@ internal fun ThemesPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -
         AlertDialog(
             onDismissRequest = { confirmDelete = null },
             icon = { Icon(Icons.Rounded.DeleteOutline, null) },
-            title = { Text(tr("Удалить «{0}»?", p.name)) },
+            title = { Text(tr("Удалить «{0}»?", tr(p.name))) },
             confirmButton = {
                 Button(onClick = {
                     if (settings.skinPlugin == p.id) PluginRepository.removeSkin(context)

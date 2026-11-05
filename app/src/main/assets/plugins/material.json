@@ -1,27 +1,35 @@
 {
   "id": "builtin.material",
   "name": "Material 3 · Google",
-  "version": "2.0",
+  "version": "2.1",
   "author": "Expressive Keyboard",
   "description": "Клавиатура по гайдлайнам Material 3 от Google, как в Gboard: цвета Material You, клавиши-прямоугольники со скруглением, тональные служебные клавиши, подсказки текстом.",
   "icon": "🟣",
   "enabledByDefault": true,
   "skin": {
     "keyboard": {
-      "corner": 20
+      "corner": 20,
+      "font": "sans"
     },
     "keys": {
       "*": {
         "radius": 8,
         "pressedRadius": 8,
         "press": "scale",
-        "pressScale": 0.97
+        "pressScale": 0.97,
+        "fontWeight": 400,
+        "fontScale": 1.05,
+        "hideHint": true
       },
       "space": {
         "radius": 8
       },
       "enter": {
         "shape": "pill"
+      },
+      "mode": {
+        "fontWeight": 500,
+        "fontScale": 0.9
       }
     },
     "popup": {

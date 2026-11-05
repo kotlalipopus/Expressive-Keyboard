@@ -72,6 +72,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.*
 import androidx.compose.ui.geometry.*
 import androidx.compose.ui.graphics.*
@@ -310,15 +313,22 @@ internal fun SettingsSection(title: String?, content: @Composable ColumnScope.()
     }
 }
 
+/** Скругление, которое можно анимировать без перекомпоновки: радиус читается при отрисовке слоя. */
+internal fun Modifier.roundedLayer(radius: () -> androidx.compose.ui.unit.Dp): Modifier = graphicsLayer {
+    shape = RoundedCornerShape(radius())
+    clip = true
+}
+
 /** Пункт группы: при нажатии углы «набухают» — морфинг формы M3 Expressive. */
 @Composable
 internal fun GroupItem(onClick: (() -> Unit)? = null, content: @Composable () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     // внутренние углы 4 dp — спецификация списков M3; при нажатии углы «набухают»
-    val corner by animateDpAsState(if (pressed) 22.dp else 4.dp, spring(dampingRatio = 0.6f, stiffness = 700f), label = "itemCorner")
+    val corner = animateDpAsState(if (pressed) 22.dp else 4.dp, spring(dampingRatio = 0.6f, stiffness = 700f), label = "itemCorner")
+    // угол читается только в слое: пока он «набухает», пункт не перекомпоновывается заново на каждом кадре
     Box(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(corner)).background(MaterialTheme.colorScheme.surfaceBright)
+        Modifier.fillMaxWidth().roundedLayer { corner.value }.background(MaterialTheme.colorScheme.surfaceBright)
             .then(
                 if (onClick != null) Modifier.clickable(interactionSource = interaction, indication = LocalIndication.current, onClick = onClick)
                 else Modifier
@@ -436,34 +446,21 @@ internal fun SliderItem(
 /** Связанная группа кнопок M3 Expressive: выбранная кнопка становится «таблеткой» и шире соседей. */
 @Composable
 internal fun ButtonGroup(options: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit) {
-    val cs = MaterialTheme.colorScheme
-    Row(Modifier.fillMaxWidth().height(48.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+    // connected button group из M3 Expressive: крайние кнопки скруглены снаружи, выбранная становится «пилюлей»
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween)) {
         options.forEachIndexed { i, (id, label) ->
-            val isSel = id == selected
-            val first = i == 0
-            val last = i == options.lastIndex
-            val inner by animateDpAsState(if (isSel) 24.dp else 8.dp, spring(dampingRatio = 0.6f, stiffness = 500f), label = "bgInner")
-            val weight by animateFloatAsState(if (isSel) 1.25f else 1f, spring(dampingRatio = 0.7f, stiffness = 400f), label = "bgWeight")
-            val bg by animateColorAsState(if (isSel) cs.primary else cs.secondaryContainer, label = "bgColor")
-            val start = if (first) 24.dp else inner
-            val end = if (last) 24.dp else inner
-            Box(
-                Modifier
-                    .weight(weight)
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(topStart = start, bottomStart = start, topEnd = end, bottomEnd = end))
-                    .background(bg)
-                    .clickable { onSelect(id) },
-                contentAlignment = Alignment.Center
+            ToggleButton(
+                checked = id == selected,
+                onCheckedChange = { onSelect(id) },
+                modifier = Modifier.weight(1f).semantics { role = Role.RadioButton },
+                shapes = when (i) {
+                    0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
+                    options.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
+                    else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
+                },
+                contentPadding = PaddingValues(horizontal = 6.dp)
             ) {
-                Text(
-                    tr(label),
-                    color = if (isSel) cs.onPrimary else cs.onSecondaryContainer,
-                    style = MaterialTheme.typography.labelLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(horizontal = 4.dp)
-                )
+                Text(tr(label), style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -492,7 +489,7 @@ internal fun ShapePicker(settings: KeyboardSettings) {
         ExpressiveShapePreset.entries.forEach { preset ->
             val isSel = settings.shapePreset == preset.id
             val spec = if (isSel) settings.accentSpec()
-            else WavySpec(preset.profile, preset.defaultWaves, preset.defaultAmplitude / 100f)
+            else WavySpec.of(preset)
             val scale by animateFloatAsState(if (isSel) 1f else 0.82f, spring(dampingRatio = 0.5f, stiffness = 500f), label = "shapeScale")
             val rot by animateFloatAsState(if (isSel) 45f else 0f, spring(dampingRatio = 0.6f, stiffness = 200f), label = "shapeRot")
             Column(
@@ -626,19 +623,17 @@ internal fun CategoryTile(page: SettingsPage, index: Int, selected: Boolean = fa
         1 -> cs.secondaryContainer to cs.onSecondaryContainer
         else -> cs.tertiaryContainer to cs.onTertiaryContainer
     }
-    val expressive = KeyboardPrefs.observe().value.designStyle == DesignStyle.EXPRESSIVE.id
-    val spec = remember(page, expressive) {
-        if (expressive) WavySpec(page.shape.profile, page.shape.defaultWaves, page.shape.defaultAmplitude / 100f)
-        else WavySpec(ShapeProfile.CIRCLE, 12, 0f)
-    }
+    val prefs = KeyboardPrefs.observe().value
+    val expressive = prefs.designStyle == DesignStyle.EXPRESSIVE.id && prefs.shapeAmount == ShapeAmount.FULL
+    val spec = remember(page, expressive) { if (expressive) WavySpec.of(page.shape) else WavySpec.Circle }
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val rot by animateFloatAsState(if (pressed) 40f else 0f, spring(dampingRatio = 0.5f, stiffness = 300f), label = "tileRot")
     // выбранный пункт (две панели на планшете) — primaryContainer и 16 dp на всех углах, как в спецификации списков M3
-    val corner by animateDpAsState(if (pressed) 22.dp else if (selected) 16.dp else 4.dp, spring(dampingRatio = 0.6f, stiffness = 700f), label = "tileCorner")
-    val tileBg by androidx.compose.animation.animateColorAsState(if (selected) cs.primaryContainer else cs.surfaceBright, label = "tileBg")
+    val corner = animateDpAsState(if (pressed) 22.dp else if (selected) 16.dp else 4.dp, spring(dampingRatio = 0.6f, stiffness = 700f), label = "tileCorner")
+    val tileBg = androidx.compose.animation.animateColorAsState(if (selected) cs.primaryContainer else cs.surfaceBright, label = "tileBg")
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(corner)).background(tileBg)
+        Modifier.fillMaxWidth().roundedLayer { corner.value }.drawBehind { drawRect(tileBg.value) }
             .clickable(interactionSource = interaction, indication = LocalIndication.current, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -666,14 +661,15 @@ internal val SWATCHES = listOf(
 /** Цвет в виде «печеньки» с галочкой, если выбран. */
 @Composable
 internal fun ColorDot(color: Color, selected: Boolean, size: Dp = 44.dp, onClick: () -> Unit) {
-    val spec = remember { WavySpec(ShapeProfile.SINE, 9, 0.07f) }
+    val full = KeyboardPrefs.observe().value.shapeAmount == ShapeAmount.FULL
+    val spec = remember(full) { if (full) WavySpec(ShapeProfile.SINE, 9, 0.07f) else WavySpec.Circle }
     val scale by animateFloatAsState(if (selected) 1f else 0.86f, spring(dampingRatio = 0.5f, stiffness = 500f), label = "dotScale")
     val rot by animateFloatAsState(if (selected) 40f else 0f, spring(dampingRatio = 0.6f, stiffness = 200f), label = "dotRot")
     Box(
         Modifier.size(size).graphicsLayer {
             scaleX = scale
             scaleY = scale
-        }.wavyBackground(if (selected) spec else WavySpec(ShapeProfile.CIRCLE, 12, 0f), color) { rot }
+        }.wavyBackground(if (selected) spec else WavySpec.Circle, color) { rot }
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {

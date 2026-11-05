@@ -310,14 +310,53 @@ internal fun TranslatorBar(state: KeyboardState, actions: KeyboardActions, setti
             Text(tr("Авто") + " → $targetName", color = palette.onFunc, fontFamily = font, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, maxLines = 1)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            // набранное: показываем целиком, длинное прокручивается и всегда стоит на конце — там, где печатаете
+            // набранное: тап ставит курсор в любое слово — можно вернуться и исправить ранее набранное
             val inputScroll = rememberScrollState()
-            LaunchedEffect(input) { inputScroll.scrollTo(inputScroll.maxValue) }
+            var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+            val cursor = state.translatorCursor.coerceIn(0, input.length)
+            LaunchedEffect(input, cursor, textLayout) {
+                val layout = textLayout ?: return@LaunchedEffect
+                if (inputScroll.maxValue <= 0) return@LaunchedEffect
+                if (cursor >= input.length) inputScroll.scrollTo(inputScroll.maxValue)
+                else {
+                    val r = layout.getCursorRect(cursor)
+                    val viewport = inputScroll.viewportSize
+                    when {
+                        r.top < inputScroll.value -> inputScroll.scrollTo(r.top.toInt())
+                        viewport > 0 && r.bottom > inputScroll.value + viewport ->
+                            inputScroll.scrollTo((r.bottom - viewport).toInt())
+                    }
+                }
+            }
             Box(Modifier.fillMaxWidth().heightIn(max = 78.dp).verticalScroll(inputScroll)) {
+                val empty = input.isEmpty()
                 Text(
-                    if (input.isEmpty()) tr("Печатайте — переведу") else input,
-                    color = if (input.isEmpty()) palette.muted else palette.onLetter,
-                    fontFamily = font, fontSize = 13.sp
+                    if (empty) tr("Печатайте — переведу") else input,
+                    color = if (empty) palette.muted else palette.onLetter,
+                    fontFamily = font, fontSize = 13.sp,
+                    modifier = Modifier.fillMaxWidth()
+                        .then(
+                            if (empty) Modifier else Modifier.pointerInput(input, textLayout) {
+                                detectTapGestures { offset ->
+                                    textLayout?.let { layout ->
+                                        actions.setTranslatorCursor(layout.getOffsetForPosition(offset))
+                                    }
+                                }
+                            }
+                        )
+                        .drawWithContent {
+                            drawContent()
+                            val layout = textLayout
+                            if (!empty && layout != null) {
+                                val r = layout.getCursorRect(cursor)
+                                drawRect(
+                                    color = palette.accent,
+                                    topLeft = Offset(r.left, r.top),
+                                    size = Size(1.5.dp.toPx(), r.height)
+                                )
+                            }
+                        },
+                    onTextLayout = { textLayout = it }
                 )
             }
             val result = when {
@@ -332,7 +371,13 @@ internal fun TranslatorBar(state: KeyboardState, actions: KeyboardActions, setti
             }
         }
         if (input.isNotEmpty()) {
-            Box(Modifier.size(40.dp).clip(CircleShape).clickable { state.translatorInput = "" }, contentAlignment = Alignment.Center) {
+            Box(
+                Modifier.size(40.dp).clip(CircleShape).clickable {
+                    state.translatorInput = ""
+                    state.translatorCursor = 0
+                },
+                contentAlignment = Alignment.Center
+            ) {
                 Icon(Icons.Rounded.Close, null, tint = palette.muted, modifier = Modifier.size(20.dp))
             }
             Box(
@@ -388,7 +433,7 @@ internal fun EmojiPanel(actions: KeyboardActions, settings: KeyboardSettings, pa
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (list.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    if (cats.isEmpty()) CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+                    if (cats.isEmpty()) LoadingIndicator(Modifier.size(40.dp), color = palette.accent)
                     else Text(tr("Пока пусто"), color = palette.muted, fontFamily = font)
                 }
             } else {
@@ -642,7 +687,7 @@ internal fun GifPanel(state: KeyboardState, actions: KeyboardActions, settings: 
                 }
                 if (loading) item(span = { GridItemSpan(maxLineSpan) }) {
                     Box(Modifier.fillMaxWidth().height(48.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = palette.accent)
+                        LoadingIndicator(Modifier.size(30.dp), color = palette.accent)
                     }
                 }
             }
@@ -783,9 +828,9 @@ internal fun VoicePanel(
             fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 2,
             overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center
         )
-        if (!voice.hasPermission()) {
+        if (!voice.permissionGranted) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PillButton(tr("Разрешить микрофон"), palette.accent, palette.onAccent, font) { actions.openSettings() }
+                PillButton(tr("Разрешить микрофон"), palette.accent, palette.onAccent, font) { actions.requestMicPermission() }
                 PillButton(tr("Другой голосовой ввод"), palette.func, palette.onFunc, font) { actions.openVoiceFallback() }
             }
         } else if (voice.needsFallback) {
@@ -833,7 +878,7 @@ internal fun PluginsPanel(state: KeyboardState, actions: KeyboardActions, palett
             ) {
                 Icon(Icons.Rounded.Extension, null, tint = palette.muted, modifier = Modifier.size(36.dp))
                 Text(
-                    "Нет плагинов с действиями или символами",
+                    tr("Нет плагинов с действиями или символами"),
                     color = palette.onLetter, fontFamily = font, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center
                 )
                 PillButton(tr("Открыть плагины"), palette.accent, palette.onAccent, font) { actions.openSettings() }
@@ -859,7 +904,7 @@ internal fun PluginsPanel(state: KeyboardState, actions: KeyboardActions, palett
                     ) {
                         SpecIcon(t.icon, fg, 18.dp)
                         Text(
-                            t.title, color = fg, fontFamily = font,
+                            tr(t.title), color = fg, fontFamily = font,
                             fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1
                         )
                     }
@@ -885,7 +930,7 @@ internal fun PluginsPanel(state: KeyboardState, actions: KeyboardActions, palett
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                s, color = palette.onLetter, fontFamily = font, fontSize = if (wide) 14.sp else 24.sp,
+                                tr(s), color = palette.onLetter, fontFamily = font, fontSize = if (wide) 14.sp else 24.sp,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis
                             )
                         }
@@ -918,7 +963,7 @@ internal fun PluginsPanel(state: KeyboardState, actions: KeyboardActions, palett
                         ) {
                             SpecIcon(e.icon, palette.onLetter, 18.dp)
                             Text(
-                                e.title, color = palette.onLetter, fontFamily = font, fontWeight = FontWeight.Bold,
+                                tr(e.title), color = palette.onLetter, fontFamily = font, fontWeight = FontWeight.Bold,
                                 fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 15.sp
                             )
                         }
@@ -933,7 +978,7 @@ internal fun PluginsPanel(state: KeyboardState, actions: KeyboardActions, palett
         ) {
             PillButton("ABC", palette.func, palette.onFunc, font) { actions.togglePanel(ActivePanel.KEYBOARD) }
             Text(
-                state.pluginStatus, Modifier.weight(1f), color = palette.muted, fontFamily = font, fontSize = 12.sp,
+                tr(state.pluginStatus), Modifier.weight(1f), color = palette.muted, fontFamily = font, fontSize = 12.sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center
             )
             RepeatingBackspace(palette) { actions.deleteBackward() }
@@ -965,7 +1010,7 @@ internal fun ScriptPanelView(panel: ScriptPanel, palette: KeyPalette, font: Font
 internal fun ScriptNode(n: UiNode, palette: KeyPalette, font: FontFamily, onClick: (ScriptCall, Any?) -> Unit) {
     when (n) {
         is UiNode.Text -> Text(
-            n.text, color = n.color?.let { Color(it) } ?: palette.onLetter,
+            tr(n.text), color = n.color?.let { Color(it) } ?: palette.onLetter,
             fontFamily = if (n.mono) FontFamily.Monospace else font, fontSize = n.size.sp,
             fontWeight = if (n.bold) FontWeight.ExtraBold else FontWeight.Medium,
             fontStyle = if (n.italic) androidx.compose.ui.text.font.FontStyle.Italic else null,
@@ -993,13 +1038,13 @@ internal fun ScriptNode(n: UiNode, palette: KeyPalette, font: FontFamily, onClic
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
             ) {
                 if (n.icon.isNotEmpty()) SpecIcon(n.icon, fg, 18.dp)
-                if (n.text.isNotEmpty()) Text(n.text, color = fg, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1)
+                if (n.text.isNotEmpty()) Text(tr(n.text), color = fg, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1)
             }
         }
         is UiNode.Input -> {
             val empty = n.value.isEmpty()
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (n.title.isNotEmpty()) Text(n.title, color = palette.muted, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                if (n.title.isNotEmpty()) Text(tr(n.title), color = palette.muted, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 Row(
                     Modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(16.dp)).background(palette.letter)
                         .border(1.5.dp, palette.accent.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
@@ -1009,7 +1054,7 @@ internal fun ScriptNode(n: UiNode, palette: KeyPalette, font: FontFamily, onClic
                 ) {
                     Text("✎", color = palette.accent, fontSize = 14.sp)
                     Text(
-                        if (empty) n.hint.ifEmpty { tr("Нажмите, чтобы ввести") } else n.value,
+                        if (empty) tr(n.hint).ifEmpty { tr("Нажмите, чтобы ввести") } else n.value,
                         color = if (empty) palette.muted else palette.onLetter, fontFamily = font, fontSize = 14.sp,
                         maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f)
                     )
@@ -1022,7 +1067,7 @@ internal fun ScriptNode(n: UiNode, palette: KeyPalette, font: FontFamily, onClic
                 .padding(horizontal = 14.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(n.text, color = palette.onLetter, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
+            Text(tr(n.text), color = palette.onLetter, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
             Switch(
                 checked = n.checked, onCheckedChange = { v -> n.action?.let { onClick(it, v) } },
                 colors = SwitchDefaults.colors(checkedTrackColor = palette.accent, checkedThumbColor = palette.onAccent)
@@ -1033,7 +1078,7 @@ internal fun ScriptNode(n: UiNode, palette: KeyPalette, font: FontFamily, onClic
             Column(Modifier.fillMaxWidth()) {
                 if (n.text.isNotEmpty()) {
                     val shown = if (n.step >= 1f || (n.max - n.min) >= 20f) v.roundToInt().toString() else "%.2f".format(v)
-                    Text("${n.text}: $shown", color = palette.onLetter, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text("${tr(n.text)}: $shown", color = palette.onLetter, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
                 Slider(
                     value = v,
@@ -1046,8 +1091,8 @@ internal fun ScriptNode(n: UiNode, palette: KeyPalette, font: FontFamily, onClic
         }
         is UiNode.Progress -> {
             val p = n.value
-            if (p == null) LinearProgressIndicator(Modifier.fillMaxWidth(), color = palette.accent, trackColor = palette.letter)
-            else LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth(), color = palette.accent, trackColor = palette.letter)
+            if (p == null) LinearWavyProgressIndicator(Modifier.fillMaxWidth(), color = palette.accent, trackColor = palette.letter)
+            else LinearWavyProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth(), color = palette.accent, trackColor = palette.letter)
         }
         is UiNode.Divider -> HorizontalDivider(color = palette.muted.copy(alpha = 0.3f))
         is UiNode.Box -> {
@@ -1077,7 +1122,7 @@ internal fun ScriptNode(n: UiNode, palette: KeyPalette, font: FontFamily, onClic
                 ) {
                     val fg = if (sel) palette.onAccent else palette.onFunc
                     if (item.icon.isNotEmpty()) SpecIcon(item.icon, fg, 16.dp)
-                    if (item.text.isNotEmpty()) Text(item.text, color = fg, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+                    if (item.text.isNotEmpty()) Text(tr(item.text), color = fg, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
                 }
             }
         }
@@ -1115,26 +1160,25 @@ internal fun ScriptNode(n: UiNode, palette: KeyPalette, font: FontFamily, onClic
         is UiNode.Column -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             for (c in n.children) ScriptNode(c, palette, font, onClick)
         }
-        is UiNode.Grid -> FlowRow(
+        is UiNode.Grid -> if (n.columns > 0) {
+            // фиксированное число колонок: ширина ячейки считается от ширины панели, а не от dpi
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                for (row in n.items.chunked(n.columns)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        for (item in row) {
+                            ScriptGridItem(item, n, palette, font, onClick, Modifier.weight(1f))
+                        }
+                        repeat(n.columns - row.size) { Spacer(Modifier.weight(1f)) }
+                    }
+                }
+            }
+        } else FlowRow(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             for (item in n.items) {
-                Row(
-                    Modifier.widthIn(min = n.minWidth.dp).height(n.height.dp).clip(RoundedCornerShape(14.dp))
-                        .background(palette.letter.copy(alpha = palette.letter.alpha * 0.7f))
-                        .clickable(enabled = n.action != null) { n.action?.let { onClick(it, item.value) } }
-                        .padding(horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)
-                ) {
-                    if (item.icon.isNotEmpty()) SpecIcon(item.icon, palette.onLetter, 20.dp)
-                    if (item.text.isNotEmpty()) Text(
-                        item.text, color = palette.onLetter, fontFamily = font,
-                        fontSize = if (item.text.length <= 2) 22.sp else 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
-                    )
-                }
+                ScriptGridItem(item, n, palette, font, onClick, Modifier.widthIn(min = n.minWidth.dp))
             }
         }
         is UiNode.Spacer -> Spacer(Modifier.height(n.size.dp))
@@ -1147,6 +1191,32 @@ internal fun ScriptNode(n: UiNode, palette: KeyPalette, font: FontFamily, onClic
             )
         }
         is UiNode.Error -> Text("⚠ ${n.message}", color = palette.accent, fontFamily = font, fontSize = 13.sp)
+    }
+}
+
+/** Ячейка сетки мода: одинаковая ширина в режиме фиксированных колонок, иначе — по minWidth. */
+@Composable
+private fun ScriptGridItem(
+    item: GridItem,
+    grid: UiNode.Grid,
+    palette: KeyPalette,
+    font: FontFamily,
+    onClick: (ScriptCall, Any?) -> Unit,
+    modifier: Modifier
+) {
+    Row(
+        modifier.height(grid.height.dp).clip(RoundedCornerShape(14.dp))
+            .background(palette.letter.copy(alpha = palette.letter.alpha * 0.7f))
+            .clickable(enabled = grid.action != null) { grid.action?.let { onClick(it, item.value) } }
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)
+    ) {
+        if (item.icon.isNotEmpty()) SpecIcon(item.icon, palette.onLetter, 20.dp)
+        if (item.text.isNotEmpty()) Text(
+            tr(item.text), color = palette.onLetter, fontFamily = font,
+            fontSize = if (item.text.length <= 2) 22.sp else 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -1165,9 +1235,9 @@ internal fun ScriptInputBar(actions: KeyboardActions, palette: KeyPalette, font:
             contentAlignment = Alignment.Center
         ) { Text("←", color = palette.onFunc, fontFamily = font, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp) }
         Column(Modifier.weight(1f)) {
-            if (title.isNotEmpty()) Text(title, color = palette.accent, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 11.sp, maxLines = 1)
+            if (title.isNotEmpty()) Text(tr(title), color = palette.accent, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 11.sp, maxLines = 1)
             Text(
-                if (text.isEmpty()) ScriptHost.promptHint.ifEmpty { tr("Введите текст") } else text + "▏",
+                if (text.isEmpty()) tr(ScriptHost.promptHint).ifEmpty { tr("Введите текст") } else text + "▏",
                 color = if (text.isEmpty()) palette.muted else palette.onLetter,
                 fontFamily = font, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis
             )

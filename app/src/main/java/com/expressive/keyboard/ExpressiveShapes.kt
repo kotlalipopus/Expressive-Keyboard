@@ -133,9 +133,16 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
+import androidx.graphics.shapes.CornerRounding
+import androidx.graphics.shapes.RoundedPolygon
+import androidx.graphics.shapes.star
+import androidx.graphics.shapes.toPath
 
 // ============================================================================
 // 1. ФИГУРЫ MATERIAL 3 EXPRESSIVE
+// Формы — официальные MaterialShapes из material3 (androidx.graphics.shapes.RoundedPolygon).
+// Если пользователь сам поменял число волн или их глубину, фигура строится тем же способом,
+// что и в MaterialShapes: RoundedPolygon.star со скруглёнными вершинами.
 // ============================================================================
 
 enum class ShapeProfile { SINE, LOBES, CIRCLE }
@@ -153,33 +160,92 @@ enum class ExpressiveShapePreset(
     CLOVER_4("CLOVER_4", "Клевер", ShapeProfile.LOBES, 4, 12f),
     CIRCLE("CIRCLE", "Круг", ShapeProfile.CIRCLE, 12, 0f);
 
+    /** Та же фигура из набора MaterialShapes. */
+    @OptIn(ExperimentalMaterial3ExpressiveApi::class)
+    val material: RoundedPolygon
+        get() = when (this) {
+            COOKIE_12 -> MaterialShapes.Cookie12Sided
+            SUNNY_8 -> MaterialShapes.Sunny
+            FLOWER_6 -> MaterialShapes.Flower
+            CLOVER_4 -> MaterialShapes.Clover4Leaf
+            CIRCLE -> MaterialShapes.Circle
+        }
+
     companion object {
         fun fromId(id: String): ExpressiveShapePreset = entries.firstOrNull { it.id == id } ?: COOKIE_12
     }
 }
 
 @Immutable
-data class WavySpec(val profile: ShapeProfile, val waves: Int, val amplitude: Float)
+data class WavySpec(val profile: ShapeProfile, val waves: Int, val amplitude: Float, val preset: ExpressiveShapePreset? = null) {
+    companion object {
+        val Circle = WavySpec(ShapeProfile.CIRCLE, 12, 0f, ExpressiveShapePreset.CIRCLE)
+        fun of(preset: ExpressiveShapePreset) = WavySpec(preset.profile, preset.defaultWaves, preset.defaultAmplitude / 100f, preset)
+    }
+}
+
+/**
+ * Сколько выразительных форм в интерфейсе (настройка «Формы» в первой настройке и в «Цвета и фон»):
+ * FULL — везде, как задумано в Expressive; ACCENTS — только у главных кнопок (меню и микрофон
+ * клавиатуры, главная карточка), остальное — круги и скругления; NONE — без волнистых форм.
+ */
+object ShapeAmount {
+    const val FULL = "FULL"
+    const val ACCENTS = "ACCENTS"
+    const val NONE = "NONE"
+}
+
+/** Форма для главного акцента: исчезает только в режиме «без форм». */
+fun WavySpec.accent(settings: KeyboardSettings): WavySpec = if (settings.shapeAmount == ShapeAmount.NONE) WavySpec.Circle else this
+
+/** Форма для украшений (плитки, цвета, всплывающие буквы): только в режиме «много форм». */
+fun WavySpec.decor(settings: KeyboardSettings): WavySpec = if (settings.shapeAmount == ShapeAmount.FULL) this else WavySpec.Circle
+
+/** Нормализованная (0..1) фигура в виде android-пути — строится один раз на фигуру. */
+private val unitPaths = ConcurrentHashMap<WavySpec, android.graphics.Path>()
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+private fun polygonFor(spec: WavySpec): RoundedPolygon {
+    val preset = spec.preset
+    if (spec.profile == ShapeProfile.CIRCLE) return MaterialShapes.Circle
+    if (preset != null && spec.waves == preset.defaultWaves && abs(spec.amplitude - preset.defaultAmplitude / 100f) < 0.001f) {
+        return preset.material
+    }
+    val waves = spec.waves.coerceIn(3, 24)
+    val amp = spec.amplitude.coerceIn(0f, 0.16f)
+    return when (spec.profile) {
+        // «печенька»: вершины-волны со скруглением, как Cookie9Sided / Cookie12Sided
+        ShapeProfile.SINE -> RoundedPolygon.star(
+            numVerticesPerRadius = waves, radius = 1f, innerRadius = (1f - amp * 2.2f).coerceIn(0.5f, 1f),
+            rounding = CornerRounding(0.5f), innerRounding = CornerRounding(0.5f)
+        )
+        // «цветок» и «клевер»: круглые лепестки и острые впадины между ними
+        else -> RoundedPolygon.star(
+            numVerticesPerRadius = waves, radius = 1f, innerRadius = (1f - amp * 3.5f).coerceIn(0.35f, 0.95f),
+            rounding = CornerRounding(1f), innerRounding = CornerRounding(0.15f)
+        )
+    }.normalized()
+}
+
+private fun unitPath(spec: WavySpec): android.graphics.Path = unitPaths.getOrPut(spec) {
+    android.graphics.Path().also { polygonFor(spec).toPath(it) }
+}
+
+private val shapeMatrix = ThreadLocal.withInitial { android.graphics.Matrix() }
 
 fun buildWavyPath(spec: WavySpec, cx: Float, cy: Float, radius: Float, path: Path = Path()): Path {
     path.reset()
-    val waves = spec.waves.coerceIn(3, 24)
-    val amp = if (spec.profile == ShapeProfile.CIRCLE) 0f else spec.amplitude.coerceIn(0f, 0.16f)
-    val steps = (waves * 20).coerceIn(120, 400)
-    for (i in 0 until steps) {
-        val t = i.toDouble() / steps * 2.0 * PI
-        val k = when (spec.profile) {
-            ShapeProfile.SINE -> 1f - amp + amp * cos(waves * t).toFloat()
-            ShapeProfile.LOBES -> 1f - amp + amp * abs(cos(waves / 2.0 * t)).toFloat()
-            ShapeProfile.CIRCLE -> 1f
-        }
-        val a = t - PI / 2.0
-        val x = cx + radius * k * cos(a).toFloat()
-        val y = cy + radius * k * sin(a).toFloat()
-        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-    }
-    path.close()
+    val m = shapeMatrix.get()!!
+    m.setScale(radius * 2f, radius * 2f)
+    m.postTranslate(cx - radius, cy - radius)
+    unitPath(spec).transform(m, path.asAndroidPath())
     return path
+}
+
+/** Форма как Shape для clip/background — из той же фигуры. */
+class WavyShape(private val spec: WavySpec) : androidx.compose.ui.graphics.Shape {
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline =
+        Outline.Generic(buildWavyPath(spec, size.width / 2f, size.height / 2f, min(size.width, size.height) / 2f))
 }
 
 /** Волнистый фон без clip/shadow: путь кэшируется по размеру, вращение читается только при отрисовке. */

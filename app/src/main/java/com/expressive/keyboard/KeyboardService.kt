@@ -143,407 +143,12 @@ import kotlin.math.sqrt
 // 10. СОСТОЯНИЕ, ГОЛОС И СЕРВИС КЛАВИАТУРЫ
 // ============================================================================
 
-@Stable
-class KeyboardState {
-    var language by mutableStateOf(KeyboardLanguage.RU)
-    var shift by mutableStateOf(ShiftState.OFF)
-    var symbolsPage by mutableIntStateOf(0)
-    /** Поле числа или телефона: вместо букв — цифровая клавиатура. */
-    var numberPad by mutableStateOf(false)
-    var phoneField by mutableStateOf(false)
-    var panel by mutableStateOf(ActivePanel.KEYBOARD)
-    /** Голосовая панель открыта удержанием микрофона — режим Rambler. */
-    var rambler by mutableStateOf(false)
-    var toolbarOpen by mutableStateOf(false)
-    var suggestions by mutableStateOf(SuggestionChipModel.EMPTY_ROW)
-    /** Варианты китайского/японского ввода: показываются лентой вместо трёх подсказок. */
-    var candidates by mutableStateOf<List<String>>(emptyList())
-    var enterAction by mutableIntStateOf(EditorInfo.IME_ACTION_UNSPECIFIED)
-    var translatorInput by mutableStateOf("")
-    var translatorResult by mutableStateOf("")
-    var translatorLoading by mutableStateOf(false)
-    var emojiQuery by mutableStateOf("")
-    /** Подсказки автозаполнения (пароли, логины из Google Паролей и т. п.) — готовые View от системы. */
-    var inlineSuggestions by mutableStateOf<List<View>>(emptyList())
-    /** Идёт исправление текста — кнопка на панели крутится, по клавиатуре бежит сияние. */
-    var aiBusy by mutableStateOf(false)
-    /** Текст только что исправлен — короткая вспышка. Число растёт с каждым исправлением. */
-    var aiDone by mutableIntStateOf(0)
-    /** Своё указание для ИИ, которое печатается на клавиатуре (панель AI_PROMPT). */
-    var aiPrompt by mutableStateOf("")
-    /** Что ИИ делает сейчас (id задачи) — эта кнопка панели крутится. */
-    var aiTask by mutableStateOf("")
-    /** Последнюю правку ИИ можно отменить кнопкой на панели. */
-    var aiCanUndo by mutableStateOf(false)
-    /** Поле пустое: вместо подсказок — панель функций. */
-    var fieldEmpty by mutableStateOf(false)
-    /** На пустом поле панель функций убрали кнопкой меню — вместо неё подсказки первого слова. */
-    var toolsDismissed by mutableStateOf(false)
-    /** Режим выделения на панели редактирования: стрелки расширяют выделение, как с зажатым Shift. */
-    var selectMode by mutableStateOf(false)
-    /** Запрос поиска GIF: набирается в строке над клавиатурой, по Enter — результаты в панели GIF. */
-    var gifQuery by mutableStateOf("")
-    var pluginTab by mutableStateOf("")
-    var pluginStatus by mutableStateOf("")
-    /** Печать свайпом разрешена в этом поле (не пароль, не почта/адрес). */
-    var glideAllowed by mutableStateOf(true)
-    val clipboard = mutableStateListOf<String>()
-    /** Только что скопированное: предлагается вставить одним нажатием над клавиатурой. */
-    var clipOffer by mutableStateOf<String?>(null)
-    /** Закреплённые записи буфера: хранятся на диске и не стираются кнопкой «Очистить». */
-    val pinnedClips = mutableStateListOf<String>()
-    /** Окно клавиатуры только что появилось: панели и строка подсказок встают на место без анимаций. */
-    var instantUi by mutableStateOf(false)
-}
-
-@Stable
-interface KeyboardActions {
-    fun keyDown(key: KeyModel)
-    fun keyUp()
-    fun keyTick()
-    fun commitKey(key: KeyModel, text: String)
-    /** Где именно нажата следующая клавиша: смещение от её центра в долях ширины и высоты (-0.5…0.5). */
-    fun keyTouch(fx: Float, fy: Float) {}
-    fun swipeSpace(direction: Int)
-    fun pickSuggestion(chip: SuggestionChipModel)
-    fun commitText(text: String)
-    fun commitEmoji(emoji: String)
-    fun deleteBackward()
-    fun commitGif(gif: TenorGifResult)
-    fun headerMenu()
-    fun togglePanel(panel: ActivePanel)
-    fun toggleVoice()
-    fun openSettings()
-    fun openVoiceFallback()
-    fun hideKeyboard()
-    fun clearClipboard()
-    fun insertTranslation()
-    fun commitSymbol(text: String)
-    fun runPluginAction(pluginId: String, index: Int)
-    /** Мгновенный ввод: буква уже вставлена при касании — заменить её вариантом (или убрать, если new пустой). */
-    fun replaceLast(old: String, new: String)
-    /** tapLetter — буква, уже вставленная мгновенным вводом с первой клавиши свайпа: слово заменит её. */
-    fun commitGlide(path: List<Offset>, keys: Map<Char, Offset>, keyWidth: Float, tapLetter: String? = null)
-    fun switchKeyboard()
-    fun runScriptButton(pluginId: String, id: String)
-    fun removeClip(text: String)
-    fun togglePinClip(text: String)
-    /** Долгое нажатие на подсказку: забыть выученное слово. */
-    fun forgetSuggestion(word: String)
-    /** Выбор варианта иероглифов/каны из ленты. */
-    fun pickCandidate(index: Int) {}
-    /** Вставить запись буфера: текст или картинку. */
-    fun commitClip(entry: String) {}
-    fun pasteClipOffer() {}
-    fun dismissClipOffer() {}
-    /** Удержание кнопки языка, если в настройках выбрано не «список языков». */
-    fun globeHold() {}
-    /** Кнопка панели редактирования: home, end, up, down, left, right, select, select_all, copy, paste. */
-    fun editKey(id: String) {}
-    /** Исправить выделенный текст (или весь текст поля): Claude по ключу или бесплатная проверка. */
-    fun aiFix() {}
-    /** Кнопка панели ИИ: id задачи (AiTask), "prompt" — набрать своё указание, "send" — выполнить его, "undo". */
-    fun aiTool(id: String) {}
-    /** Удержание пробела — действие из настроек. */
-    fun spaceHold() {}
-    /** Свайп влево по ⌫: выделить столько слов перед курсором (0 — снять выделение). */
-    fun backspaceSelect(words: Int) {}
-    /** Свайп по ⌫ закончился: delete — стереть выделенное, иначе оставить текст как был. */
-    fun backspaceSelectDone(delete: Boolean) {}
-    /** Удержание микрофона: Rambler — диктовка без спешки, ИИ убирает «э-э», повторы и оговорки. */
-    fun rambler() {}
-    /** Поле ввода мода: submit — отправить набранное (✓), иначе закрыть без отправки (←). */
-    fun scriptPromptDone(submit: Boolean) {}
-}
-
-/**
- * Все действия клавиатуры — через эту обёртку: ошибка в одном нажатии (поле ввода другого приложения,
- * словарь, мод) пишется в журнал, а не роняет клавиатуру вместе с приложением.
- */
-internal class SafeActions(private val a: KeyboardActions, private val onError: () -> Unit) : KeyboardActions {
-    private inline fun guard(block: () -> Unit) {
-        try {
-            block()
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            android.util.Log.e("ExpressiveKeyboard", "action failed", e)
-            runCatching(onError)
-        }
-    }
-
-    override fun keyDown(key: KeyModel) = guard { a.keyDown(key) }
-    override fun keyUp() = guard { a.keyUp() }
-    override fun keyTick() = guard { a.keyTick() }
-    override fun commitKey(key: KeyModel, text: String) = guard { a.commitKey(key, text) }
-    override fun keyTouch(fx: Float, fy: Float) = guard { a.keyTouch(fx, fy) }
-    override fun swipeSpace(direction: Int) = guard { a.swipeSpace(direction) }
-    override fun pickSuggestion(chip: SuggestionChipModel) = guard { a.pickSuggestion(chip) }
-    override fun commitText(text: String) = guard { a.commitText(text) }
-    override fun commitEmoji(emoji: String) = guard { a.commitEmoji(emoji) }
-    override fun deleteBackward() = guard { a.deleteBackward() }
-    override fun commitGif(gif: TenorGifResult) = guard { a.commitGif(gif) }
-    override fun headerMenu() = guard { a.headerMenu() }
-    override fun togglePanel(panel: ActivePanel) = guard { a.togglePanel(panel) }
-    override fun toggleVoice() = guard { a.toggleVoice() }
-    override fun openSettings() = guard { a.openSettings() }
-    override fun openVoiceFallback() = guard { a.openVoiceFallback() }
-    override fun hideKeyboard() = guard { a.hideKeyboard() }
-    override fun clearClipboard() = guard { a.clearClipboard() }
-    override fun insertTranslation() = guard { a.insertTranslation() }
-    override fun commitSymbol(text: String) = guard { a.commitSymbol(text) }
-    override fun runPluginAction(pluginId: String, index: Int) = guard { a.runPluginAction(pluginId, index) }
-    override fun replaceLast(old: String, new: String) = guard { a.replaceLast(old, new) }
-    override fun commitGlide(path: List<Offset>, keys: Map<Char, Offset>, keyWidth: Float, tapLetter: String?) =
-        guard { a.commitGlide(path, keys, keyWidth, tapLetter) }
-    override fun switchKeyboard() = guard { a.switchKeyboard() }
-    override fun runScriptButton(pluginId: String, id: String) = guard { a.runScriptButton(pluginId, id) }
-    override fun removeClip(text: String) = guard { a.removeClip(text) }
-    override fun togglePinClip(text: String) = guard { a.togglePinClip(text) }
-    override fun forgetSuggestion(word: String) = guard { a.forgetSuggestion(word) }
-    override fun pickCandidate(index: Int) = guard { a.pickCandidate(index) }
-    override fun commitClip(entry: String) = guard { a.commitClip(entry) }
-    override fun pasteClipOffer() = guard { a.pasteClipOffer() }
-    override fun dismissClipOffer() = guard { a.dismissClipOffer() }
-    override fun globeHold() = guard { a.globeHold() }
-    override fun editKey(id: String) = guard { a.editKey(id) }
-    override fun aiFix() = guard { a.aiFix() }
-    override fun aiTool(id: String) = guard { a.aiTool(id) }
-    override fun spaceHold() = guard { a.spaceHold() }
-    override fun backspaceSelect(words: Int) = guard { a.backspaceSelect(words) }
-    override fun backspaceSelectDone(delete: Boolean) = guard { a.backspaceSelectDone(delete) }
-    override fun rambler() = guard { a.rambler() }
-    override fun scriptPromptDone(submit: Boolean) = guard { a.scriptPromptDone(submit) }
-}
-
-@Stable
-class VoiceInput(
-    private val context: Context,
-    private val onResult: (String) -> Unit,
-    /** Службы распознавания нет: попробовать системное окно распознавания. true — запущено. */
-    private val onNoEngine: () -> Boolean = { false }
-) {
-    var listening by mutableStateOf(false)
-        private set
-    var status by mutableStateOf(tr("Нажмите на микрофон и говорите"))
-        private set
-    var partial by mutableStateOf("")
-        private set
-    var rms by mutableFloatStateOf(0f)
-        private set
-    /** Встроенное распознавание не работает — показать кнопку другого голосового ввода. */
-    var needsFallback by mutableStateOf(false)
-        private set
-    private var recognizer: SpeechRecognizer? = null
-    /** Кто сейчас распознаёт: null — системный сервис по умолчанию, иначе явный компонент. */
-    private var engine: ComponentName? = null
-    private var onDevice = false
-    /** Варианты сервисов для этого запуска: если один падает сразу, пробуем следующий. */
-    private var options: List<Pair<ComponentName?, Boolean>> = emptyList()
-    private var optionIndex = 0
-    private var heardSomething = false
-    private var lastLanguage: KeyboardLanguage? = null
-    /** Идёт запуск/распознавание; после stop() поздние ошибки отмены не показываем. */
-    private var active = false
-    /** Rambler: длинные паузы не обрывают запись, после каждой фразы слушаем дальше, пока не нажмут на микрофон. */
-    private var continuous = false
-
-    fun hasPermission(): Boolean =
-        ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-
-    private val listener = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) {
-            status = tr("Говорите…")
-        }
-        override fun onBeginningOfSpeech() {
-            heardSomething = true
-        }
-        override fun onRmsChanged(rmsdB: Float) {
-            rms = rmsdB
-        }
-        override fun onBufferReceived(buffer: ByteArray?) {}
-        override fun onEndOfSpeech() {
-            listening = false
-            rms = 0f
-            status = tr("Распознаю…")
-        }
-        override fun onError(error: Int) {
-            listening = false
-            rms = 0f
-            if (!active) return
-            // сервис не смог даже начать — пробуем следующий установленный
-            val broken = error == SpeechRecognizer.ERROR_CLIENT || error == SpeechRecognizer.ERROR_SERVER ||
-                error == 11 /* ERROR_SERVER_DISCONNECTED */ || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
-                error == 12 /* ERROR_LANGUAGE_NOT_SUPPORTED */ || error == 13 /* ERROR_LANGUAGE_UNAVAILABLE */
-            if (broken && !heardSomething && optionIndex + 1 < options.size) {
-                optionIndex++
-                destroyRecognizer()
-                lastLanguage?.let { launch(it) }
-                return
-            }
-            active = false
-            status = when (error) {
-                SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> tr("Не расслышал. Нажмите на микрофон ещё раз")
-                SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> tr("Нет интернета для распознавания речи")
-                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> tr("Нужен доступ к микрофону")
-                SpeechRecognizer.ERROR_AUDIO -> tr("Микрофон занят другим приложением")
-                12, 13 -> tr("Этот язык не поддерживается распознаванием")
-                else -> {
-                    needsFallback = true
-                    tr("Распознавание не сработало. Попробуйте голосовой ввод другой клавиатуры")
-                }
-            }
-            if (broken) destroyRecognizer()
-        }
-        override fun onResults(results: Bundle?) {
-            active = false
-            listening = false
-            rms = 0f
-            val all = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
-            // вариант без «звёздочек» вместо слов — если сервис всё-таки прикрыл часть слов, а часть вариантов нет
-            val best = (all.firstOrNull { '*' !in it } ?: all.firstOrNull())?.trim().orEmpty()
-            if (best.isNotEmpty()) {
-                partial = ""
-                status = tr("Вставлено: {0}", best)
-                onResult(best)
-            } else status = tr("Речь не распознана")
-            if (continuous) lastLanguage?.let { launch(it) }
-        }
-        override fun onPartialResults(partialResults: Bundle?) {
-            val p = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
-            if (p.isNotEmpty()) partial = p
-        }
-        override fun onEvent(eventType: Int, params: Bundle?) {}
-    }
-
-    fun start(language: KeyboardLanguage, rambler: Boolean = false) {
-        continuous = rambler
-        if (!hasPermission()) {
-            status = tr("Нужен доступ к микрофону")
-            return
-        }
-        needsFallback = false
-        options = findEngines()
-        optionIndex = 0
-        if (options.isEmpty()) {
-            if (onNoEngine()) return
-            needsFallback = true
-            status = tr("На устройстве нет службы распознавания речи. Нажмите «Другой голосовой ввод»")
-            return
-        }
-        launch(language)
-    }
-
-    /**
-     * Все способы распознавания по порядку. На многих телефонах (Xiaomi, Honor, без сервисов Google по умолчанию)
-     * системный сервис не назначен и isRecognitionAvailable() возвращает false, хотя распознавание Google
-     * установлено, — тогда обращаемся к нему напрямую.
-     */
-    private fun findEngines(): List<Pair<ComponentName?, Boolean>> {
-        val out = ArrayList<Pair<ComponentName?, Boolean>>()
-        if (runCatching { SpeechRecognizer.isRecognitionAvailable(context) }.getOrDefault(false)) out += null to false
-        val services = runCatching {
-            context.packageManager.queryIntentServices(Intent(RecognitionService.SERVICE_INTERFACE), 0)
-        }.getOrDefault(emptyList())
-        val preferred = listOf("com.google.android.googlequicksearchbox", "com.google.android.tts", "com.google.android.as")
-        services.sortedBy { s -> preferred.indexOf(s.serviceInfo.packageName).let { if (it < 0) 99 else it } }.forEach { s ->
-            val c = ComponentName(s.serviceInfo.packageName, s.serviceInfo.name)
-            if (out.none { it.first == c }) out += c to false
-        }
-        if (Build.VERSION.SDK_INT >= 31 && runCatching { SpeechRecognizer.isOnDeviceRecognitionAvailable(context) }.getOrDefault(false)) {
-            out += null to true
-        }
-        return out
-    }
-
-    private fun launch(language: KeyboardLanguage) {
-        active = true
-        lastLanguage = language
-        heardSomething = false
-        val (component, local) = options[optionIndex]
-        val r = recognizer?.takeIf { engine == component && onDevice == local } ?: run {
-            destroyRecognizer()
-            val created = runCatching {
-                when {
-                    local && Build.VERSION.SDK_INT >= 31 -> SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
-                    component != null -> SpeechRecognizer.createSpeechRecognizer(context, component)
-                    else -> SpeechRecognizer.createSpeechRecognizer(context)
-                }
-            }.getOrNull()
-            if (created == null) {
-                if (optionIndex + 1 < options.size) {
-                    optionIndex++
-                    launch(language)
-                } else {
-                    needsFallback = true
-                    status = tr("Не удалось запустить распознавание")
-                }
-                return
-            }
-            created.setRecognitionListener(listener)
-            engine = component
-            onDevice = local
-            recognizer = created
-            created
-        }
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, language.locale)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
-            VoiceBridge.uncensored(this)
-            if (continuous) {
-                // подумать посреди фразы можно: запись не обрывается на первой же паузе
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 4000L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 3000L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 6000L)
-            }
-        }
-        partial = ""
-        listening = true
-        status = if (continuous) tr("Rambler: говорите свободно, ИИ уберёт лишнее") else tr("Слушаю ({0})…", language.label)
-        runCatching { r.startListening(intent) }.onFailure {
-            listening = false
-            destroyRecognizer()
-            if (optionIndex + 1 < options.size) {
-                optionIndex++
-                launch(language)
-            } else {
-                needsFallback = true
-                status = tr("Не удалось запустить распознавание")
-            }
-        }
-    }
-
-    private fun destroyRecognizer() {
-        runCatching { recognizer?.destroy() }
-        recognizer = null
-        engine = null
-        onDevice = false
-    }
-
-    fun stop() {
-        active = false
-        continuous = false
-        runCatching { recognizer?.cancel() }
-        listening = false
-        rms = 0f
-    }
-
-    fun release() {
-        destroyRecognizer()
-        listening = false
-    }
-}
-
-/** Сколько живёт предложение вставить только что скопированное (или только что сделанный скриншот). */
-private const val CLIP_OFFER_MS = 5 * 60_000L
-/** Сколько минимум показывается анимация улучшения текста. */
-private const val MIN_AI_ANIM_MS = 700L
-
 private val OFFER_BREAKERS = setOf(KeyType.CHARACTER, KeyType.SPACE, KeyType.BACKSPACE, KeyType.ENTER)
 
 private val PAIRS = mapOf('(' to ')', '[' to ']', '{' to '}', '«' to '»')
+
+/** Поле ввода не удалось определить — сохраняем страницу символов при ближайшем перезапуске окна. */
+private const val KEEP_PAGE_ANY_FIELD = "*"
 
 internal data class FieldFlags(
     val isPassword: Boolean = false,
@@ -569,6 +174,11 @@ class ComposeKeyboardService : InputMethodService(),
     override val savedStateRegistry: SavedStateRegistry get() = savedStateController.savedStateRegistry
 
     private val kb = KeyboardState()
+    /**
+     * Поле, где язык сменили со страницы символов. Смена языка переключает подтип ввода, и система может заново
+     * открыть окно ввода в том же поле — тогда страницу символов надо вернуть, иначе выбрасывает на буквы.
+     */
+    private var keepSymbolsPageFor: String? = null
     /** Действия для интерфейса: сбой одного нажатия сбрасывает набор, а не роняет клавиатуру. */
     private val safeActions: KeyboardActions = SafeActions(this) { recoverInputState() }
     private lateinit var voice: VoiceInput
@@ -696,7 +306,11 @@ class ComposeKeyboardService : InputMethodService(),
         }
         set(v) {
             when (kb.panel) {
-                ActivePanel.TRANSLATE -> kb.translatorInput = v.orEmpty()
+                ActivePanel.TRANSLATE -> {
+                    val text = v.orEmpty()
+                    kb.translatorInput = text
+                    kb.translatorCursor = kb.translatorCursor.coerceIn(0, text.length)
+                }
                 ActivePanel.EMOJI_SEARCH -> kb.emojiQuery = v.orEmpty()
                 ActivePanel.GIF_SEARCH -> kb.gifQuery = v.orEmpty()
                 ActivePanel.AI_PROMPT -> kb.aiPrompt = v.orEmpty()
@@ -707,19 +321,65 @@ class ComposeKeyboardService : InputMethodService(),
             if (kb.panel == ActivePanel.TRANSLATE) schedulePanelPredictions()
         }
 
-    /** Исправление последнего слова в переводчике: (слово → исправление), считается заранее. */
-    private var panelCorrection: Pair<String, String>? = null
-    /** Пробел в переводчике исправил слово: (текст после, текст до) — ⌫ возвращает как было. */
-    private var panelUndo: Pair<String, String>? = null
+    private class PanelWord(val text: String, val start: Int, val end: Int, val prev: String)
+    private class PanelFix(val start: Int, val end: Int, val word: String, val fix: String)
+    private class PanelUndo(val after: String, val before: String, val cursor: Int)
 
-    private val panelWordRe = Regex("[\\p{L}\\p{M}'’-]+$")
+    /** Курсор переводчика, всегда в границах текста. */
+    private fun translatorCursor(): Int = kb.translatorCursor.coerceIn(0, kb.translatorInput.length)
+
+    private fun isPanelWordChar(ch: Char) = isWordLetter(ch) || ch == '\'' || ch == '’' || ch == '-'
+
+    /** Слово под курсором: тап внутри слова редактирует его целиком, а не только часть после курсора. */
+    private fun panelWordAt(text: String, cursor: Int): PanelWord? {
+        var probe = cursor.coerceIn(0, text.length)
+        if (probe >= text.length || !isPanelWordChar(text[probe])) {
+            if (probe > 0 && isPanelWordChar(text[probe - 1])) probe-- else return null
+        }
+        var start = probe
+        while (start > 0 && isPanelWordChar(text[start - 1])) start--
+        var end = probe + 1
+        while (end < text.length && isPanelWordChar(text[end])) end++
+        val word = text.substring(start, end)
+        val prev = Regex("([\\p{L}\\p{M}'’-]+)\\s+$").find(text.substring(0, start))
+            ?.groupValues?.get(1).orEmpty()
+        return PanelWord(word, start, end, prev)
+    }
+
+    /** Вставить текст в позицию курсора переводчика. */
+    private fun translatorInsert(text: String) {
+        val t = kb.translatorInput
+        val c = translatorCursor()
+        panelUndo = null
+        kb.translatorCursor = c + text.length
+        panelInput = t.substring(0, c) + text + t.substring(c)
+    }
+
+    /** Заменить кусок текста переводчика (например, слово выбранной подсказкой). */
+    private fun translatorReplace(start: Int, end: Int, text: String) {
+        val t = kb.translatorInput
+        val s = start.coerceIn(0, t.length)
+        val e = end.coerceIn(s, t.length)
+        panelUndo = null
+        kb.translatorCursor = s + text.length
+        panelInput = t.substring(0, s) + text + t.substring(e)
+    }
+
+    /** Исправление слова под курсором: (границы, слово, исправление), считается заранее. */
+    private var panelCorrection: PanelFix? = null
+    /** Пробел в переводчике исправил слово: (текст после, текст до, курсор) — ⌫ возвращает как было. */
+    private var panelUndo: PanelUndo? = null
 
     private fun schedulePanelPredictions() {
         predictionJob?.cancel()
+        panelCorrection = null
         if (!settings.showSuggestions) return
         val text = kb.translatorInput
-        val word = panelWordRe.find(text)?.value.orEmpty()
-        val prev = Regex("([\\p{L}\\p{M}'’-]+)\\s+$").find(text.dropLast(word.length))?.groupValues?.get(1).orEmpty()
+        val cursor = translatorCursor()
+        val at = panelWordAt(text, cursor)
+        val word = at?.text.orEmpty()
+        val prev = at?.prev ?: Regex("([\\p{L}\\p{M}'’-]+)\\s+$")
+            .find(text.substring(0, cursor))?.groupValues?.get(1).orEmpty()
         val lang = Languages.withUser(kb.language)
         val s = settings
         predictionJob = serviceScope.launch {
@@ -727,21 +387,31 @@ class ComposeKeyboardService : InputMethodService(),
                 val me = coroutineContext[Job]
                 WordPredictorEngine.predict(word, prev, null, lang, false, s.autoCorrectStrength, s.autoCorrect, null, null) { me?.isActive == false }
             } ?: return@launch
-            if (kb.translatorInput != text || kb.panel != ActivePanel.TRANSLATE) return@launch
+            // курсор мог уйти на другое слово, пока считали, — подсказки для старого уже не нужны
+            if (kb.translatorInput != text || kb.translatorCursor != cursor || kb.panel != ActivePanel.TRANSLATE) return@launch
             kb.suggestions = snap.chips
-            panelCorrection = snap.autoCorrection?.takeIf { word.isNotEmpty() && it != word && s.autoCorrect }?.let { word to it }
+            if (at != null && word.isNotEmpty()) {
+                panelCorrection = snap.autoCorrection?.takeIf { it != word && s.autoCorrect }
+                    ?.let { PanelFix(at.start, at.end, word, it) }
+            }
         }
     }
 
-    /** Пробел в переводчике: слово с ошибкой исправляется, ⌫ сразу после — отменяет. */
+    /** Пробел в переводчике: в конце текста слово с ошибкой исправляется, ⌫ сразу после — отменяет. */
     private fun panelSpace(t: String) {
-        val word = panelWordRe.find(t)?.value.orEmpty()
-        val fix = panelCorrection?.takeIf { it.first == word && word.isNotEmpty() }?.second
-        if (kb.panel == ActivePanel.TRANSLATE && fix != null) {
-            val next = t.dropLast(word.length) + fix + " "
-            panelUndo = next to "$t "
+        // поиск эмодзи, GIF и поле мода по-прежнему дописывают в конец
+        if (kb.panel != ActivePanel.TRANSLATE) {
+            panelInput = "$t "
+            return
+        }
+        val c = translatorCursor()
+        val fix = panelCorrection?.takeIf { c == t.length && it.end == c && it.word.isNotEmpty() }
+        if (fix != null) {
+            val next = t.substring(0, fix.start) + fix.fix + " " + t.substring(fix.end)
+            panelUndo = PanelUndo(next, t, t.length)
+            kb.translatorCursor = fix.start + fix.fix.length + 1
             panelInput = next
-        } else panelInput = "$t "
+        } else translatorInsert(" ")
     }
 
     private fun dataPrefs() = getSharedPreferences(WordPredictorEngine.DATA_PREFS, Context.MODE_PRIVATE)
@@ -834,6 +504,24 @@ class ComposeKeyboardService : InputMethodService(),
 
     override fun onEvaluateFullscreenMode(): Boolean = false
 
+    /** Границы плавающей клавиатуры в окне; null — клавиатура обычная, внизу экрана. */
+    private var floatRect: android.graphics.Rect? = null
+
+    /**
+     * Плавающая клавиатура: приложение не сжимается и не сдвигается (клавиатура для него «нулевой высоты»),
+     * а касания ловятся только на самой карточке — мимо неё они уходят приложению.
+     */
+    override fun onComputeInsets(outInsets: InputMethodService.Insets) {
+        super.onComputeInsets(outInsets)
+        val r = floatRect ?: return
+        val h = window?.window?.decorView?.height ?: return
+        if (h <= 0) return
+        outInsets.contentTopInsets = h
+        outInsets.visibleTopInsets = h
+        outInsets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_REGION
+        outInsets.touchableRegion.set(r)
+    }
+
     override fun onCreateInputView(): View {
         // Android пересоздаёт окно клавиатуры (поворот, смена темы): старая разметка живёт до уничтожения сервиса,
         // и её клавиши путаются с новыми — освобождаем её явно
@@ -859,6 +547,12 @@ class ComposeKeyboardService : InputMethodService(),
                     blurTint = tint.toArgb()
                     blurCornerDp = corner
                     applyWindowColors()
+                }, onFloatBounds = { r ->
+                    if (r != floatRect) {
+                        floatRect = r
+                        // окно пересчитает, где ловить касания, при следующем проходе отрисовки
+                        inputView?.invalidate()
+                    }
                 })
             }
         }
@@ -892,6 +586,8 @@ class ComposeKeyboardService : InputMethodService(),
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         moveLifecycle(Lifecycle.State.RESUMED)
+        // разрешение могли выдать, пока клавиатура была скрыта (например, из настроек) — обновляем панель
+        voice.refreshPermission()
         // окно только появляется: панели и строка подсказок встают на место сразу, без анимаций
         if (!isInputViewShown) kb.instantUi = true
         WordPredictorEngine.loadPersonalDictionary(this)
@@ -984,6 +680,7 @@ class ComposeKeyboardService : InputMethodService(),
     override fun onWindowShown() {
         super.onWindowShown()
         moveLifecycle(Lifecycle.State.RESUMED)
+        voice.refreshPermission()
         syncClipboard()
         if (kb.clipOffer != null && System.currentTimeMillis() - clipOfferAt > CLIP_OFFER_MS) kb.clipOffer = null
         expireClips()
@@ -1174,6 +871,10 @@ class ComposeKeyboardService : InputMethodService(),
         )
     }
 
+    /** Поле ввода, чтобы отличить перезапуск окна в том же поле от перехода в новое. */
+    private fun fieldKey(info: EditorInfo?): String =
+        (info?.packageName ?: "") + "/" + (info?.fieldId ?: -1)
+
     private fun resetForInput(info: EditorInfo?, restarting: Boolean) {
         flags = computeFlags(info)
         // в поле пароля и в инкогнито моды не видят ни набираемого текста, ни буфера
@@ -1203,10 +904,20 @@ class ComposeKeyboardService : InputMethodService(),
             kb.toolbarOpen = false
             kb.toolsDismissed = false
             kb.translatorInput = ""
+            kb.translatorCursor = 0
         }
         val cls = (info?.inputType ?: 0) and InputType.TYPE_MASK_CLASS
-        kb.symbolsPage = if (cls == InputType.TYPE_CLASS_NUMBER || cls == InputType.TYPE_CLASS_PHONE ||
-            cls == InputType.TYPE_CLASS_DATETIME) 1 else 0
+        val numeric = cls == InputType.TYPE_CLASS_NUMBER || cls == InputType.TYPE_CLASS_PHONE ||
+            cls == InputType.TYPE_CLASS_DATETIME
+        // смена языка переподключает подтип ввода, и окно может перезапуститься в том же поле: страница
+        // символов остаётся («?123» не превращается в буквы); при restarting — тот же сеанс ввода
+        val keepPage = keepSymbolsPageFor?.let { it == KEEP_PAGE_ANY_FIELD || it == fieldKey(info) } == true
+        keepSymbolsPageFor = null
+        kb.symbolsPage = when {
+            numeric -> 1
+            restarting || keepPage -> kb.symbolsPage
+            else -> 0
+        }
         kb.numberPad = settings.numberPad && (cls == InputType.TYPE_CLASS_NUMBER || cls == InputType.TYPE_CLASS_PHONE)
         kb.phoneField = cls == InputType.TYPE_CLASS_PHONE
         tapWord = null
@@ -2010,8 +1721,16 @@ class ComposeKeyboardService : InputMethodService(),
         panelInput?.let { t ->
             val u = panelUndo
             panelUndo = null
-            if (u != null && u.first == t) panelInput = u.second.dropLast(1)
-            else if (t.isNotEmpty()) panelInput = t.dropLast(1)
+            if (u != null && u.after == t) {
+                kb.translatorCursor = u.cursor.coerceIn(0, u.before.length)
+                panelInput = u.before
+            } else if (kb.panel == ActivePanel.TRANSLATE) {
+                val c = translatorCursor()
+                if (c > 0) {
+                    kb.translatorCursor = c - 1
+                    panelInput = t.removeRange(c - 1, c)
+                }
+            } else if (t.isNotEmpty()) panelInput = t.dropLast(1)
             return
         }
         val ic = currentInputConnection ?: return
@@ -2203,6 +1922,10 @@ class ComposeKeyboardService : InputMethodService(),
         rawComposing = ""
         undo = null
         if (kb.language == lang) return
+        // смена языка на странице символов не должна уводить на буквы: подтип ввода перезапускает окно
+        if (isInputViewShown && kb.symbolsPage != 0) {
+            keepSymbolsPageFor = currentInputEditorInfo?.let(::fieldKey) ?: KEEP_PAGE_ANY_FIELD
+        }
         kb.language = lang
         if (!lang.hasCase && kb.shift == ShiftState.SINGLE) kb.shift = ShiftState.OFF
         WordPredictorEngine.prepare(this, lang)
@@ -2265,7 +1988,18 @@ class ComposeKeyboardService : InputMethodService(),
                 val wasSingle = kb.shift == ShiftState.SINGLE
                 val pi = panelInput
                 if (pi != null) {
-                    panelInput = if (kb.language.id == "my") {
+                    if (kb.panel == ActivePanel.TRANSLATE) {
+                        val c = translatorCursor()
+                        when {
+                            kb.language.id == "my" -> {
+                                val e = MyanmarInput.edit(pi.substring(0, c), text, settings.myanmarVisual, myanmarPending)
+                                myanmarPending = e.pending
+                                translatorReplace(c - e.delete, c, e.insert)
+                            }
+                            text == "-" && c > 0 && pi[c - 1] == '-' && settings.dashMerge -> translatorReplace(c - 1, c, "—")
+                            else -> translatorInsert(text)
+                        }
+                    } else panelInput = if (kb.language.id == "my") {
                         val e = MyanmarInput.edit(pi, text, settings.myanmarVisual, myanmarPending)
                         myanmarPending = e.pending
                         pi.dropLast(e.delete) + e.insert
@@ -2285,7 +2019,11 @@ class ComposeKeyboardService : InputMethodService(),
             }
             KeyType.SYMBOLS_PAGE -> kb.symbolsPage = if (kb.symbolsPage == 1) 2 else 1
             // нажатие — следующий язык, удержание — выбор из списка (text = код языка)
-            KeyType.GLOBE -> Languages.enabled(settings).firstOrNull { it.label == text }?.let { setLanguage(it) } ?: toggleLanguage()
+            KeyType.GLOBE -> {
+                // на странице символов смена языка возвращает к буквам нового языка
+                if (kb.symbolsPage != 0) kb.symbolsPage = 0
+                Languages.enabled(settings).firstOrNull { it.label == text }?.let { setLanguage(it) } ?: toggleLanguage()
+            }
             KeyType.STICKERS -> togglePanel(ActivePanel.EMOJI)
             KeyType.SPACE -> panelInput?.let { panelSpace(it) } ?: typeSpace()
             KeyType.ENTER -> when {
@@ -2349,6 +2087,16 @@ class ComposeKeyboardService : InputMethodService(),
     }
 
     private fun deleteWord() {
+        if (kb.panel == ActivePanel.TRANSLATE) {
+            val t = kb.translatorInput
+            val c = translatorCursor()
+            if (c > 0) {
+                val n = Regex("(\\S+\\s*|\\s+)$").find(t.substring(0, c))?.value?.length ?: 1
+                kb.translatorCursor = (c - n).coerceAtLeast(0)
+                panelInput = t.removeRange(c - n, c)
+            }
+            return
+        }
         panelInput?.let { t ->
             if (t.isNotEmpty()) panelInput = t.trimEnd().substringBeforeLast(' ', "").let { if (it.isEmpty()) "" else "$it " }
             return
@@ -2475,12 +2223,34 @@ class ComposeKeyboardService : InputMethodService(),
         }
         if (ScriptHost.has("pick") && !flags.isPassword && ScriptHost.cancelled("pick", mapOf("word" to chip.commitWord))) return
         HapticsEngine.keyPress(this, inputView, settings, false)
-        // подсказка в переводчике заменяет набираемое там слово
+        // подсказка в переводчике заменяет слово под курсором (не только последнее)
         if (kb.panel == ActivePanel.TRANSLATE) {
             val t = kb.translatorInput
-            val word = panelWordRe.find(t)?.value.orEmpty()
+            val at = panelWordAt(t, translatorCursor())
             panelUndo = null
-            panelInput = t.dropLast(word.length) + chip.commitWord + " "
+            if (at == null) {
+                translatorInsert(chip.commitWord + " ")
+            } else {
+                val rest = t.substring(at.end)
+                val nextChar = rest.firstOrNull()
+                // после слова: пробел только если дальше идёт новое слово, а не знак препинания
+                val sep = when {
+                    nextChar == null -> " "
+                    nextChar.isWhitespace() -> ""
+                    nextChar in ".,!?;:…)]}\"'»" -> ""
+                    else -> " "
+                }
+                val word = chip.commitWord
+                val next = t.substring(0, at.start) + word + sep + rest
+                // курсор встаёт после слова (и пробела), чтобы можно было печатать дальше
+                val advance = when {
+                    sep.isNotEmpty() -> sep.length
+                    nextChar != null && nextChar.isWhitespace() -> 1
+                    else -> 0
+                }
+                kb.translatorCursor = at.start + word.length + advance
+                panelInput = next
+            }
             return
         }
         val ic = currentInputConnection ?: return
@@ -2615,6 +2385,13 @@ class ComposeKeyboardService : InputMethodService(),
     }
 
     override fun openSettings() {
+        runCatching {
+            startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+    }
+
+    override fun requestMicPermission() {
+        MicPermissionPrompt.pending = true
         runCatching {
             startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
@@ -3041,8 +2818,18 @@ class ComposeKeyboardService : InputMethodService(),
         val result = kb.translatorResult
         if (result.isBlank()) return
         kb.translatorInput = ""
+        kb.translatorCursor = 0
         kb.translatorResult = ""
         commitText("$result ")
+    }
+
+    override fun setTranslatorCursor(pos: Int) {
+        if (kb.panel != ActivePanel.TRANSLATE) return
+        val cursor = pos.coerceIn(0, kb.translatorInput.length)
+        if (cursor == kb.translatorCursor) return
+        panelUndo = null
+        kb.translatorCursor = cursor
+        schedulePanelPredictions()
     }
 
     private fun syncClipboard() {
@@ -3097,6 +2884,14 @@ class ComposeKeyboardService : InputMethodService(),
 
     override fun replaceLast(old: String, new: String) {
         panelInput?.let { t ->
+            if (kb.panel == ActivePanel.TRANSLATE) {
+                val c = translatorCursor()
+                if (c >= old.length && t.substring(c - old.length, c) == old) {
+                    translatorReplace(c - old.length, c, new)
+                }
+                if (new.isEmpty()) kb.shift = shiftBeforeKey
+                return
+            }
             if (t.endsWith(old)) panelInput = t.dropLast(old.length) + new
             if (new.isEmpty()) kb.shift = shiftBeforeKey
             return
@@ -3152,6 +2947,21 @@ class ComposeKeyboardService : InputMethodService(),
             if (r is String && r.isNotBlank()) best = r
         }
         panelInput?.let { t0 ->
+            if (kb.panel == ActivePanel.TRANSLATE) {
+                val c = translatorCursor()
+                // буква, вставленная касанием в начале свайпа, была прямо перед курсором
+                val remove = tapLetter != null && c >= tapLetter.length &&
+                    t0.substring(c - tapLetter.length, c) == tapLetter
+                val start = if (remove) c - tapLetter.length else c
+                val before = t0.getOrNull(start - 1)
+                val after = t0.getOrNull(c)
+                val glue = if (before != null && !before.isWhitespace()) " " else ""
+                val tail = if (after != null && isPanelWordChar(after)) " " else ""
+                val insert = glue + best + tail
+                kb.translatorCursor = start + insert.length
+                panelInput = t0.substring(0, start) + insert + t0.substring(c)
+                return
+            }
             val t = if (tapLetter != null && t0.endsWith(tapLetter)) t0.dropLast(tapLetter.length) else t0
             panelInput = if (t.isEmpty() || t.endsWith(' ')) t + best else "$t $best"
             return
@@ -3298,36 +3108,36 @@ class ComposeKeyboardService : InputMethodService(),
                 PluginActionType.INSERT -> {
                     val sel = ic.getSelectedText(0)?.toString().orEmpty()
                     commitText(PluginTemplates.expand(a.text, sel, clip))
-                    kb.pluginStatus = "✓ ${a.title}"
+                    kb.pluginStatus = "✓ ${tr(a.title)}"
                 }
                 PluginActionType.TRANSFORM -> {
                     val t = takeTarget(ic, a.scope)
                     if (t == null) {
-                        kb.pluginStatus = "Нет текста для «${a.title}»"
+                        kb.pluginStatus = tr("Нет текста для «{0}»", tr(a.title))
                     } else {
                         replaceTarget(ic, t, PluginTransforms.apply(a, t.text))
-                        kb.pluginStatus = "✓ ${a.title}"
+                        kb.pluginStatus = "✓ ${tr(a.title)}"
                     }
                 }
                 PluginActionType.KEY -> {
                     pluginKey(ic, a.key)
-                    kb.pluginStatus = "✓ ${a.title}"
+                    kb.pluginStatus = "✓ ${tr(a.title)}"
                 }
                 PluginActionType.HTTP -> {
                     val t = takeTarget(ic, a.scope)
-                    kb.pluginStatus = "⏳ ${a.title}…"
+                    kb.pluginStatus = "⏳ ${tr(a.title)}…"
                     serviceScope.launch {
                         val r = PluginHttp.run(a, t?.text.orEmpty(), clip)
                         val ic2 = currentInputConnection ?: return@launch
                         r.onSuccess { out ->
                             if (a.output == "replace" && t != null && targetStillValid(ic2, t)) replaceTarget(ic2, t, out)
                             else commitText(out)
-                            kb.pluginStatus = "✓ ${a.title}"
-                        }.onFailure { kb.pluginStatus = "✕ ${a.title}: ${it.message ?: "ошибка сети"}" }
+                            kb.pluginStatus = "✓ ${tr(a.title)}"
+                        }.onFailure { kb.pluginStatus = "✕ ${tr(a.title)}: ${it.message ?: tr("ошибка сети")}" }
                     }
                 }
             }
-        }.onFailure { kb.pluginStatus = "✕ ${a.title}: ${it.message ?: "ошибка"}" }
+        }.onFailure { kb.pluginStatus = "✕ ${tr(a.title)}: ${it.message ?: tr("ошибка")}" }
     }
 
     // ------------------------------------------------------------------ ScriptBridge: что могут скрипты модов

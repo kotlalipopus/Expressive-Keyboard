@@ -42,7 +42,8 @@ kb.addPanel({
     return [
       { type: "text", text: expr || "0", size: 26, bold: true },
       { type: "text", text: result ? "= " + result : " ", size: 15 },
-      { type: "grid", minWidth: 76, height: 42,
+      // ровно 4 колонки: иначе на другом dpi в ряд помещается 5 кнопок и раскладка «прыгает»
+      { type: "grid", columns: 4, height: 42,
         items: ["7", "8", "9", "÷", "4", "5", "6", "×", "1", "2", "3", "-", "0", ".", "%", "+", "(", ")", "C", "⌫"],
         onClick: function (k) { press(k); } },
       { type: "row", children: [
