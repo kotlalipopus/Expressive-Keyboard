@@ -24,6 +24,29 @@ jobs:
         continue-on-error: true
         run: ./gradlew assembleRelease --stacktrace
 
+      - name: Verify release signing
+        run: |
+          APK=$(ls app/build/outputs/apk/release/*.apk 2>/dev/null | head -1)
+          if [ -z "$APK" ]; then
+            echo "::error::Release APK was not built"
+            exit 1
+          fi
+          BT=$(ls "$ANDROID_HOME/build-tools" 2>/dev/null | sort -V | tail -1)
+          APKSIGNER="$ANDROID_HOME/build-tools/$BT/apksigner"
+          [ -x "$APKSIGNER" ] || APKSIGNER=$(command -v apksigner)
+          EXPECTED=$(keytool -list -v -keystore keystore/release.keystore -storepass expressive -alias release \
+            | grep -m1 'SHA256:' | sed 's/.*SHA256: //' | tr -d ':' | tr 'A-F' 'a-f')
+          ACTUAL=$("$APKSIGNER" verify --print-certs "$APK" \
+            | grep -m1 'SHA-256 digest:' | sed 's/.*SHA-256 digest: //' | tr -d ':' | tr 'A-F' 'a-f')
+          echo "Expected: $EXPECTED"
+          echo "Actual:   $ACTUAL"
+          if [ -n "$EXPECTED" ] && [ "$EXPECTED" = "$ACTUAL" ]; then
+            echo "Release APK is signed with the permanent key"
+          else
+            echo "::error::Release APK is NOT signed with the permanent key"
+            exit 1
+          fi
+
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
 
@@ -44,7 +67,6 @@ jobs:
           if-no-files-found: warn
 
       - name: Attach APK to release
-        if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
