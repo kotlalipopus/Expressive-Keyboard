@@ -12,12 +12,12 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - name: Publish draft release v11.1.10
+      - name: Publish draft release v11.2.0
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view v11.1.10 --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft | grep -q true; then
-            gh release edit v11.1.10 --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          if gh release view v11.2.0 --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft | grep -q true; then
+            gh release edit v11.2.0 --repo "$GITHUB_REPOSITORY" --draft=false --latest
           else
-            echo "No draft v11.1.10, nothing to do"
+            echo "No draft v11.2.0, nothing to do"
           fi

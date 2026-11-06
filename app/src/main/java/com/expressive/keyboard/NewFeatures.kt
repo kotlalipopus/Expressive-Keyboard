@@ -9,12 +9,7 @@ import kotlin.math.roundToInt
 // Страницы «Новое» и «Энергосбережение».
 
 /** Версия, о которой рассказывает «Новое»: страницу обновляем к каждому выпуску. */
-private const val NEW_IN_VERSION = "11.1.10"
-
-private val ENGLISH_VARIANTS = listOf(
-    "en-gb" to "Великобритания", "en-au" to "Австралия", "en-ca" to "Канада", "en-in" to "Индия",
-    "en-ie" to "Ирландия", "en-nz" to "Новая Зеландия", "en-za" to "ЮАР"
-)
+private const val NEW_IN_VERSION = "11.2.0"
 
 /** Размер клавиатуры в альбомной: и в «Клавишах», и в «Новом». */
 @Composable
@@ -31,8 +26,6 @@ internal fun LandscapeScaleItem(settings: KeyboardSettings) {
 @Composable
 internal fun WhatsNewPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> Unit) {
     val context = LocalContext.current
-    var dialog by remember { mutableStateOf<String?>(null) }
-    val enabledIds = settings.languages.split(',').map { it.trim() }.filter { it.isNotEmpty() }
 
     InfoCard(Icons.Rounded.NewReleases, tr("В версии {0}", NEW_IN_VERSION))
 
@@ -64,87 +57,6 @@ internal fun WhatsNewPage(settings: KeyboardSettings, onNavigate: (SettingsPage)
     }
     SettingsSection("Первый запуск") {
         InfoCard(Icons.Rounded.AutoAwesome, "Новые пользователи выбирают тему, количество форм и нужные функции при первом запуске")
-    }
-    SettingsSection("Резервная копия") {
-        ActionItem(
-            Icons.Rounded.Backup, "Экспорт и импорт настроек",
-            "Переработанная страница резервной копии",
-            onClick = { onNavigate(SettingsPage.BACKUP) }
-        )
-    }
-    SettingsSection("Моды") {
-        ActionItem(
-            Icons.Rounded.Extension, "Настройки мода",
-            "Редактор параметров мода, обновлённые встроенные моды",
-            onClick = { onNavigate(SettingsPage.PLUGINS) }
-        )
-    }
-    SettingsSection("Размер клавиатуры в альбомной") {
-        LandscapeScaleItem(settings)
-    }
-    SettingsSection("Удержание пробела и верхняя панель") {
-        ChoiceItem(
-            Icons.Rounded.SpaceBar, "Удержание пробела", null,
-            listOf("PICKER" to "Выбор клавиатуры", "LANGUAGE" to "Смена языка"), settings.spaceLongAction
-        ) { v ->
-            KeyboardPrefs.edit(context) {
-                putString("space_long_action", v)
-                putBoolean("space_long_press", true)
-            }
-        }
-        SliderItem(
-            icon = Icons.Rounded.Height, title = "Толщина верхней панели",
-            value = settings.headerHeightDp, range = 40f..60f,
-            format = { "${it.roundToInt()} dp" },
-            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("header_height_dp", v) } }
-        )
-    }
-    SettingsSection("Энергосбережение") {
-        EcoWhenItem(settings)
-        ActionItem(Icons.Rounded.BatterySaver, "Что выключается", null, onClick = { onNavigate(SettingsPage.POWER) })
-    }
-    SettingsSection("Мой словарь") {
-        ActionItem(Icons.Rounded.MenuBook, "Открыть «Мой словарь»", "Добавляйте слова вручную или загружайте файл", onClick = { onNavigate(SettingsPage.MY_WORDS) })
-    }
-    SettingsSection("OpenRouter — сотни моделей по одному ключу") {
-        ToggleItem(
-            Icons.Rounded.AutoFixHigh, "Использовать OpenRouter", "Исправлять текст через OpenRouter",
-            settings.aiProvider == AiProvider.OPENROUTER.id
-        ) { on -> KeyboardPrefs.edit(context) { putString("ai_provider", if (on) AiProvider.OPENROUTER.id else AiProvider.AUTO.id) } }
-        ActionItem(
-            Icons.Rounded.Key, "Ключ OpenRouter",
-            if (settings.openrouterKey.isBlank()) "openrouter.ai/keys — есть бесплатные модели" else "Задан",
-            onClick = { dialog = "key" }
-        )
-        ActionItem(
-            Icons.Rounded.Tune, "Модель OpenRouter", settings.openrouterModel.ifBlank { tr("По умолчанию: {0}", AiFix.OPENROUTER_MODEL) },
-            onClick = { dialog = "model" }
-        )
-    }
-    SettingsSection("Варианты английского") {
-        ENGLISH_VARIANTS.forEach { (id, title) ->
-            ToggleItem(Icons.Rounded.Language, title, "Своя метка на клавише и свой язык голосового ввода", id in enabledIds) { on ->
-                val next = if (on) enabledIds + id else enabledIds - id
-                KeyboardPrefs.edit(context) { putString("languages", next.joinToString(",")) }
-            }
-        }
-    }
-    SettingsSection("Стекло") {
-        ActionItem(Icons.Rounded.BlurOn, "Преломление и зернистость теперь заметны", "Ползунки — в настройках темы со стеклом", onClick = { onNavigate(SettingsPage.THEMES) })
-    }
-    SettingsSection("Импорт настроек") {
-        ActionItem(Icons.Rounded.Download, "Импорт настроек", "Исправлен импорт, который на части телефонов ничего не делал", onClick = { onNavigate(SettingsPage.BACKUP) })
-    }
-
-    when (dialog) {
-        "key" -> TextInputDialog("Ключ OpenRouter", settings.openrouterKey, "Ключ с openrouter.ai/keys", onDismiss = { dialog = null }) { v ->
-            KeyboardPrefs.edit(context) { putString("openrouter_key", SecretBox.encrypt(v.trim())) }
-            dialog = null
-        }
-        "model" -> TextInputDialog("Модель OpenRouter", settings.openrouterModel, "Пусто — модель по умолчанию", onDismiss = { dialog = null }) { v ->
-            KeyboardPrefs.edit(context) { putString("openrouter_model", v.trim()) }
-            dialog = null
-        }
     }
 }
 
