@@ -1,5 +1,5 @@
 name: Android setup
-description: JDK 17, Gradle и встроенный шрифт Nunito — общая подготовка для всех сборок
+description: JDK 17, Gradle, постоянный ключ подписи и встроенный шрифт Nunito — общая подготовка для всех сборок
 
 runs:
   using: composite
@@ -16,6 +16,23 @@ runs:
     - name: Make gradlew executable
       shell: bash
       run: chmod +x gradlew
+
+    - name: Prepare signing key
+      shell: bash
+      run: |
+        if [ -f keystore/release.keystore.b64 ]; then
+          mkdir -p keystore
+          base64 -d keystore/release.keystore.b64 > keystore/release.keystore
+          {
+            echo "RELEASE_STORE_FILE=keystore/release.keystore"
+            echo "RELEASE_STORE_PASSWORD=expressive"
+            echo "RELEASE_KEY_ALIAS=release"
+            echo "RELEASE_KEY_PASSWORD=expressive"
+          } >> local.properties
+          echo "Permanent signing key is ready"
+        else
+          echo "::warning::No permanent signing key found, APK will be debug-signed"
+        fi
 
     - name: Download bundled rounded font (Nunito, OFL)
       shell: bash

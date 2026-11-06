@@ -8,6 +8,9 @@ app/src/main/assets/fonts/
 dist/
 .kotlin/
 
+# ключ подписи: распакованный keystore не коммитим, в репозитории только .b64
+keystore/release.keystore
+
 # файлы ИИ-ассистентов — только локально, не в репозиторий
 CLAUDE.md
 CLAUDE.local.md

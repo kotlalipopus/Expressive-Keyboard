@@ -1,8 +1,9 @@
-name: Publish scheduled release
+name: Publish draft release
+
+# Автопубликация по расписанию отключена.
+# Запуск только вручную: Actions -> Publish draft release -> Run workflow.
 
 on:
-  schedule:
-    - cron: "0 14 7 11 *"   # 17:00 MSK, 7 November
   workflow_dispatch:
 
 permissions:
