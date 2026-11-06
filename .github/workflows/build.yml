@@ -43,7 +43,7 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: warn
 
-      - name: Attach APK to draft release
+      - name: Attach APK to release
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -60,11 +60,10 @@ jobs:
           VERSION=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts | head -1)
           TAG="v$VERSION"
           NAME="ExpressiveKeyboard-$VERSION-release.apk"
-          IS_DRAFT=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft 2>/dev/null || echo "")
-          if [ "$IS_DRAFT" != "true" ]; then
-            echo "No draft release $TAG, skipping"
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "No release $TAG, nothing to attach to"
             exit 0
           fi
           cp "$APK" "$NAME"
           gh release upload "$TAG" "$NAME" --clobber --repo "$GITHUB_REPOSITORY"
-          echo "Uploaded $NAME to draft $TAG"
+          echo "Uploaded $NAME to $TAG"
