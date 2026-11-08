@@ -522,6 +522,9 @@ class ComposeKeyboardService : InputMethodService(),
         outInsets.touchableRegion.set(r)
     }
 
+    /** Поверхность против мигания размытия (см. BlurGuard); есть только на Android 16+. */
+    private var blurGuard: View? = null
+
     override fun onCreateInputView(): View {
         // Android пересоздаёт окно клавиатуры (поворот, смена темы): старая разметка живёт до уничтожения сервиса,
         // и её клавиши путаются с новыми — освобождаем её явно
@@ -557,10 +560,15 @@ class ComposeKeyboardService : InputMethodService(),
             }
         }
         composeView = view
-        // под клавиатурой — невидимая поверхность в 1 px (см. BlurGuard), сама клавиатура поверх
+        // под клавиатурой — невидимая поверхность в 1 px (см. BlurGuard), сама клавиатура поверх.
+        // Только на Android 16+ и только пока включено размытие: лишняя поверхность в окне клавиатуры
+        // не нужна там, где нет мигания, которое она лечит
+        blurGuard = null
         val root = android.widget.FrameLayout(this).apply {
-            if (Build.VERSION.SDK_INT >= 31) {
-                addView(BlurGuard(this@ComposeKeyboardService), android.widget.FrameLayout.LayoutParams(1, 1, android.view.Gravity.BOTTOM or android.view.Gravity.START))
+            if (Build.VERSION.SDK_INT >= 36) {
+                val g = BlurGuard(this@ComposeKeyboardService).apply { visibility = View.GONE }
+                blurGuard = g
+                addView(g, android.widget.FrameLayout.LayoutParams(1, 1, android.view.Gravity.BOTTOM or android.view.Gravity.START))
             }
             addView(view, android.widget.FrameLayout.LayoutParams(android.widget.FrameLayout.LayoutParams.MATCH_PARENT, android.widget.FrameLayout.LayoutParams.WRAP_CONTENT))
         }
@@ -672,6 +680,8 @@ class ComposeKeyboardService : InputMethodService(),
         rawComposing = ""
         undo = null
         autoSpace = false
+        // «Отменить» правку ИИ относится только к этому полю и этому показу клавиатуры
+        clearAiUndo()
         if (kb.panel == ActivePanel.VOICE) voice.stop()
         WordPredictorEngine.flush()
         ScriptHost.emit("finish")
@@ -755,6 +765,7 @@ class ComposeKeyboardService : InputMethodService(),
         val w = window?.window ?: return
         runCatching {
             val blur = Build.VERSION.SDK_INT >= 31 && blurRadius > 0
+            blurGuard?.let { g -> (if (blur) View.VISIBLE else View.GONE).let { v -> if (g.visibility != v) g.visibility = v } }
             val bg = if (blur) Triple(blurRadius, blurTint, blurCornerDp) else 0
             if (w !== appliedWindow) {
                 // один раз на окно: повторный вызов заново раздаёт отступы окна, и клавиатура на кадр сдвигалась
@@ -1718,6 +1729,7 @@ class ComposeKeyboardService : InputMethodService(),
     }
 
     override fun deleteBackward() {
+        clearAiUndo()
         panelInput?.let { t ->
             val u = panelUndo
             panelUndo = null
@@ -1953,6 +1965,7 @@ class ComposeKeyboardService : InputMethodService(),
     override fun keyTick() = HapticsEngine.tick(this, inputView, settings)
 
     override fun commitKey(key: KeyModel, text: String) {
+        clearAiUndo()
         // ошибка в обработке одного нажатия (поле ввода, словарь, мод) не должна ронять всю клавиатуру
         try {
             commitKeySafe(key, text)
@@ -2063,6 +2076,10 @@ class ComposeKeyboardService : InputMethodService(),
 
     override fun swipeSpace(direction: Int) {
         if (settings.spaceSwipe == "CURSOR" && panelInput == null) moveCursor(direction) else toggleLanguage(direction)
+    }
+
+    override fun spaceCursor(direction: Int) {
+        if (panelInput == null) moveCursor(direction)
     }
 
     private fun finishComposing(ic: InputConnection) {
@@ -2554,8 +2571,11 @@ class ComposeKeyboardService : InputMethodService(),
 
     override fun pasteClipOffer() {
         val entry = kb.clipOffer ?: return
+        val secret = kb.clipOfferSecret
         kb.clipOffer = null
-        commitClip(entry)
+        kb.clipOfferSecret = false
+        // пароль вставляется как есть: ни в историю, ни в «недавние»
+        if (secret) commitText(entry) else commitClip(entry)
     }
 
     override fun spaceHold() {
@@ -2574,6 +2594,13 @@ class ComposeKeyboardService : InputMethodService(),
 
     /** Что ИИ вставил последним и что было до этого: (вставленный текст перед курсором, прежний текст). */
     private var aiBackup: Pair<String, String>? = null
+
+    /** Пользователь продолжил печатать или закрыл клавиатуру — отменять правку ИИ уже нечего. */
+    private fun clearAiUndo() {
+        if (aiBackup == null && !kb.aiCanUndo) return
+        aiBackup = null
+        kb.aiCanUndo = false
+    }
 
     override fun aiTool(id: String) {
         when (id) {
@@ -2784,6 +2811,7 @@ class ComposeKeyboardService : InputMethodService(),
         val now = System.currentTimeMillis()
         if (stamp > 0 && now - stamp in 0..CLIP_OFFER_MS && !flags.isPassword) {
             kb.clipOffer = entry
+            kb.clipOfferSecret = false
             clipOfferAt = stamp
         }
     }
@@ -2834,8 +2862,12 @@ class ComposeKeyboardService : InputMethodService(),
 
     private fun syncClipboard() {
         val s = settings
-        // инкогнито и поле пароля: скопированное не попадает ни в историю, ни к модам
-        if (s.incognito || flags.isPassword) return
+        if (s.incognito) return
+        // пароль из менеджера паролей: в историю и к модам не попадает, но один раз предлагается вставить
+        // (скрытым, как в Gboard) — в том числе в поле пароля
+        if (offerSecretClip()) return
+        // поле пароля: скопированное не попадает ни в историю, ни к модам
+        if (flags.isPassword) return
         if (!s.clipboardHistory) {
             if (kb.clipboard.isNotEmpty()) {
                 kb.clipboard.clear()
@@ -2874,6 +2906,24 @@ class ComposeKeyboardService : InputMethodService(),
             if (!ScriptHost.privateMode) ScriptHost.emit("clipboard", entry)
         }
     }
+
+    /** true — в буфере пароль (флаг IS_SENSITIVE); свежий предлагается вставить, нигде не сохраняясь. */
+    private fun offerSecretClip(): Boolean = runCatching {
+        val clip = clipboardManager?.primaryClip ?: return false
+        val desc = clip.description ?: return false
+        if (desc.extras?.getBoolean("android.content.extra.IS_SENSITIVE") != true) return false
+        val stamp = if (Build.VERSION.SDK_INT >= 26) desc.timestamp else 0L
+        if (stamp != 0L && stamp == lastClipStamp) return true
+        lastClipStamp = stamp
+        val text = clip.getItemAt(0).coerceToText(this)?.toString()?.trim()
+        val now = System.currentTimeMillis()
+        if (!text.isNullOrEmpty() && stamp > 0 && now - stamp in 0..CLIP_OFFER_MS) {
+            kb.clipOffer = text
+            kb.clipOfferSecret = true
+            clipOfferAt = stamp
+        }
+        true
+    }.getOrDefault(false)
 
     override fun commitSymbol(text: String) {
         HapticsEngine.keyPress(this, inputView, settings, false)

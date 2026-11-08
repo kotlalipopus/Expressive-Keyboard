@@ -410,7 +410,11 @@ internal fun KeyView(
                     try {
                         when (k.type) {
                             KeyType.BACKSPACE -> {
-                                act.commitKey(k, "")
+                                // со свайпом по ⌫ первый символ стирается по отпусканию (или когда удержание
+                                // переходит в автоповтор): иначе свайп сначала откусывал последнюю букву слова
+                                val deferFirst = cSettings.backspaceSwipe
+                                var deleted = !deferFirst
+                                if (!deferFirst) act.commitKey(k, "")
                                 var deadline = SystemClock.uptimeMillis() + 420L
                                 var wordMode = false
                                 var lastX = down.position.x
@@ -424,8 +428,9 @@ internal fun KeyView(
                                         val ev = if (left > 0) withTimeoutOrNull(left) { awaitPointerEvent() } else null
                                         if (ev == null) {
                                             if (!wordMode) {
-                                                act.keyTick()
+                                                if (deleted) act.keyTick()
                                                 act.commitKey(k, "")
+                                                deleted = true
                                             }
                                             deadline = SystemClock.uptimeMillis() + 55L
                                             continue
@@ -454,6 +459,7 @@ internal fun KeyView(
                                     }
                                 } finally {
                                     if (wordMode) act.backspaceSelectDone(released && words > 0)
+                                    else if (released && !deleted) act.commitKey(k, "")
                                 }
                             }
                             KeyType.SHIFT -> {
@@ -471,6 +477,8 @@ internal fun KeyView(
                                 var picker = false
                                 var rolled = false
                                 var lastX = down.position.x
+                                var cursorMode = false
+                                var langIntent = false
                                 Rollover.press(holder) {
                                     if (!swiped && !picker && !rolled) {
                                         rolled = true
@@ -502,6 +510,33 @@ internal fun KeyView(
                                     if (picker || rolled) continue
                                     val dx = ch.position.x - down.position.x
                                     when (mode) {
+                                        // быстрый свайп — язык; задержал палец и повёл — курсор (без ожидания удержания
+                                        // для смены языка: решает, сколько палец простоял до начала движения)
+                                        "BOTH" -> {
+                                            if (!swiped && !cursorMode && abs(dx) > slop &&
+                                                ch.uptimeMillis - down.uptimeMillis >= BOTH_HOLD_MS && !langIntent
+                                            ) {
+                                                cursorMode = true
+                                                swiped = true
+                                                Rollover.done(holder)
+                                                act.keyTick()
+                                                lastX = ch.position.x
+                                            } else if (!swiped && abs(dx) > slop) langIntent = true
+                                            if (cursorMode) {
+                                                while (ch.position.x - lastX > cursorStep) {
+                                                    lastX += cursorStep
+                                                    act.spaceCursor(1)
+                                                }
+                                                while (lastX - ch.position.x > cursorStep) {
+                                                    lastX -= cursorStep
+                                                    act.spaceCursor(-1)
+                                                }
+                                            } else if (!swiped && langIntent && abs(dx) > swipe) {
+                                                swiped = true
+                                                Rollover.done(holder)
+                                                act.swipeSpace(if (dx > 0) 1 else -1)
+                                            }
+                                        }
                                         "LANGUAGE" -> if (!swiped && abs(dx) > swipe) {
                                             swiped = true
                                             Rollover.done(holder)
@@ -706,7 +741,14 @@ internal fun KeyView(
                                             if (!moved && abs(ch.position.x - down.position.x) > slop / 2f) moved = true
                                             val o = origin()
                                             val idx = if (row != null && o != null) {
-                                                if (!moved) sel else ((o.x + ch.position.x - row.first) / row.second).toInt().coerceIn(0, vars.lastIndex)
+                                                val x = o.x + ch.position.x
+                                                val w = layer.coords?.size?.width?.toFloat() ?: Float.MAX_VALUE
+                                                // у самого края экрана палец не дотягивается до крайней ячейки
+                                                // (рамка экрана, жесты навигации): край — значит крайний вариант
+                                                if (!moved) sel
+                                                else if (x >= w - row.second * 0.6f) vars.lastIndex
+                                                else if (x <= row.second * 0.6f) 0
+                                                else ((x - row.first) / row.second).toInt().coerceIn(0, vars.lastIndex)
                                             } else (def + ((ch.position.x - down.position.x) / step).roundToInt()).coerceIn(0, vars.lastIndex)
                                             if (idx != sel) {
                                                 sel = idx
@@ -1031,3 +1073,6 @@ internal fun BoxScope.PopupBubbles(
         }
     }
 }
+
+/** Режим пробела «свайп — язык, удержание — курсор»: сколько палец должен простоять, чтобы двигать курсор. */
+private const val BOTH_HOLD_MS = 250L

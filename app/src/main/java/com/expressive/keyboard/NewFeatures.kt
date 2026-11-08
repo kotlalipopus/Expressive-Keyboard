@@ -2,6 +2,7 @@ package com.expressive.keyboard
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
+import androidx.compose.material.icons.automirrored.rounded.Backspace
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import kotlin.math.roundToInt
@@ -9,7 +10,7 @@ import kotlin.math.roundToInt
 // Страницы «Новое» и «Энергосбережение».
 
 /** Версия, о которой рассказывает «Новое»: страницу обновляем к каждому выпуску. */
-private const val NEW_IN_VERSION = "11.2.1"
+private const val NEW_IN_VERSION = "11.2.2"
 
 /** Размер клавиатуры в альбомной: и в «Клавишах», и в «Новом». */
 @Composable
@@ -29,6 +30,15 @@ internal fun WhatsNewPage(settings: KeyboardSettings, onNavigate: (SettingsPage)
 
     InfoCard(Icons.Rounded.NewReleases, tr("В версии {0}", NEW_IN_VERSION))
 
+    SettingsSection("Жесты и буфер") {
+        ActionItem(
+            Icons.Rounded.Swipe, "Пробел: свайп — язык, удержание — курсор",
+            "Режим «Оба» в жестах: язык меняется без ожидания удержания",
+            onClick = { onNavigate(SettingsPage.GESTURES) }
+        )
+        InfoCard(Icons.Rounded.Password, "Скопированный пароль можно вставить из строки подсказок — он скрыт точками и не попадает в историю")
+        InfoCard(Icons.AutoMirrored.Rounded.Backspace, "Свайп по ⌫ больше не стирает последнюю букву перед выделением слов")
+    }
     SettingsSection("Обновление без переустановки") {
         InfoCard(Icons.Rounded.SystemUpdate, "Версия ставится поверх и 11.2.0, и 11.1.9 и старше — удалять клавиатуру больше не нужно")
         ActionItem(

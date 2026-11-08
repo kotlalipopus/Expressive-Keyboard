@@ -385,9 +385,10 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
             when (settings.spaceSwipe) {
                 "CURSOR" -> "Ведите палец по пробелу — курсор двигается"
                 "LANGUAGE" -> "Свайп меняет язык"
+                "BOTH" -> "Быстрый свайп меняет язык, задержите палец и ведите — курсор"
                 else -> "Жест выключен"
             },
-            listOf("CURSOR" to "Курсор", "LANGUAGE" to "Язык", "OFF" to "Выкл"), settings.spaceSwipe
+            listOf("CURSOR" to "Курсор", "LANGUAGE" to "Язык", "BOTH" to "Оба", "OFF" to "Выкл"), settings.spaceSwipe
         ) { v -> KeyboardPrefs.edit(context) { putString("space_swipe", v) } }
         ToggleItem(Icons.AutoMirrored.Rounded.Backspace, "Свайп влево по ⌫", "Удаляет целые слова", settings.backspaceSwipe) {
             KeyboardPrefs.edit(context) { putBoolean("backspace_swipe", it) }

@@ -217,7 +217,7 @@ internal fun HeaderBar(
                     HeaderMode.TOOLS -> ToolbarPill(state, actions, settings, palette)
                     HeaderMode.CANDIDATES -> CandidateStrip(candidates, actions, palette, font)
                     HeaderMode.INLINE -> inline?.let { InlineSuggestionStrip(it) }
-                    HeaderMode.OFFER -> state.clipOffer?.let { ClipOfferStrip(it, actions, palette, font) }
+                    HeaderMode.OFFER -> state.clipOffer?.let { ClipOfferStrip(it, actions, palette, font, secret = state.clipOfferSecret) }
                     HeaderMode.SUGGESTIONS -> SuggestionStrip(state, actions, palette, font)
                 }
             }
@@ -464,8 +464,8 @@ private fun EditButton(
 
 /** Только что скопированное: нажатие вставляет, ✕ убирает. Как в Gboard. */
 @Composable
-internal fun ClipOfferStrip(entry: String, actions: KeyboardActions, palette: KeyPalette, font: FontFamily) {
-    val image = ClipImages.isImage(entry)
+internal fun ClipOfferStrip(entry: String, actions: KeyboardActions, palette: KeyPalette, font: FontFamily, secret: Boolean = false) {
+    val image = !secret && ClipImages.isImage(entry)
     Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
         Row(
             Modifier.weight(1f, fill = false).height(38.dp).clip(RoundedCornerShape(19.dp)).background(palette.accentSoft)
@@ -481,7 +481,7 @@ internal fun ClipOfferStrip(entry: String, actions: KeyboardActions, palette: Ke
                 }
             }
             Text(
-                if (image) tr("Вставить картинку") else entry.replace('\n', ' '),
+                if (image) tr("Вставить картинку") else if (secret) tr("Вставить пароль") + "  ••••••••" else entry.replace('\n', ' '),
                 color = palette.onAccentSoft, fontFamily = font, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis
             )
