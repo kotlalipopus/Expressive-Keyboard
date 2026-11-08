@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -23,29 +23,6 @@ jobs:
       - name: Build Release APK (fast, recommended)
         continue-on-error: true
         run: ./gradlew assembleRelease --stacktrace
-
-      - name: Verify release signing
-        run: |
-          APK=$(ls app/build/outputs/apk/release/*.apk 2>/dev/null | head -1)
-          if [ -z "$APK" ]; then
-            echo "::error::Release APK was not built"
-            exit 1
-          fi
-          BT=$(ls "$ANDROID_HOME/build-tools" 2>/dev/null | sort -V | tail -1)
-          APKSIGNER="$ANDROID_HOME/build-tools/$BT/apksigner"
-          [ -x "$APKSIGNER" ] || APKSIGNER=$(command -v apksigner)
-          EXPECTED=$(keytool -list -v -keystore keystore/release.keystore -storepass expressive -alias release \
-            | grep -m1 'SHA256:' | sed 's/.*SHA256: //' | tr -d ':' | tr 'A-F' 'a-f')
-          ACTUAL=$("$APKSIGNER" verify --print-certs "$APK" \
-            | grep -m1 'SHA-256 digest:' | sed 's/.*SHA-256 digest: //' | tr -d ':' | tr 'A-F' 'a-f')
-          echo "Expected: $EXPECTED"
-          echo "Actual:   $ACTUAL"
-          if [ -n "$EXPECTED" ] && [ "$EXPECTED" = "$ACTUAL" ]; then
-            echo "Release APK is signed with the permanent key"
-          else
-            echo "::error::Release APK is NOT signed with the permanent key"
-            exit 1
-          fi
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
@@ -65,27 +42,3 @@ jobs:
           name: ExpressiveKeyboard-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: warn
-
-      - name: Attach APK to release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if [ ! -f keystore/release.keystore ]; then
-            echo "No permanent signing key in this run, skipping release upload"
-            exit 0
-          fi
-          APK=$(ls app/build/outputs/apk/release/*.apk 2>/dev/null | head -1)
-          if [ -z "$APK" ]; then
-            echo "No release APK built, skipping release upload"
-            exit 0
-          fi
-          VERSION=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts | head -1)
-          TAG="v$VERSION"
-          NAME="ExpressiveKeyboard-$VERSION-release.apk"
-          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "No release $TAG, nothing to attach to"
-            exit 0
-          fi
-          cp "$APK" "$NAME"
-          gh release upload "$TAG" "$NAME" --clobber --repo "$GITHUB_REPOSITORY"
-          echo "Uploaded $NAME to $TAG"

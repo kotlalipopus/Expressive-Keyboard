@@ -279,6 +279,8 @@ private fun WelcomeStep(settings: KeyboardSettings) {
             listOf("SYSTEM" to "Как в системе", "ru" to "Русский", "en" to "English"), settings.appLanguage
         ) { v -> KeyboardPrefs.edit(context) { putString("app_language", v) } }
     }
+    // после переустановки: вернуть словарь Т9 и настройки из копии
+    T9BackupSection(title = "Переустанавливаете?", compact = true)
 }
 
 @Composable

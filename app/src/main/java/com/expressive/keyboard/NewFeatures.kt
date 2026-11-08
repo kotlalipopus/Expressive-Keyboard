@@ -9,7 +9,7 @@ import kotlin.math.roundToInt
 // Страницы «Новое» и «Энергосбережение».
 
 /** Версия, о которой рассказывает «Новое»: страницу обновляем к каждому выпуску. */
-private const val NEW_IN_VERSION = "11.2.0"
+private const val NEW_IN_VERSION = "11.2.1"
 
 /** Размер клавиатуры в альбомной: и в «Клавишах», и в «Новом». */
 @Composable
@@ -28,6 +28,15 @@ internal fun WhatsNewPage(settings: KeyboardSettings, onNavigate: (SettingsPage)
     val context = LocalContext.current
 
     InfoCard(Icons.Rounded.NewReleases, tr("В версии {0}", NEW_IN_VERSION))
+
+    SettingsSection("Обновление без переустановки") {
+        InfoCard(Icons.Rounded.SystemUpdate, "Версия ставится поверх и 11.2.0, и 11.1.9 и старше — удалять клавиатуру больше не нужно")
+        ActionItem(
+            Icons.Rounded.Backup, "Словарь Т9 не пропадает",
+            "Автокопия в папку и системная копия Android: после переустановки слова возвращаются",
+            onClick = { onNavigate(SettingsPage.BACKUP) }
+        )
+    }
 
     SettingsSection("Material 3 Expressive") {
         ActionItem(

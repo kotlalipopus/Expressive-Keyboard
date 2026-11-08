@@ -163,6 +163,7 @@ internal fun BackupPage() {
                 .onFailure { Toast.makeText(context, tr("Ошибка: {0}", it.message), Toast.LENGTH_LONG).show() }
         }
     }
+    T9BackupSection()
     SettingsSection("Настройки") {
         ActionItem(Icons.Rounded.Upload, "Экспорт настроек", "Сохранить все параметры в .json", onClick = {
             exportLauncher.launch("expressive-keyboard-settings.json")
@@ -214,6 +215,95 @@ internal fun BackupPage() {
                 }) { Text(tr(when (what) { "dict" -> "Очистить"; "all" -> "Удалить"; else -> "Сбросить" })) }
             },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text(tr("Отмена")) } }
+        )
+    }
+}
+
+/** Словарь Т9 переживает переустановку: автокопия в папку пользователя, экспорт и восстановление. */
+@Composable
+internal fun T9BackupSection(title: String = "Словарь Т9", compact: Boolean = false) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var folder by remember { mutableStateOf(LearnedBackup.folder(context)) }
+    var last by remember { mutableStateOf(LearnedBackup.lastSavedMs(context)) }
+    var found by remember { mutableStateOf<String?>(null) }
+    fun restore(raw: String) = scope.launch {
+        val r = withContext(Dispatchers.IO) { runCatching { LearnedBackup.restore(context, raw) } }
+        r.onSuccess { Toast.makeText(context, tr("Восстановлено: слов {0}, параметров {1}", it.words, it.settings), Toast.LENGTH_LONG).show() }
+            .onFailure { Toast.makeText(context, tr("Ошибка: {0}", it.message), Toast.LENGTH_LONG).show() }
+    }
+    fun saveNow() = scope.launch {
+        val ok = withContext(Dispatchers.IO) { LearnedBackup.saveNow(context) }
+        last = LearnedBackup.lastSavedMs(context)
+        Toast.makeText(context, if (ok) tr("Копия сохранена") else tr("Нет доступа к папке — выберите её заново"), Toast.LENGTH_SHORT).show()
+    }
+    val treeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
+        if (uri != null) scope.launch {
+            val old = withContext(Dispatchers.IO) { LearnedBackup.setFolder(context, uri) }
+            folder = LearnedBackup.folder(context)
+            if (old != null) found = old else saveNow()
+        }
+    }
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri: Uri? ->
+        if (uri != null) scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                WordPredictorEngine.flush()
+                delay(300)
+                runCatching { context.contentResolver.openOutputStream(uri)?.use { it.write(LearnedBackup.build(context).toByteArray()) } }.isSuccess
+            }
+            Toast.makeText(context, if (ok) tr("Копия сохранена") else tr("Не удалось сохранить"), Toast.LENGTH_SHORT).show()
+        }
+    }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) scope.launch {
+            val raw = withContext(Dispatchers.IO) {
+                runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) } }.getOrNull()
+            }
+            if (raw != null) restore(raw) else Toast.makeText(context, tr("Файл не открылся"), Toast.LENGTH_SHORT).show()
+        }
+    }
+    SettingsSection(title) {
+        val sub = if (folder == null) "Выберите папку (например, «Документы») — словарь и настройки будут сохраняться туда и вернутся после переустановки"
+        else if (last > 0) tr("Включена · последняя копия {0}", java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(last)))
+        else "Включена"
+        ActionItem(Icons.Rounded.FolderOpen, "Автокопия в папку", sub, onClick = {
+            runCatching { treeLauncher.launch(null) }.onFailure {
+                Toast.makeText(context, tr("На телефоне нет приложения для выбора файлов"), Toast.LENGTH_LONG).show()
+            }
+        })
+        if (folder != null && !compact) {
+            ActionItem(Icons.Rounded.Save, "Сохранить копию сейчас", null, onClick = { saveNow() })
+            ActionItem(Icons.Rounded.FolderOff, "Отключить автокопию", "Файл в папке останется", onClick = {
+                LearnedBackup.clearFolder(context)
+                folder = null
+                last = 0L
+            })
+        }
+        if (!compact) ActionItem(Icons.Rounded.Upload, "Экспорт словаря и настроек", "Выученные слова, пары слов и «Мой словарь» в одном .json", onClick = {
+            exportLauncher.launch(LearnedBackup.FILE_NAME)
+        })
+        ActionItem(Icons.Rounded.Download, "Восстановить из копии", "Слова добавятся к уже выученным", onClick = {
+            runCatching { importLauncher.launch(arrayOf("*/*")) }.onFailure {
+                Toast.makeText(context, tr("На телефоне нет приложения для выбора файлов"), Toast.LENGTH_LONG).show()
+            }
+        })
+    }
+    found?.let { raw ->
+        AlertDialog(
+            onDismissRequest = { found = null; saveNow() },
+            icon = { Icon(Icons.Rounded.Restore, null) },
+            title = { Text(tr("В папке уже есть копия")) },
+            text = { Text(tr("Восстановить из неё словарь и настройки? Выученные на этом телефоне слова останутся.")) },
+            confirmButton = {
+                Button(onClick = {
+                    found = null
+                    scope.launch {
+                        restore(raw).join()
+                        saveNow()
+                    }
+                }) { Text(tr("Восстановить")) }
+            },
+            dismissButton = { TextButton(onClick = { found = null; saveNow() }) { Text(tr("Заменить новой")) } }
         )
     }
 }

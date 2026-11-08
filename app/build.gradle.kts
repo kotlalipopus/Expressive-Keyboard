@@ -1,4 +1,7 @@
 import java.util.Properties
+import java.security.KeyStore
+import java.security.PrivateKey
+import java.security.cert.X509Certificate
 
 plugins {
     id("com.android.application")
@@ -14,8 +17,8 @@ android {
         applicationId = "com.expressive.keyboard"
         minSdk = 26
         targetSdk = 35
-        versionCode = 24
-        versionName = "11.2.0"
+        versionCode = 25
+        versionName = "11.2.1"
         vectorDrawables {
             useSupportLibrary = true
         }
@@ -115,6 +118,111 @@ android {
             excludes += "META-INF/{LICENSE,LICENSE.txt,LICENSE.md,NOTICE,NOTICE.txt,NOTICE.md}"
             excludes += "META-INF/FastDoubleParser-*"
         }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Ротация ключа подписи (APK Signature Scheme v3).
+// 11.2.0 был собран в CI чужим ключом, и у всех, кто его поставил, подпись отличается от 11.1.9 и старше.
+// Release APK подписывается цепочкой «ключ 11.2.0 → наш ключ» (signing/rotation.lineage):
+// Android 9+ ставит обновление поверх обеих подписей без удаления приложения и без потери словаря.
+// Старый ключ хранится вне репозитория, путь и пароли — в local.properties (ROTATION_OLD_*).
+// ---------------------------------------------------------------------------------------------
+abstract class RotationSignApk : DefaultTask() {
+    @get:Internal abstract val apkDir: DirectoryProperty
+    @get:Internal abstract val lineage: RegularFileProperty
+    @get:Internal abstract val oldStore: RegularFileProperty
+    @get:Internal abstract val oldStorePass: Property<String>
+    @get:Internal abstract val oldAlias: Property<String>
+    @get:Internal abstract val oldKeyPass: Property<String>
+    @get:Internal abstract val newStore: RegularFileProperty
+    @get:Internal abstract val newStorePass: Property<String>
+    @get:Internal abstract val newAlias: Property<String>
+    @get:Internal abstract val newKeyPass: Property<String>
+    @get:Internal abstract val minSdk: Property<Int>
+
+    private fun signer(name: String, store: File, storePass: String, alias: String, keyPass: String): com.android.apksig.ApkSigner.SignerConfig {
+        val ks = runCatching {
+            KeyStore.getInstance("PKCS12").apply { store.inputStream().use { load(it, storePass.toCharArray()) } }
+        }.getOrElse {
+            KeyStore.getInstance("JKS").apply { store.inputStream().use { load(it, storePass.toCharArray()) } }
+        }
+        val key = ks.getKey(alias, keyPass.toCharArray()) as PrivateKey
+        val certs = ks.getCertificateChain(alias).map { it as X509Certificate }
+        return com.android.apksig.ApkSigner.SignerConfig.Builder(name, key, certs).build()
+    }
+
+    @TaskAction
+    fun sign() {
+        val lin = com.android.apksig.SigningCertificateLineage.readFromFile(lineage.get().asFile)
+        val old = signer("OLD", oldStore.get().asFile, oldStorePass.get(), oldAlias.get(), oldKeyPass.get())
+        val new = signer("CERT", newStore.get().asFile, newStorePass.get(), newAlias.get(), newKeyPass.get())
+        val apks = apkDir.get().asFile.listFiles { f -> f.extension == "apk" }.orEmpty()
+        check(apks.isNotEmpty()) { "Release APK не найден в ${apkDir.get().asFile}" }
+        for (apk in apks) {
+            val src = File(apk.parentFile, apk.name + ".unrotated")
+            apk.copyTo(src, overwrite = true)
+            com.android.apksig.ApkSigner.Builder(listOf(old, new))
+                .setSigningCertificateLineage(lin)
+                .setMinSdkVersion(minSdk.get())
+                .setMinSdkVersionForRotation(28)
+                .setV1SigningEnabled(false)
+                .setV2SigningEnabled(true)
+                .setV3SigningEnabled(true)
+                .setInputApk(src)
+                .setOutputApk(apk)
+                .build()
+                .sign()
+            src.delete()
+            val r = com.android.apksig.ApkVerifier.Builder(apk).setMinCheckedPlatformVersion(minSdk.get()).build().verify()
+            check(r.isVerified && r.isVerifiedUsingV3Scheme) { "Подпись ${apk.name} не прошла проверку: ${r.errors}" }
+            val got = r.v3SchemeSigners.first().certificate
+            check(got == new.certificates.first()) { "${apk.name} подписан не тем ключом" }
+            check(r.signingCertificateLineage?.size() == lin.size()) { "В ${apk.name} нет цепочки ротации ключа" }
+            logger.lifecycle("${apk.name}: подписан с ротацией ключа (${lin.size()} сертификата в цепочке)")
+        }
+    }
+}
+
+run {
+    val lp = Properties().apply {
+        val f = rootProject.file("local.properties")
+        if (f.exists()) f.inputStream().use { load(it) }
+    }
+    val lineageFile = rootProject.file("signing/rotation.lineage")
+    val oldStore = lp.getProperty("ROTATION_OLD_STORE_FILE")?.let { file(it) }?.takeIf { it.exists() }
+    val relStore = lp.getProperty("RELEASE_STORE_FILE")?.let { rootProject.file(it) }?.takeIf { it.exists() }
+    val isCi = System.getenv("CI") == "true"
+    if (lineageFile.exists() && oldStore == null && !isCi) {
+        throw GradleException(
+            "Нет старого ключа для ротации подписи: укажите ROTATION_OLD_STORE_FILE в local.properties. " +
+                "Без него обновление не встанет у тех, кто поставил 11.2.0."
+        )
+    }
+    if (lineageFile.exists() && oldStore != null) {
+        val rotate = tasks.register<RotationSignApk>("rotationSignRelease") {
+            dependsOn("packageRelease")
+            apkDir.set(layout.buildDirectory.dir("outputs/apk/release"))
+            lineage.set(lineageFile)
+            this.oldStore.set(oldStore)
+            oldStorePass.set(lp.getProperty("ROTATION_OLD_STORE_PASSWORD", ""))
+            oldAlias.set(lp.getProperty("ROTATION_OLD_KEY_ALIAS", "release"))
+            oldKeyPass.set(lp.getProperty("ROTATION_OLD_KEY_PASSWORD", lp.getProperty("ROTATION_OLD_STORE_PASSWORD", "")))
+            if (relStore != null) {
+                newStore.set(relStore)
+                newStorePass.set(lp.getProperty("RELEASE_STORE_PASSWORD"))
+                newAlias.set(lp.getProperty("RELEASE_KEY_ALIAS"))
+                newKeyPass.set(lp.getProperty("RELEASE_KEY_PASSWORD"))
+            } else {
+                newStore.set(File(System.getProperty("user.home"), ".android/debug.keystore"))
+                newStorePass.set("android")
+                newAlias.set("androiddebugkey")
+                newKeyPass.set("android")
+            }
+            minSdk.set(26)
+            outputs.upToDateWhen { false }
+        }
+        tasks.matching { it.name == "assembleRelease" }.configureEach { dependsOn(rotate) }
     }
 }
 

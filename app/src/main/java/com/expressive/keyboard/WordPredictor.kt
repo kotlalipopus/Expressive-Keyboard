@@ -683,6 +683,63 @@ object WordPredictorEngine {
         return addMyWords(context, lang, words.toString())
     }
 
+    /** Сырые данные выученного (для резервной копии): слова, пары слов, «Мой словарь». */
+    fun exportUserData(context: Context): Map<String, String> {
+        val data = context.applicationContext.getSharedPreferences(DATA_PREFS, Context.MODE_PRIVATE)
+        return listOf(KEY_WORDS, KEY_BIGRAMS, KEY_MY_WORDS).mapNotNull { k -> data.getString(k, null)?.let { k to it } }.toMap()
+    }
+
+    /**
+     * Восстановление из копии: слова добавляются к уже выученным (счётчик — больший из двух),
+     * «Мой словарь» объединяется. Ничего из выученного на этом телефоне не теряется.
+     * Возвращает число слов в копии.
+     */
+    fun mergeUserData(context: Context, raw: Map<String, String>): Int {
+        val app = context.applicationContext
+        appContext = appContext ?: app
+        val w = ConcurrentHashMap<String, Int>().also { parseInto(raw[KEY_WORDS], it) }
+        val b = ConcurrentHashMap<String, Int>().also { parseInto(raw[KEY_BIGRAMS], it) }
+        val data = app.getSharedPreferences(DATA_PREFS, Context.MODE_PRIVATE)
+        synchronized(this) {
+            // сначала в файл: если движок ещё грузит словарь, он прочитает уже объединённое
+            val fw = ConcurrentHashMap<String, Int>().also { parseInto(data.getString(KEY_WORDS, null), it) }
+            val fb = ConcurrentHashMap<String, Int>().also { parseInto(data.getString(KEY_BIGRAMS, null), it) }
+            w.forEach { (k, v) -> fw.merge(k, v, ::maxOf) }
+            b.forEach { (k, v) -> fb.merge(k, v, ::maxOf) }
+            data.edit()
+                .putString(KEY_WORDS, JSONObject(fw.toMap()).toString())
+                .putString(KEY_BIGRAMS, JSONObject(fb.toMap()).toString())
+                .commit()
+        }
+        if (started) {
+            w.forEach { (k, v) -> userWords.merge(k, v, ::maxOf) }
+            b.forEach { (k, v) -> userBigrams.merge(k, v, ::maxOf) }
+            glideCache.clear()
+            scheduleSave(0L)
+        }
+        var my = 0
+        raw[KEY_MY_WORDS]?.let { m ->
+            runCatching {
+                val json = JSONObject(m)
+                val all = readMyWords(app).toMutableMap()
+                for (code in json.keys()) {
+                    val a = json.getJSONArray(code)
+                    val incoming = (0 until a.length()).map { a.getString(it) }
+                    val old = all[code].orEmpty()
+                    val known = old.mapTo(HashSet()) { it.lowercase() }
+                    val fresh = incoming.filter { known.add(it.lowercase()) }
+                    my += incoming.size
+                    if (fresh.isNotEmpty()) {
+                        all[code] = (old + fresh).take(MAX_MY_WORDS)
+                        invalidate(code, sameFiles = true)
+                    }
+                }
+                writeMyWords(app, all)
+            }
+        }
+        return w.size + my
+    }
+
     fun clearMyWords(context: Context, lang: KeyboardLanguage) {
         val app = context.applicationContext
         appContext = appContext ?: app
@@ -792,6 +849,8 @@ object WordPredictorEngine {
                         .putString(KEY_BIGRAMS, bj.toString())
                         .apply()
                 }
+                // копия в папку пользователя: переживает переустановку (не чаще раза в несколько минут)
+                LearnedBackup.autoSave(app)
             }
         }
     }

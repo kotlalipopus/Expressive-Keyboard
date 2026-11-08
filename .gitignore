@@ -8,8 +8,10 @@ app/src/main/assets/fonts/
 dist/
 .kotlin/
 
-# ключ подписи: распакованный keystore не коммитим, в репозитории только .b64
-keystore/release.keystore
+# ключи подписи никогда не коммитим (signing/rotation.lineage — только публичные сертификаты, его можно)
+keystore/
+*.jks
+*.keystore
 
 # файлы ИИ-ассистентов — только локально, не в репозиторий
 CLAUDE.md

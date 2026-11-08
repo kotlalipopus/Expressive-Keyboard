@@ -76,6 +76,29 @@ object CjkUser {
         save()
     }
 
+    fun export(context: Context): String? =
+        context.applicationContext.getSharedPreferences(WordPredictorEngine.DATA_PREFS, Context.MODE_PRIVATE).getString(KEY, null)
+
+    /** Из резервной копии: счётчики складываются по большему, выученное на этом телефоне остаётся. */
+    fun merge(context: Context, raw: String) {
+        runCatching {
+            val o = JSONObject(raw)
+            val prefs = context.applicationContext.getSharedPreferences(WordPredictorEngine.DATA_PREFS, Context.MODE_PRIVATE)
+            val cur = runCatching { JSONObject(prefs.getString(KEY, null) ?: "{}") }.getOrDefault(JSONObject())
+            for (k in o.keys()) {
+                val m = o.getJSONObject(k)
+                val target = cur.optJSONObject(k) ?: JSONObject().also { cur.put(k, it) }
+                val mem = if (loaded) words.getOrPut(k) { ConcurrentHashMap() } else null
+                for (w in m.keys()) {
+                    val v = m.optInt(w, 1)
+                    target.put(w, maxOf(v, target.optInt(w, 0)))
+                    mem?.merge(w, v, ::maxOf)
+                }
+            }
+            prefs.edit().putString(KEY, cur.toString()).commit()
+        }
+    }
+
     private fun save() {
         val ctx = app ?: return
         synchronized(this) {

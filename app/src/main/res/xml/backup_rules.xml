@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 8–11: то же, что data_extraction_rules.xml — только словарь Т9 и настройки. -->
+<full-backup-content>
+        <include domain="sharedpref" path="expressive_keyboard_v8_data.xml" />
+        <include domain="sharedpref" path="expressive_keyboard_v7_prefs.xml" />
+</full-backup-content>

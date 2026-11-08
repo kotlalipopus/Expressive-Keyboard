@@ -1,5 +1,5 @@
 name: Android setup
-description: JDK 17, Gradle, постоянный ключ подписи и встроенный шрифт Nunito — общая подготовка для всех сборок
+description: JDK 17, Gradle и встроенный шрифт Nunito — общая подготовка для всех сборок
 
 runs:
   using: composite
@@ -16,38 +16,6 @@ runs:
     - name: Make gradlew executable
       shell: bash
       run: chmod +x gradlew
-
-    - name: Prepare signing key
-      shell: bash
-      run: |
-        # Первый запуск на main: создаём постоянный ключ подписи и коммитим его в репозиторий,
-        # чтобы все следующие сборки подписывались тем же ключом и обновления ставились поверх.
-        if [ ! -f keystore/release.keystore.b64 ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
-          echo "No signing key yet, generating a permanent one"
-          mkdir -p keystore
-          keytool -genkeypair -keystore keystore/release.keystore -alias release \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass expressive -keypass expressive \
-            -dname "CN=Expressive Keyboard, O=Narezany, C=RU"
-          base64 -w0 keystore/release.keystore > keystore/release.keystore.b64
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add keystore/release.keystore.b64
-          git commit -m "Add permanent signing keystore"
-          git push origin HEAD:main || echo "::warning::Could not push keystore to main"
-        fi
-        if [ -f keystore/release.keystore.b64 ]; then
-          base64 -d keystore/release.keystore.b64 > keystore/release.keystore
-          {
-            echo "RELEASE_STORE_FILE=keystore/release.keystore"
-            echo "RELEASE_STORE_PASSWORD=expressive"
-            echo "RELEASE_KEY_ALIAS=release"
-            echo "RELEASE_KEY_PASSWORD=expressive"
-          } >> local.properties
-          echo "Permanent signing key is ready"
-        else
-          echo "::warning::No permanent signing key, APK will be debug-signed"
-        fi
 
     - name: Download bundled rounded font (Nunito, OFL)
       shell: bash
