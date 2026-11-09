@@ -2748,6 +2748,10 @@ class ComposeKeyboardService : InputMethodService(),
             kb.selectMode = !kb.selectMode
             return
         }
+        if (id == "backspace") {
+            deleteBackward()
+            return
+        }
         val arrow = when (id) {
             "left" -> KeyEvent.KEYCODE_DPAD_LEFT
             "right" -> KeyEvent.KEYCODE_DPAD_RIGHT
@@ -2770,7 +2774,7 @@ class ComposeKeyboardService : InputMethodService(),
             } else {
                 pluginKey(ic, id)
                 // скопировали или вставили — выделение больше не нужно
-                if (id == "copy" || id == "paste") kb.selectMode = false
+                if (id == "copy" || id == "paste" || id == "cut") kb.selectMode = false
             }
         }
     }

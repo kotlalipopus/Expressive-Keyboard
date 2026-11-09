@@ -265,6 +265,9 @@ data class KeyboardSettings(
     val windowBlur: String = "OFF",
     /** Сила размытия, dp. */
     val windowBlurDp: Float = 32f,
+    val swipeDownHide: Boolean = true,            // свайп вниз по строке подсказок закрывает клавиатуру
+    val enterWidth: Float = 1f,                   // множитель ширины клавиши ввода
+    val numberRowScale: Float = 0.78f,            // высота ряда цифр относительно ряда букв
     val backspaceSwipe: Boolean = true,           // свайп влево по ⌫ удаляет слово
     val clipboardHistory: Boolean = true,
     val clipboardSize: Int = 50,
@@ -354,7 +357,7 @@ data class KeyboardSettings(
     /** После вставки эмодзи клавиатура сразу возвращается к буквам, как в Gboard. */
     val emojiReturnToKeyboard: Boolean = false,
     // --- интерфейс ---
-    val appLanguage: String = "SYSTEM",           // SYSTEM | ru | en
+    val appLanguage: String = "SYSTEM",           // SYSTEM | ru | en | es
     val designStyle: String = "EXPRESSIVE",
     /** Сколько выразительных форм: FULL, ACCENTS или NONE (см. ShapeAmount). */
     val shapeAmount: String = ShapeAmount.FULL,
@@ -379,7 +382,7 @@ data class KeyboardSettings(
 
     /** В альбомной ориентации клавиатура занимает не больше ~55% высоты экрана. */
     fun forLandscape(screenHeightDp: Int): KeyboardSettings {
-        val rows = if (showNumberRow) 4.78f else 4f
+        val rows = if (showNumberRow) 4f + numberRowScale else 4f
         val row = min(rowSpacingDp, 5f)
         val bottom = min(bottomOffsetDp, 2f)
         val budget = screenHeightDp * 0.55f - 40f - 16f - bottom - row * (rows - 1f)
@@ -574,6 +577,9 @@ object KeyboardPrefs {
             windowBlur = p.getString("window_blur", "OFF") ?: "OFF",
             windowBlurDp = p.getFloat("window_blur_dp", 32f).coerceIn(4f, 100f),
             backspaceSwipe = p.getBoolean("backspace_swipe", true),
+            swipeDownHide = p.getBoolean("swipe_down_hide", true),
+            enterWidth = p.getFloat("enter_width", 1f).coerceIn(1f, 1.8f),
+            numberRowScale = p.getFloat("number_row_scale", 0.78f).coerceIn(0.6f, 1.1f),
             clipboardHistory = p.getBoolean("clipboard_history", true),
             // 0 — без ограничения числа записей
             clipboardSize = p.getInt("clipboard_size", 50).let { if (it <= 0) Int.MAX_VALUE else it.coerceIn(5, 5000) },
@@ -660,7 +666,7 @@ object KeyboardPrefs {
         listOf(
             "key_height_dp", "header_height_dp", "landscape_scale", "corner_radius_dp", "key_spacing_dp", "row_spacing_dp", "bottom_offset_dp",
             "wave_amplitude_percent", "vibration_ms", "vibration_amplitude", "long_press_ms", "key_opacity", "bg_transparency", "bg_dim",
-            "bg_blur_dp", "window_blur_dp", "key_label_scale", "side_padding_dp", "one_handed_w", "float_width", "press_animation", "sound_volume", "anim_speed"
+            "bg_blur_dp", "window_blur_dp", "key_label_scale", "side_padding_dp", "one_handed_w", "float_width", "enter_width", "number_row_scale", "press_animation", "sound_volume", "anim_speed"
         ).forEach { put(it, 'f') }
         listOf(
             "wave_count", "seed_color", "color_background", "color_key", "color_key_text", "color_func",
@@ -670,7 +676,7 @@ object KeyboardPrefs {
             "show_number_row", "show_key_borders", "key_preview", "key_background", "emoji_return_keyboard", "auto_capitalize", "auto_correct_enabled",
             "double_space_period", "haptics_enabled", "vibrate_on_release", "strong_special_keys", "sound_enabled",
             "show_hints", "show_header", "number_pad", "floating_keyboard", "liquid_glass", "glass_merge", "myanmar_visual", "show_suggestions", "show_mic_button", "show_emoji_key", "show_globe_key", "panel_animations",
-            "backspace_swipe", "clipboard_history", "instant_input", "glide_typing", "glide_trail", "swipe_up_hint",
+            "backspace_swipe", "swipe_down_hide", "clipboard_history", "instant_input", "glide_typing", "glide_trail", "swipe_up_hint",
             "space_long_press", "auto_pair", "incognito", "dict_auto_download", "punctuation_keys", "smart_punctuation",
             "system_spellcheck", "edit_bar", "auto_space_punct", "eco_mode", "eco_press", "eco_panels", "eco_blur", "eco_trail", "eco_preview", "eco_haptics", "eco_sound", "eco_suggestions", "dash_merge", "clip_screenshots", "correct_everywhere", "dynamic_zones", "ai_voice_cleanup", "tools_button", "pinned_tools", "landscape_split"
         ).forEach { put(it, 'b') }

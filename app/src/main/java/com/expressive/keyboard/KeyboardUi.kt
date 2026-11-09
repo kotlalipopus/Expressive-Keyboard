@@ -322,7 +322,9 @@ internal fun FloatingFrame(
         // на случай прошивки, где окно клавиатуры не ограничивает высоту: берём высоту экрана
         val maxW = if (constraints.hasBoundedWidth) constraints.maxWidth.toFloat() else with(density) { conf.screenWidthDp.dp.toPx() }
         val maxH = if (constraints.hasBoundedHeight) constraints.maxHeight.toFloat() else with(density) { conf.screenHeightDp.dp.toPx() }
-        val widthPx = maxW * settings.floatWidth
+        // ширину можно тянуть за уголок на ручке: во время жеста — живая, при отпускании сохраняется
+        val liveWidth = remember(settings.floatWidth) { mutableStateOf(settings.floatWidth) }
+        val widthPx = maxW * liveWidth.value
         val kbH = remember { mutableIntStateOf(0) }
         val pos = remember(maxW, maxH) { mutableStateOf<Offset?>(null) }
         val fx = settings.floatX
@@ -367,6 +369,33 @@ internal fun FloatingFrame(
                 contentAlignment = Alignment.Center
             ) {
                 Box(Modifier.size(width = 44.dp, height = 5.dp).clip(CircleShape).background(palette.onFunc.copy(alpha = 0.45f)))
+                // уголок: влево-вправо — ширина, вверх-вниз — высота клавиш
+                Box(
+                    Modifier.align(Alignment.CenterStart).padding(start = 8.dp).size(22.dp).clip(CircleShape).background(palette.func)
+                        .pointerInput(maxW, settings.keyHeightDp, settings.floatWidth) {
+                            var dxSum = 0f
+                            var dySum = 0f
+                            detectDragGestures(
+                                onDragStart = { dxSum = 0f; dySum = 0f },
+                                onDragEnd = {
+                                    val h = (settings.keyHeightDp + dySum / density.density).coerceIn(32f, 68f)
+                                    KeyboardPrefs.edit(context) {
+                                        putFloat("float_width", liveWidth.value)
+                                        if (kotlin.math.abs(dySum) > 6f) putFloat("key_height_dp", h)
+                                    }
+                                },
+                                onDragCancel = { liveWidth.value = settings.floatWidth }
+                            ) { change, drag ->
+                                change.consume()
+                                dxSum += drag.x
+                                dySum += drag.y
+                                liveWidth.value = (settings.floatWidth + dxSum / maxW).coerceIn(0.5f, 1f)
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.OpenInFull, tr("Изменить размер"), tint = palette.onFunc, modifier = Modifier.size(14.dp))
+                }
                 // вернуть клавиатуру вниз, на обычное место
                 Box(
                     Modifier.align(Alignment.CenterEnd).padding(end = 8.dp).size(22.dp).clip(CircleShape).background(palette.func)
@@ -396,7 +425,7 @@ internal fun KeyboardScreen(
     val spec = remember(settings.shapePreset, settings.waveCount, settings.waveAmplitudePercent, settings.shapeAmount) { settings.accentSpec().accent(settings) }
     val panel = state.panel
     val numbers = settings.showNumberRow && state.symbolsPage == 0 && !state.numberPad
-    val bodyHeight = (settings.keyHeightDp * (if (numbers) 4.78f else 4f) + settings.rowSpacingDp * (if (numbers) 4f else 3f)).dp
+    val bodyHeight = (settings.keyHeightDp * (if (numbers) 4f + settings.numberRowScale else 4f) + settings.rowSpacingDp * (if (numbers) 4f else 3f)).dp
     val trailColor = LocalSkin.current?.trail ?: palette.accent.copy(alpha = 0.85f)
     val density = LocalDensity.current
     SideEffect {
@@ -603,8 +632,8 @@ internal fun KeyGrid(
 
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(settings.rowSpacingDp.dp)) {
         rows.forEach { row ->
-            val isNumberRow = row.heightWeight < 1f
-            Row(Modifier.fillMaxWidth().weight(row.heightWeight), horizontalArrangement = Arrangement.spacedBy(hSpace)) {
+            val isNumberRow = row.heightWeight == KeyboardLayouts.NUMBER_ROW_WEIGHT
+            Row(Modifier.fillMaxWidth().weight(if (isNumberRow) settings.numberRowScale else row.heightWeight), horizontalArrangement = Arrangement.spacedBy(hSpace)) {
                 for (key in row.keys) {
                     if (key.type == KeyType.SPACER) {
                         Spacer(Modifier.weight(key.weight))
@@ -631,7 +660,7 @@ internal fun KeyGrid(
                         actions = actions,
                         glideEnabled = glideEnabled,
                         numberRow = isNumberRow,
-                        modifier = Modifier.weight(key.weight).fillMaxHeight(),
+                        modifier = Modifier.weight(if (key.type == KeyType.ENTER) key.weight * settings.enterWidth else key.weight).fillMaxHeight(),
                         holdSymbol = if (isChar) holdSymbols[key] else null,
                         gapX = hSpace,
                         gapY = settings.rowSpacingDp.dp

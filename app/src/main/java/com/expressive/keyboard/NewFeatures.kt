@@ -10,7 +10,7 @@ import kotlin.math.roundToInt
 // Страницы «Новое» и «Энергосбережение».
 
 /** Версия, о которой рассказывает «Новое»: страницу обновляем к каждому выпуску. */
-private const val NEW_IN_VERSION = "11.2.2"
+private const val NEW_IN_VERSION = "11.2.3"
 
 /** Размер клавиатуры в альбомной: и в «Клавишах», и в «Новом». */
 @Composable
@@ -30,14 +30,18 @@ internal fun WhatsNewPage(settings: KeyboardSettings, onNavigate: (SettingsPage)
 
     InfoCard(Icons.Rounded.NewReleases, tr("В версии {0}", NEW_IN_VERSION))
 
-    SettingsSection("Жесты и буфер") {
-        ActionItem(
-            Icons.Rounded.Swipe, "Пробел: свайп — язык, удержание — курсор",
-            "Режим «Оба» в жестах: язык меняется без ожидания удержания",
-            onClick = { onNavigate(SettingsPage.GESTURES) }
-        )
-        InfoCard(Icons.Rounded.Password, "Скопированный пароль можно вставить из строки подсказок — он скрыт точками и не попадает в историю")
-        InfoCard(Icons.AutoMirrored.Rounded.Backspace, "Свайп по ⌫ больше не стирает последнюю букву перед выделением слов")
+    SettingsSection("Японский: кандзи") {
+        InfoCard(Icons.Rounded.Translate, "Хирагана превращается в кандзи: にほんご → 日本語. Слова и целые фразы, словарь встроен")
+    }
+    SettingsSection("Размер и закрытие") {
+        InfoCard(Icons.Rounded.SwipeDown, "Свайп вниз по строке подсказок закрывает клавиатуру (можно выключить в «Жестах»)")
+        InfoCard(Icons.Rounded.OpenInFull, "Плавающая клавиатура: уголок слева на ручке меняет ширину (влево-вправо) и высоту клавиш (вверх-вниз)")
+        InfoCard(Icons.Rounded.KeyboardReturn, "Ширина клавиши ввода и высота ряда цифр — в «Оформлении»")
+        InfoCard(Icons.Rounded.ContentCut, "Панель правки: добавлены «Вырезать» и «⌫»")
+    }
+    SettingsSection("Испанский интерфейс") {
+        InfoCard(Icons.Rounded.Language, "Язык интерфейса: Español")
+        InfoCard(Icons.Rounded.Public, "Бенгальский (Бангладеш)")
     }
     SettingsSection("Обновление без переустановки") {
         InfoCard(Icons.Rounded.SystemUpdate, "Версия ставится поверх и 11.2.0, и 11.1.9 и старше — удалять клавиатуру больше не нужно")

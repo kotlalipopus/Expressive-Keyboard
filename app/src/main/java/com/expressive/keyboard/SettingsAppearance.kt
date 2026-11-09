@@ -501,6 +501,20 @@ internal fun KeysPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         ToggleItem(Icons.Rounded.Dialpad, "Ряд цифр", null, settings.showNumberRow) {
             KeyboardPrefs.edit(context) { putBoolean("show_number_row", it) }
         }
+        AnimatedVisibility(settings.showNumberRow) {
+            SliderItem(
+                icon = Icons.Rounded.Height, title = "Высота ряда цифр",
+                value = settings.numberRowScale, range = 0.6f..1.1f,
+                format = { "${(it * 100).roundToInt()}%" },
+                onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("number_row_scale", v) } }
+            )
+        }
+        SliderItem(
+            icon = Icons.Rounded.KeyboardReturn, title = "Ширина клавиши ввода",
+            value = settings.enterWidth, range = 1f..1.8f,
+            format = { "${(it * 100).roundToInt()}%" },
+            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("enter_width", v) } }
+        )
         ToggleItem(Icons.AutoMirrored.Rounded.Label, "Подсказки на клавишах", "Маленький символ, доступный по удержанию", settings.showHints) {
             KeyboardPrefs.edit(context) { putBoolean("show_hints", it) }
         }

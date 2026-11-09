@@ -390,6 +390,9 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
             },
             listOf("CURSOR" to "Курсор", "LANGUAGE" to "Язык", "BOTH" to "Оба", "OFF" to "Выкл"), settings.spaceSwipe
         ) { v -> KeyboardPrefs.edit(context) { putString("space_swipe", v) } }
+        ToggleItem(Icons.Rounded.SwipeDown, "Свайп вниз закрывает", "Проведите вниз по строке подсказок — клавиатура скроется", settings.swipeDownHide) {
+            KeyboardPrefs.edit(context) { putBoolean("swipe_down_hide", it) }
+        }
         ToggleItem(Icons.AutoMirrored.Rounded.Backspace, "Свайп влево по ⌫", "Удаляет целые слова", settings.backspaceSwipe) {
             KeyboardPrefs.edit(context) { putBoolean("backspace_swipe", it) }
         }

@@ -276,7 +276,7 @@ private fun WelcomeStep(settings: KeyboardSettings) {
     SettingsSection(null) {
         ChoiceItem(
             Icons.Rounded.Translate, "Язык приложения", null,
-            listOf("SYSTEM" to "Как в системе", "ru" to "Русский", "en" to "English"), settings.appLanguage
+            listOf("SYSTEM" to "Как в системе", "ru" to "Русский", "en" to "English", "es" to "Español"), settings.appLanguage
         ) { v -> KeyboardPrefs.edit(context) { putString("app_language", v) } }
     }
     // после переустановки: вернуть словарь Т9 и настройки из копии

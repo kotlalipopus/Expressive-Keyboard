@@ -306,7 +306,8 @@ object KeyboardLayouts {
         )
     }
 
-    private val numberRow = KeyRow(c("1", "2", "3", "4", "5", "6", "7", "8", "9", "0"), 0.78f)
+    const val NUMBER_ROW_WEIGHT = 0.78f
+    private val numberRow = KeyRow(c("1", "2", "3", "4", "5", "6", "7", "8", "9", "0"), NUMBER_ROW_WEIGHT)
 
     private val englishLetters = listOf(
         KeyRow(c("q", "w", "e", "r", "t", "y", "u", "i", "o", "p")),

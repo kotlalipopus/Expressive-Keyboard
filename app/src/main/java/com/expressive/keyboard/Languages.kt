@@ -338,6 +338,7 @@ object Languages {
         L("qu", "QU", "Runa Simi", "Кечуа", "qu-PE", listOf("qwertyuiop", "asdfghjklñ", "zxcvbnm"), dict = null),
         L("gn", "GN", "Avañeʼẽ", "Гуарани", "gn-PY", listOf("qwertyuiop", "asdfghjklñ", "zxcvbnmʼ"), "aã eẽ iĩ oõ uũ yỹ", dict = null),
         indic("bn", "BN", "বাংলা", "Бенгальский", "bn-IN", 0x80, "bn"),
+        indic("bn-bd", "BD", "বাংলা (বাংলাদেশ)", "Бенгальский (Бангладеш)", "bn-BD", 0x80, "bn"),
         indic("pa", "PA", "ਪੰਜਾਬੀ", "Панджаби", "pa-IN", 0x100, null),
         indic("gu", "GU", "ગુજરાતી", "Гуджарати", "gu-IN", 0x180, null),
         indic("or", "OR", "ଓଡ଼ିଆ", "Ория", "or-IN", 0x200, null),

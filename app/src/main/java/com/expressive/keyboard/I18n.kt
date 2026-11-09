@@ -15,22 +15,30 @@ object I18n {
     var lang by mutableStateOf(systemLang())
         private set
 
-    private fun systemLang(): String =
-        if (Locale.getDefault().language in setOf("ru", "uk", "be", "kk", "ky", "tg", "tt", "ba", "uz")) "ru" else "en"
+    private fun systemLang(): String = when (Locale.getDefault().language) {
+        "ru", "uk", "be", "kk", "ky", "tg", "tt", "ba", "uz" -> "ru"
+        "es" -> "es"
+        else -> "en"
+    }
 
     /** setting: SYSTEM, ru или en. */
     fun apply(setting: String) {
         val next = when (setting) {
-            "ru", "en" -> setting
+            "ru", "en", "es" -> setting
             else -> systemLang()
         }
         if (next != lang) lang = next
     }
 
-    val isEnglish: Boolean get() = lang == "en"
+    /** Не русский: английский и испанский (для испанского недостающие строки берутся из английского). */
+    val isEnglish: Boolean get() = lang != "ru"
 }
 
-fun tr(ru: String): String = if (I18n.isEnglish) EN_STRINGS[ru] ?: ru else ru
+fun tr(ru: String): String = when (I18n.lang) {
+    "ru" -> ru
+    "es" -> ES_EXTRA[ru] ?: ES_STRINGS[ru] ?: EN_EXTRA[ru] ?: EN_STRINGS[ru] ?: ru
+    else -> EN_EXTRA[ru] ?: EN_STRINGS[ru] ?: ru
+}
 
 /** Подстановки {0}, {1}…: tr("Словарь «{0}»: {1} слов", name, n). */
 fun tr(ru: String, vararg args: Any?): String {

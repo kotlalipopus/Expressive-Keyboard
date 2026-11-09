@@ -17,8 +17,8 @@ android {
         applicationId = "com.expressive.keyboard"
         minSdk = 26
         targetSdk = 35
-        versionCode = 26
-        versionName = "11.2.2"
+        versionCode = 27
+        versionName = "11.2.3"
         vectorDrawables {
             useSupportLibrary = true
         }

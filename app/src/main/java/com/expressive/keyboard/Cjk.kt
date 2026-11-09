@@ -303,43 +303,167 @@ object Kana {
         m
     }
 
-    fun compose(raw: String): String {
+    /** Кусок кана и сколько набранных букв он занял; границы кусков — места, где можно обрезать слово. */
+    class Token(val text: String, val rawEnd: Int)
+
+    fun tokens(raw: String): List<Token> {
         val s = raw.lowercase()
-        val out = StringBuilder()
+        val out = ArrayList<Token>()
         var i = 0
         while (i < s.length) {
             val c = s[i]
             // двойная согласная → っ
             if (i + 1 < s.length && c == s[i + 1] && c !in "aiueon" && c.isLetter()) {
-                out.append('っ'); i++; continue
+                i++
+                out += Token("っ", i); continue
             }
             // n перед согласной (кроме y) → ん
             if (c == 'n' && i + 1 < s.length && s[i + 1] !in "aiueoy'n") {
-                out.append('ん'); i++; continue
+                i++
+                out += Token("ん", i); continue
             }
             var matched = false
             for (len in 4 downTo 1) {
                 if (i + len > s.length) continue
                 val v = table[s.substring(i, i + len)] ?: continue
-                out.append(v)
                 i += len
+                out += Token(v, i)
                 matched = true
                 break
             }
-            if (!matched) { out.append(s[i]); i++ }
+            if (!matched) { i++; out += Token(s[i - 1].toString(), i) }
         }
-        return out.toString()
+        return out
     }
+
+    fun compose(raw: String): String = tokens(raw).joinToString("") { it.text }
 
     fun katakana(hira: String): String = buildString {
         for (ch in hira) append(if (ch in 'ぁ'..'ゖ') ch + 0x60 else ch)
     }
 
     fun candidates(lang: KeyboardLanguage, raw: String): List<CjkCandidate> {
-        val h = compose(raw)
-        val learned = CjkUser.lookup(lang, raw).map { CjkCandidate(it, raw.length) }
-        return (learned + listOf(CjkCandidate(h, raw.length), CjkCandidate(katakana(h), raw.length), CjkCandidate(raw, raw.length)))
-            .distinctBy { it.text }
+        val toks = tokens(raw)
+        val h = toks.joinToString("") { it.text }
+        val out = ArrayList<CjkCandidate>(CjkUser.lookup(lang, raw).map { CjkCandidate(it, raw.length) })
+        // слова и фразы с кандзи; обрезанные по границам кусков кана, чтобы остаток продолжал набираться
+        if (KanjiDict.ready()) out += KanjiDict.candidates(toks.map { it.text }, toks.map { it.rawEnd }, raw.length)
+        out += listOf(CjkCandidate(h, raw.length), CjkCandidate(katakana(h), raw.length), CjkCandidate(raw, raw.length))
+        return out.distinctBy { it.text }
+    }
+}
+
+/**
+ * Кана → кандзи. Словарь (assets/ja/ja_kanji.txt, из открытого словаря Mozc): «чтение TAB цена TAB слово TAB слово…»,
+ * чем меньше цена, тем слово чаще. Целые слова берутся из словаря, фраза собирается по цене (Витерби),
+ * а частицы и окончания остаются кана: «わたしはがくせいです» превращается в «私は学生です».
+ */
+object KanjiDict {
+    private class Entry(val cost: Int, val words: List<String>)
+
+    @Volatile private var map: HashMap<String, Entry>? = null
+    private val loading = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + BackgroundErrors)
+
+    /** Слова, которые остаются кана: частицы, связки, окончания и устойчивые обороты (иначе «は» стало бы «葉»). */
+    private val KANA_WORDS = (
+        "は が を に で と の も へ や か ね よ な ぞ わ さ ば て た だ し い ない から まで より です ます ました ません ませ まし ませんか ませんでした " +
+        "でした して した する される できる ので のに けど けれど でも だけ など ほど こと もの ため ところ この その あの どの これ それ あれ どれ " +
+        "ここ そこ あそこ ある いる いた った って たい ています ている てる ください だった なかった なく でしょう ましょう ですか ますか ですが ますが " +
+        "とか ながら ように という いい ありがとう ございます ございました おはよう こんにちは こんばんは すみません よろしく おねがいします " +
+        "とても すごく ちょっと もう まだ また いつも んです んで ほんとう"
+    ).split(' ').toSet()
+    private const val KANA_WORD_COST = 1200
+    private const val KANA_CHAR_COST = 6500
+    private const val SEGMENT_COST = 2500
+    private const val SHORT1_PENALTY = 2500
+    private const val SHORT2_PENALTY = 800
+    private const val MAX_LEN = 14
+
+    fun ready() = map != null
+
+    fun prepare(context: Context) {
+        if (map != null || !loading.compareAndSet(false, true)) return
+        val app = context.applicationContext
+        scope.launch {
+            runCatching {
+                val m = HashMap<String, Entry>(120_000)
+                app.assets.open("ja/ja_kanji.txt").bufferedReader().useLines { lines ->
+                    for (line in lines) {
+                        val p = line.split('\t')
+                        if (p.size < 3) continue
+                        m[p[0]] = Entry(p[1].toIntOrNull() ?: continue, p.subList(2, p.size))
+                    }
+                }
+                map = m
+            }
+            loading.set(false)
+        }
+    }
+
+    private fun isKana(s: String) = s.isNotEmpty() && s.all { it in '\u3041'..'\u3096' || it == 'ー' }
+
+    /**
+     * kana — куски кана набранного, ends — где в наборе кончается каждый кусок.
+     * Сначала целиком (слова, затем собранная фраза), потом более короткие начала.
+     */
+    fun candidates(kana: List<String>, ends: List<Int>, rawLen: Int): List<CjkCandidate> {
+        val m = map ?: return emptyList()
+        val n = kana.size
+        if (n == 0) return emptyList()
+        val out = LinkedHashMap<String, CjkCandidate>()
+        fun add(t: String, consumed: Int) { if (t.isNotEmpty() && t !in out) out[t] = CjkCandidate(t, consumed) }
+        val pre = ArrayList<String>(n + 1)
+        pre += ""
+        for (t in kana) pre += pre.last() + t
+        fun sub(i: Int, j: Int) = pre[j].substring(pre[i].length)
+        // недобранная латиница в конце (например, «k») в слова не входит
+        var kanaEnd = n
+        while (kanaEnd > 0 && !isKana(kana[kanaEnd - 1])) kanaEnd--
+        fun consumedFor(j: Int) = if (j == n) rawLen else ends[j - 1]
+
+        // 1. целиком одним словом
+        if (kanaEnd == n) m[pre[n]]?.words?.forEach { add(it, rawLen) }
+        // 2. собранная фраза
+        if (kanaEnd >= 2) {
+            val inf = Int.MAX_VALUE / 4
+            val best = IntArray(kanaEnd + 1) { inf }
+            val from = IntArray(kanaEnd + 1) { -1 }
+            val text = arrayOfNulls<String>(kanaEnd + 1)
+            best[0] = 0
+            for (j in 1..kanaEnd) {
+                for (i in maxOf(0, j - MAX_LEN) until j) {
+                    if (best[i] >= inf) continue
+                    val seg = sub(i, j)
+                    var cost = -1
+                    var word = seg
+                    val e = m[seg]
+                    if (seg in KANA_WORDS) {
+                        cost = minOf(e?.cost ?: KANA_WORD_COST, KANA_WORD_COST) + SEGMENT_COST
+                    } else if (e != null) {
+                        cost = e.cost + SEGMENT_COST
+                        word = e.words.firstOrNull { it != seg } ?: seg
+                        if (word != seg) cost += if (j - i == 1) SHORT1_PENALTY else if (j - i == 2) SHORT2_PENALTY else 0
+                    } else if (j - i == 1) cost = KANA_CHAR_COST
+                    if (cost < 0) continue
+                    val c = best[i] + cost
+                    if (c < best[j]) { best[j] = c; from[j] = i; text[j] = word }
+                }
+            }
+            if (best[kanaEnd] < inf) {
+                val parts = ArrayList<String>()
+                var j = kanaEnd
+                while (j > 0) { parts += text[j]!!; j = from[j] }
+                parts.reverse()
+                if (parts.size > 1) add(parts.joinToString(""), consumedFor(kanaEnd))
+            }
+        }
+        // 3. более короткие начала, от длинных к коротким
+        for (j in kanaEnd - 1 downTo 1) {
+            val e = m[pre[j]] ?: continue
+            e.words.take(if (j == 1) 12 else 6).forEach { add(it, consumedFor(j)) }
+        }
+        return out.values.take(40)
     }
 }
 
@@ -347,6 +471,7 @@ object Cjk {
     fun prepare(context: Context, lang: KeyboardLanguage) {
         CjkUser.load(context)
         Pinyin.prepare(context, lang)
+        if (lang.composer == Composer.KANA) KanjiDict.prepare(context)
     }
 
     fun isCjk(c: Composer) = c == Composer.PINYIN || c == Composer.KANA

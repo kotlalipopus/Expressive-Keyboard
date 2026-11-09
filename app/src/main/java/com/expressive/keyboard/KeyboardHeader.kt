@@ -202,7 +202,32 @@ internal fun HeaderBar(
                 SlotIcon("menu", btnFg, 22.dp) { GlyphIcon(Glyph.GRID, btnFg, 22.dp) }
             }
         }
-        Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+        val hideOnSwipe = settings.swipeDownHide && panel == ActivePanel.KEYBOARD
+        val cActionsHide by rememberUpdatedState(actions)
+        Box(
+            Modifier.weight(1f).fillMaxHeight().then(
+                if (!hideOnSwipe) Modifier else Modifier.pointerInput(Unit) {
+                    // свайп вниз закрывает клавиатуру; события не забираем — подсказки и их прокрутка работают как раньше
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        val threshold = 28.dp.toPx()
+                        var fired = false
+                        while (!fired) {
+                            val ev = awaitPointerEvent(PointerEventPass.Initial)
+                            val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!ch.pressed) break
+                            val dy = ch.position.y - down.position.y
+                            val dx = kotlin.math.abs(ch.position.x - down.position.x)
+                            if (dy > threshold && dy > dx * 1.5f) {
+                                fired = true
+                                cActionsHide.hideKeyboard()
+                            } else if (dx > threshold * 1.5f) break
+                        }
+                    }
+                }
+            ),
+            contentAlignment = Alignment.Center
+        ) {
             val mode = when {
                 tools -> HeaderMode.TOOLS
                 showCandidates -> HeaderMode.CANDIDATES
@@ -413,14 +438,16 @@ internal fun EditBar(state: KeyboardState, actions: KeyboardActions, palette: Ke
         EditButton(Icons.Rounded.TextFields, "select", tint, palette, actions, selected = state.selectMode)
         EditButton(Icons.Rounded.KeyboardArrowRight, "right", tint, palette, actions, repeat = true)
         EditButton(Icons.Rounded.KeyboardArrowDown, "down", tint, palette, actions, repeat = true)
+        EditButton(Icons.Rounded.ContentCut, "cut", tint, palette, actions)
         EditButton(Icons.Rounded.ContentCopy, "copy", tint, palette, actions)
         EditButton(Icons.Rounded.ContentPaste, "paste", tint, palette, actions)
+        EditButton(Icons.AutoMirrored.Rounded.Backspace, "backspace", tint, palette, actions, repeat = true)
         EditButton(Icons.Rounded.LastPage, "end", tint, palette, actions)
     }
 }
 
 @Composable
-private fun EditButton(
+private fun RowScope.EditButton(
     icon: ImageVector,
     id: String,
     tint: Color,
@@ -432,8 +459,7 @@ private fun EditButton(
     val cActions by rememberUpdatedState(actions)
     var down by remember { mutableStateOf(false) }
     Box(
-        Modifier.size(width = 36.dp, height = 36.dp).clip(CircleShape)
-            .background(if (selected) palette.accent else if (down) tint.copy(alpha = 0.14f) else Color.Transparent)
+        Modifier.weight(1f).height(40.dp)
             .pointerInput(id, repeat) {
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
@@ -458,7 +484,13 @@ private fun EditButton(
             },
         contentAlignment = Alignment.Center
     ) {
-        Icon(icon, null, tint = if (selected) palette.onAccent else tint, modifier = Modifier.size(22.dp))
+        Box(
+            Modifier.size(34.dp).clip(CircleShape)
+                .background(if (selected) palette.accent else if (down) tint.copy(alpha = 0.14f) else Color.Transparent),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, null, tint = if (selected) palette.onAccent else tint, modifier = Modifier.size(21.dp))
+        }
     }
 }
 

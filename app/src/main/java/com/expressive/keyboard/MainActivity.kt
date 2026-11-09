@@ -473,7 +473,7 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
             }
             if (SettingsPage.BACKUP in pages) ChoiceItem(
                 Icons.Rounded.Translate, "Язык приложения", null,
-                listOf("SYSTEM" to "Как в системе", "ru" to "Русский", "en" to "English"), settings.appLanguage
+                listOf("SYSTEM" to "Как в системе", "ru" to "Русский", "en" to "English", "es" to "Español"), settings.appLanguage
             ) { v -> KeyboardPrefs.edit(context) { putString("app_language", v) } }
         }
     }
