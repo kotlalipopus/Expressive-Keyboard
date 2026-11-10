@@ -362,19 +362,27 @@ internal fun DrawScope.drawOverlayItems(items: List<OverlayItem>, measurer: Text
         }
 }
 
-/** Покадровое событие "frame" для модов: ~30 раз в секунду, пока клавиатура на экране и есть подписчики. */
+/**
+ * Покадровое событие "frame" для модов: до 60 раз в секунду (раньше — 30, и анимации модов выглядели рваными),
+ * пока клавиатура на экране и есть подписчики. Тяжёлый скрипт (кадр дольше 6 мс в среднем) сам переводится на 30,
+ * чтобы набор не тормозил.
+ */
 @Composable
 internal fun ScriptFrameTicker() {
     val active = ScriptHost.wantsFrames
     if (!active) return
     LaunchedEffect(Unit) {
         var last = withFrameMillis { it }
+        var costMs = 0f
         while (true) {
             val now = withFrameMillis { it }
             val dt = now - last
-            if (dt >= 32L) {
+            val step = if (costMs > 6f) 32L else 15L
+            if (dt >= step) {
                 last = now
+                val t0 = android.os.SystemClock.uptimeMillis()
                 ScriptHost.frame(dt.coerceAtMost(250L))
+                costMs = costMs * 0.9f + (android.os.SystemClock.uptimeMillis() - t0) * 0.1f
             }
         }
     }

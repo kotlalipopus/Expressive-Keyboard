@@ -787,7 +787,7 @@ object ModSensors : SensorEventListener {
         val now = SystemClock.uptimeMillis()
         when (e.sensor.type) {
             Sensor.TYPE_GYROSCOPE -> {
-                if (now - lastGyro < 33L) return
+                if (now - lastGyro < 16L) return
                 lastGyro = now
                 ScriptHost.emit("gyro", mapOf("x" to e.values[0], "y" to e.values[1], "z" to e.values[2]))
             }
@@ -798,7 +798,7 @@ object ModSensors : SensorEventListener {
                 tiltX += (-e.values[0] / g - tiltX) * k
                 tiltY += (e.values[1] / g - tiltY) * k
                 tiltZ += (e.values[2] / g - tiltZ) * k
-                if (now - lastTilt < 33L) return
+                if (now - lastTilt < 16L) return
                 lastTilt = now
                 ScriptHost.emit("tilt", mapOf("x" to tiltX, "y" to tiltY, "z" to tiltZ))
             }

@@ -15,7 +15,7 @@ import kotlin.math.min
 // ============================================================================
 
 /** Как из набранных клавиш получается слово: просто буквы, слоги хангыля или Telex. */
-enum class Composer { NONE, HANGUL, TELEX, PINYIN, KANA }
+enum class Composer { NONE, HANGUL, TELEX, PINYIN, KANA, ETHIOPIC }
 
 @Immutable
 class KeyboardLanguage(
@@ -64,6 +64,7 @@ class KeyboardLanguage(
             Composer.PINYIN -> "Chinese ${if (id == "zh-tw") "Traditional " else ""}(Pinyin)"
             Composer.KANA -> "Japanese (Romaji → Kana)"
             Composer.TELEX -> "Vietnamese (Telex)"
+            Composer.ETHIOPIC -> if (id == "ti") "Tigrinya" else "Amharic"
             else -> name?.takeIf { it.isNotBlank() && it != locale } ?: title
         }
     }
@@ -111,6 +112,9 @@ object Languages {
     )
 
     private val QWERTY = listOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
+
+    /** Амхарский и тигринья: на латинской клавише мелко — её слог (удержанием вставляется сразу). */
+    private const val ETHIOPIC_ACCENTS = "hህሕ lል mም rር sስሽጽ xሽ qቅ bብ vቭ tትጥ cችጭ nንኝ kክ wው zዝዥ yይ dድ jጅ gግ fፍ pፕጵ aአ uኡ iኢ eእኤ oኦ"
 
     /** InScript (хинди): у других индийских письменностей те же клавиши — блоки Unicode идут параллельно. */
     private val INSCRIPT_ROWS = listOf("ौ ै ा ी ू ब ह ग द ज ड", "ो े ् ि ु प र क त च ट", "ं म न व ल स य")
@@ -369,6 +373,87 @@ object Languages {
         L("mg", "MG", "Malagasy", "Малагасийский", "mg-MG", QWERTY, "oô", dict = null),
         L("tk", "TK", "Türkmen", "Туркменский", "tk-TM", listOf("qwertyuiopňä", "asdfghjklşü", "zxcvbnmçöý"), "zž", dict = null),
         L("ku", "KU", "Kurdî", "Курдский (курманджи)", "ku-TR", QWERTY, "eê iî uû cç sş", dict = null),
+        // эфиопское письмо: латиница превращается в слоги (sel → ሰል, selam → ሰላም), см. Ethiopic.
+        // Мелкая подпись и удержание — сам слог: его можно вставить и сразу
+        L(
+            "am", "AM", "አማርኛ", "Амхарский", "am-ET", QWERTY, ETHIOPIC_ACCENTS,
+            dict = "am", hasCase = false, composer = Composer.ETHIOPIC, autoCorrect = false
+        ),
+        L(
+            "ti", "TI", "ትግርኛ", "Тигринья", "ti-ER", QWERTY, ETHIOPIC_ACCENTS,
+            dict = null, hasCase = false, composer = Composer.ETHIOPIC, autoCorrect = false
+        ),
+        // ---- языки России и соседей (кириллица)
+        L("myv", "MYV", "Эрзянь", "Эрзянский", "myv-RU", listOf(RU_ROWS_1 + "ъ", RU_ROWS_2, RU_ROWS_3 + "ё"), dict = null),
+        L("mdf", "MDF", "Мокшень", "Мокшанский", "mdf-RU", listOf(RU_ROWS_1 + "ъ", RU_ROWS_2, RU_ROWS_3 + "ё"), "аӓ ыә", dict = null),
+        L("xal", "XAL", "Хальмг", "Калмыцкий", "xal-RU", listOf("әҗңөүһ", RU_ROWS_1 + "ъ", RU_ROWS_2, RU_ROWS_3 + "ё"), dict = null),
+        L("alt", "ALT", "Алтай", "Алтайский", "alt-RU", listOf("јҥӧӱ", RU_ROWS_1 + "ъ", RU_ROWS_2, RU_ROWS_3 + "ё"), dict = null),
+        L("krc", "KRC", "Къарачай-Малкъар", "Карачаево-балкарский", "krc-RU", listOf(RU_ROWS_1 + "ъ", RU_ROWS_2, RU_ROWS_3 + "ё"), "уў", dict = null),
+        L("kum", "KUM", "Къумукъ", "Кумыкский", "kum-RU", listOf(RU_ROWS_1 + "ъ", RU_ROWS_2, RU_ROWS_3 + "ё"), dict = null),
+        L("nog", "NOG", "Ногай", "Ногайский", "nog-RU", listOf(RU_ROWS_1 + "ъ", RU_ROWS_2, RU_ROWS_3 + "ё"), "аӓ оӧ уӱ", dict = null),
+        L("ady", "ADY", "Адыгабзэ", "Адыгейский", "ady-RU", listOf(RU_ROWS_1 + "ъ", RU_ROWS_2 + "ӏ", RU_ROWS_3 + "ё"), dict = null),
+        L("inh", "INH", "Гӏалгӏай", "Ингушский", "inh-RU", listOf(RU_ROWS_1 + "ъ", RU_ROWS_2 + "ӏ", RU_ROWS_3 + "ё"), dict = null),
+        L("lez", "LEZ", "Лезги", "Лезгинский", "lez-RU", listOf(RU_ROWS_1 + "ъ", RU_ROWS_2 + "ӏ", RU_ROWS_3 + "ё"), dict = null),
+        L("dar", "DAR", "Дарган", "Даргинский", "dar-RU", listOf(RU_ROWS_1 + "ъ", RU_ROWS_2 + "ӏ", RU_ROWS_3 + "ё"), dict = null),
+        L("lbe", "LBE", "Лакку", "Лакский", "lbe-RU", listOf(RU_ROWS_1 + "ъ", RU_ROWS_2 + "ӏ", RU_ROWS_3 + "ё"), dict = null),
+        L("tab", "TAB", "Табасаран", "Табасаранский", "tab-RU", listOf(RU_ROWS_1 + "ъ", RU_ROWS_2 + "ӏ", RU_ROWS_3 + "ё"), dict = null),
+        L("ab", "AB", "Аԥсуа", "Абхазский", "ab-GE", listOf("ҕҙҟҭҳҷҽҿ", RU_ROWS_1 + "ъ", RU_ROWS_2 + "ԥ", RU_ROWS_3 + "ә"), dict = null),
+        L("kaa", "KAA", "Qaraqalpaq", "Каракалпакский", "kaa-UZ", QWERTY, "aá gǵ iı nń oó uú", dict = null),
+        // ---- Европа (латиница)
+        L("hsb", "HSB", "Hornjoserbšćina", "Верхнелужицкий", "hsb-DE", QWERTZ, "cčć eě lł nń oó rř sš zž", dict = null),
+        L("dsb", "DSB", "Dolnoserbšćina", "Нижнелужицкий", "dsb-DE", QWERTZ, "cčć eě lł nń oó rŕ sšś zžź", dict = null),
+        L("szl", "SZL", "Ślōnsko", "Силезский", "szl-PL", QWERTY, "aã oōôõŏ uů cć lł nń sś zżź", dict = null),
+        L("csb", "CSB", "Kaszëbsczi", "Кашубский", "csb-PL", QWERTY, "aąã eéë oòóô uù lł nń zż", dict = null),
+        L("se", "SE", "Davvisámegiella", "Северносаамский", "se-NO", listOf("áqwertyuiopå", "asdfghjklöä", "zčŧcvbnmđŋš"), "zž", dict = null),
+        L("kl", "KL", "Kalaallisut", "Гренландский", "kl-GL", listOf("qwertyuiopå", "asdfghjklæø", "zxcvbnm"), dict = null),
+        L("wa", "WA", "Walon", "Валлонский", "wa-BE", listOf("azertyuiop", "qsdfghjklm", "wxcvbn"), "aâå eèéêë iî oô uû", dict = null),
+        L("li", "LI", "Limburgs", "Лимбургский", "li-NL", QWERTY, "eèéë oó", dict = null),
+        L("scn", "SCN", "Sicilianu", "Сицилийский", "scn-IT", QWERTY, "aàâ eèê iìî oòô uùû", dict = null),
+        L("vec", "VEC", "Vèneto", "Венетский", "vec-IT", QWERTY, "aà eèé iì oòó uù", dict = null),
+        L("fur", "FUR", "Furlan", "Фриульский", "fur-IT", QWERTY, "aàâ eèê iìî oòô uùû cç", dict = null),
+        L("lij", "LIJ", "Lìgure", "Лигурский", "lij-IT", QWERTY, "aàâ eèéê iì oòóô uùû", dict = null),
+        L("an", "AN", "Aragonés", "Арагонский", "an-ES", listOf("qwertyuiop", "asdfghjklñ", "zxcvbnm"), "aá eé ií oó uúü", dict = null),
+        L("ia", "IA", "Interlingua", "Интерлингва", "ia-001", QWERTY, dict = null),
+        L("io", "IO", "Ido", "Идо", "io-001", QWERTY, dict = null),
+        // ---- Африка, Океания, Америка (латиница)
+        L("lg", "LG", "Luganda", "Луганда", "lg-UG", QWERTY, "nŋ", dict = null),
+        L("rn", "RN", "Ikirundi", "Кирунди", "rn-BI", QWERTY, dict = null),
+        L("ki", "KI", "Gĩkũyũ", "Кикуйю", "ki-KE", QWERTY, "iĩ uũ", dict = null),
+        L("nso", "NSO", "Sepedi", "Северный сото", "nso-ZA", QWERTY, "eê oô sš", dict = null),
+        L("ss", "SS", "SiSwati", "Свати", "ss-SZ", QWERTY, dict = null),
+        L("ve", "VE", "Tshivenḓa", "Венда", "ve-ZA", QWERTY, "dḓ lḽ nṋṅ tṱ", dict = null),
+        L("ts", "TS", "Xitsonga", "Тсонга", "ts-ZA", QWERTY, dict = null),
+        L("sg", "SG", "Sängö", "Санго", "sg-CF", QWERTY, "aâä eêë iîï oôö uûü", dict = null),
+        L("kg", "KG", "Kikongo", "Конго", "kg-CD", QWERTY, dict = null),
+        L("tpi", "TPI", "Tok Pisin", "Ток-писин", "tpi-PG", QWERTY, dict = null),
+        L("bi", "BI", "Bislama", "Бислама", "bi-VU", QWERTY, dict = null),
+        L("ty", "TY", "Reo Tahiti", "Таитянский", "ty-PF", QWERTY, "aā eē iī oō uū", dict = null),
+        L("ch", "CH", "Chamoru", "Чаморро", "ch-GU", QWERTY, "aå nñ", dict = null),
+        L("ay", "AY", "Aymar aru", "Аймара", "ay-BO", listOf("qwertyuiop", "asdfghjklñ", "zxcvbnm"), "aä iï uü", dict = null),
+        L("nah", "NAH", "Nāhuatl", "Науатль", "nah-MX", QWERTY, "aā eē iī oō", dict = null),
+        L("pap", "PAP", "Papiamentu", "Папьяменто", "pap-CW", listOf("qwertyuiop", "asdfghjklñ", "zxcvbnm"), "aá eèé ií oòó uùúü", dict = null),
+        // ---- Азия: письменности
+        L(
+            "sd", "SD", "سنڌي", "Синдхи", "sd-PK",
+            listOf("ق ص ي ر ت ٽ ث ع ڳ و ڦ", "ا س د ف گ ه ج ڪ ل ک", "ز خ ط ڄ ب ن م ڇ چ"),
+            "دڏڌڊڍ جڃڄ بٻڀ نڻ گڱ ڪک اآ يئ", dict = null, hasCase = false, rtl = true
+        ),
+        L(
+            "dv", "DV", "ދިވެހި", "Мальдивский", "dv-MV",
+            listOf("ަ ާ ި ީ ު ޫ ެ ޭ ޮ ޯ ް", "ހ ށ ނ ރ ބ ޅ ކ އ", "ވ މ ފ ދ ތ ލ ގ ޏ", "ސ ޑ ޒ ޓ ޔ ޕ ޖ ޗ"),
+            "ހޙޚ ތޘ ޒޛޜޡ ސޝޞ ދޟ ޓޠ އޢ ގޣ ކޤ ވޥ",
+            dict = null, hasCase = false, rtl = true, autoCorrect = false
+        ),
+        L(
+            "bo", "BO", "བོད་ཡིག", "Тибетский", "bo-CN",
+            listOf("ཀ ཁ ག ང ཅ ཆ ཇ ཉ ཏ ཐ", "ད ན པ ཕ བ མ ཙ ཚ ཛ ཝ", "ཞ ཟ འ ཡ ར ལ ཤ ས ཧ ཨ", "ི ུ ེ ོ ་ ། ྱ ྲ ླ"),
+            shift = "ཀྐ ཁྑ གྒ ངྔ ཅྕ ཆྖ ཇྗ ཉྙ ཏྟ ཐྠ དྡ ནྣ པྤ ཕྥ བྦ མྨ ཙྩ ཚྪ ཛྫ ཝྭ ཞྮ ཟྯ འྰ ཡྻ རྼ ལླ ཤྵ སྶ ཧྷ ཨྸ",
+            dict = null, hasCase = false, autoCorrect = false
+        ),
+        L("yi", "YI", "ייִדיש", "Идиш", "yi-001", listOf("קראטוןםפ", "שדגכעיחלךף", "זסבהנמצתץ"), "אאַאָ ווּװױ ייִײײַ פפּפֿ ככּ ששׂ תתּ", dict = null, hasCase = false, rtl = true),
+        indic("sa", "SA", "संस्कृतम्", "Санскрит", "sa-IN", 0, null),
+        indic("mai", "MAI", "मैथिली", "Майтхили", "mai-IN", 0, null),
+        indic("as", "AS", "অসমীয়া", "Ассамский", "as-IN", 0x80, null),
         L(
             "ko", "KO", "한국어", "Корейский", "ko-KR",
             listOf("ㅂㅈㄷㄱㅅㅛㅕㅑㅐㅔ", "ㅁㄴㅇㄹㅎㅗㅓㅏㅣ", "ㅋㅌㅊㅍㅠㅜㅡ"),

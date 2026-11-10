@@ -51,6 +51,9 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -407,6 +410,15 @@ internal fun EmojiPanel(actions: KeyboardActions, settings: KeyboardSettings, pa
             .filter { it.system || (imageStyle && EmojiStyles.has(context, style, it.index)) || style == EmojiStyles.CUSTOM }
             .map { it.emoji }
     }
+    // каждая категория открывается с начала (раньше прокрутка переносилась из прошлой), полоса вкладок едет за выбранной
+    val grid = rememberLazyGridState()
+    val tabsRow = rememberLazyListState()
+    LaunchedEffect(tab) {
+        grid.scrollToItem(0)
+        // +1: перед «Недавними» стоит кнопка поиска
+        runCatching { tabsRow.animateScrollToItem((tab + 1 - 2).coerceAtLeast(0)) }
+    }
+    val lastTab = cats.size
     Column(Modifier.fillMaxSize().panelSurface(palette)) {
         val v = variantsOf
         if (v != null) {
@@ -430,7 +442,18 @@ internal fun EmojiPanel(actions: KeyboardActions, settings: KeyboardSettings, pa
                 }
             }
         }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+        // свайп влево-вправо по эмодзи — соседняя категория; вертикальную прокрутку сетки он не трогает
+        Box(Modifier.weight(1f).fillMaxWidth().pointerInput(lastTab) {
+            var dx = 0f
+            detectHorizontalDragGestures(
+                onDragStart = { dx = 0f },
+                onDragEnd = {
+                    val step = 56.dp.toPx()
+                    if (dx <= -step && tab < lastTab) { tab++; variantsOf = null }
+                    else if (dx >= step && tab > 0) { tab--; variantsOf = null }
+                }
+            ) { change, d -> change.consume(); dx += d }
+        }) {
             if (list.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     if (cats.isEmpty()) LoadingIndicator(Modifier.size(40.dp), color = palette.accent)
@@ -439,6 +462,7 @@ internal fun EmojiPanel(actions: KeyboardActions, settings: KeyboardSettings, pa
             } else {
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(44.dp),
+                    state = grid,
                     modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp),
                     contentPadding = PaddingValues(top = 6.dp, bottom = 6.dp)
                 ) {
@@ -471,6 +495,7 @@ internal fun EmojiPanel(actions: KeyboardActions, settings: KeyboardSettings, pa
             PillButton("ABC", palette.func, palette.onFunc, font) { actions.togglePanel(ActivePanel.KEYBOARD) }
             LazyRow(
                 modifier = Modifier.weight(1f),
+                state = tabsRow,
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {

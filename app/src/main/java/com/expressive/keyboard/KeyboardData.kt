@@ -162,9 +162,13 @@ data class KeyModel(
     /** Варианты из описания языка (диакритика, цифра верхнего ряда). */
     val langVariants: List<String>? = null,
     /** Команда скрипта плагина "pluginId/команда" — клавиша вызывает её вместо ввода текста. */
-    val action: String? = null
+    val action: String? = null,
+    /** Клавиша добавлена в редакторе раскладки: она дополняет ряд, а не занимает чужое место. */
+    val added: Boolean = false
 ) {
     fun variants(upper: Boolean): List<String> {
+        // свои символы пользователя важнее всего остального (настройка «Символы при удержании»)
+        if (type == KeyType.CHARACTER || customVariants != null) UserVariants.variants(label, upper)?.let { return it }
         if (customVariants != null) return if (upper) customVariants.map { upperOf(it) } else customVariants
         if (type != KeyType.CHARACTER) return extraVariants
         PluginRepository.variants[label.lowercase()]?.let { v -> return if (upper) v.map { upperOf(it) } else v }
@@ -199,12 +203,13 @@ object KeyVariantsCatalog {
         "я" to listOf("«", "я", "»"), "ч" to listOf("<", "ч", ">"), "с" to listOf("©", "с", "$"),
         "м" to listOf("µ", "м", "№"), "т" to listOf("™", "т", "+"), "б" to listOf("„", "б", "“"),
         "ю" to listOf("…", "ю", "•"),
-        "a" to listOf("à", "á", "â", "ä", "æ", "ã"), "e" to listOf("è", "é", "ê", "ë", "ē"),
-        "i" to listOf("ì", "í", "î", "ï", "ī"), "o" to listOf("ò", "ó", "ô", "ö", "õ", "ø"),
-        "u" to listOf("ù", "ú", "û", "ü", "ū"), "c" to listOf("ç", "ć", "č"), "n" to listOf("ñ", "ń", "ň"),
-        "s" to listOf("ß", "ś", "š"), "y" to listOf("ÿ", "ý", "¥"), "z" to listOf("ž", "ź", "ż"),
+        // у верхнего ряда цифра стоит ровно посередине (size / 2) — она выбирается удержанием без сдвига, как у q/w/r/t/p
+        "a" to listOf("à", "á", "â", "ä", "æ", "ã"), "e" to listOf("è", "é", "ê", "3", "ë", "ē"),
+        "i" to listOf("ì", "í", "î", "8", "ï", "ī"), "o" to listOf("ò", "ó", "ô", "9", "ö", "õ", "ø"),
+        "u" to listOf("ù", "ú", "û", "7", "ü", "ū"), "c" to listOf("ç", "ć", "č"), "n" to listOf("ñ", "ń", "ň"),
+        "s" to listOf("ß", "ś", "š"), "y" to listOf("ÿ", "ý", "6", "¥"), "z" to listOf("ž", "ź", "ż"),
         "q" to listOf("!", "1", "@"), "w" to listOf("@", "2", "#"), "r" to listOf("$", "4", "®"),
-        "t" to listOf("%", "5", "™"), "p" to listOf("(", "0", ")"), "d" to listOf("ď", "đ", "$"),
+        "t" to listOf("%", "5", "™"), "p" to listOf("[", "0", "]"), "d" to listOf("ď", "đ", "$"),
         "f" to listOf("%", "f", "&"), "g" to listOf("ğ", "g", "*"), "h" to listOf("(", "h", ")"),
         "j" to listOf("-", "j", "+"), "k" to listOf(":", "k", ";"), "l" to listOf("ł", "l", "/"),
         "x" to listOf("×", "x", "÷"), "v" to listOf("!", "v", "?"), "b" to listOf("\"", "b", "'"),
@@ -213,7 +218,7 @@ object KeyVariantsCatalog {
         "4" to listOf("⁴", "₽", "$", "€"), "5" to listOf("⁵", "‰", "⅝"), "6" to listOf("⁶", "^", "↑"),
         "7" to listOf("⁷", "&", "⅞"), "8" to listOf("⁸", "∞", "×"), "9" to listOf("⁹", "(", "«"),
         "0" to listOf("°", "∅", "⁰"), "." to listOf("…", "!", "?", ",", ":"),
-        "," to listOf(";", "!", "?", "—", "…"), "$" to listOf("₽", "€", "£", "¥", "₿"),
+        "," to listOf(";", "!", "?", "—", "…"),
         "-" to listOf("–", "—", "•", "±"), "+" to listOf("±", "×", "÷", "="),
         // сам знак стоит в середине — это вариант по умолчанию (ровно посередине выбирается при удержании и сдвиге);
         // раньше его не было в списке, и лёгкий сдвиг пальца на «"» вводил «„» или ««»
@@ -221,8 +226,19 @@ object KeyVariantsCatalog {
         "?" to listOf("¿", "?", "‽"), "!" to listOf("¡", "!", "‼")
     )
 
+    /** Валюты: на любой из них удержанием — остальные, сама она посередине. */
+    private val CURRENCIES = listOf("$", "€", "£", "¥", "₽", "₴", "₸", "₹", "₺", "₩", "₿", "¢")
+    private val currencyVariants: Map<String, List<String>> = buildMap {
+        val more = listOf("₪", "₼", "₾", "֏", "฿", "₫", "₱", "₮", "৳")
+        for (c in CURRENCIES + more) {
+            val others = (CURRENCIES - c).take(6).toMutableList()
+            others.add(others.size / 2, c)
+            put(c, others)
+        }
+    }
+
     fun getVariantsFor(label: String, upper: Boolean): List<String> {
-        val base = PluginRepository.variants[label.lowercase()] ?: variantsMap[label.lowercase()] ?: listOf(label)
+        val base = PluginRepository.variants[label.lowercase()] ?: variantsMap[label.lowercase()] ?: currencyVariants[label] ?: listOf(label)
         return if (upper) base.map { it.uppercase() } else base
     }
 }
@@ -252,6 +268,20 @@ object KeyboardLayouts {
 
     /** Удержание «,» и «.» — как в Gboard: вариант по умолчанию стоит в середине. */
     private val COMMA_VARIANTS = listOf(";", ":", ",", "'", "\"")
+    /** Амхарский и тигринья: свои знаки — ። (точка), ፣ (запятая), ፤ ፥ ፦ ፧ — удержанием «.» и «,». */
+    private val ETH_PERIOD = listOf("?", "፧", "።", ".", "!", "፦")
+    private val ETH_COMMA = listOf("፤", "፥", "፣", ",", ";", ":")
+
+    private fun withEthiopicPunct(rows: List<KeyRow>): List<KeyRow> = rows.map { r ->
+        KeyRow(r.keys.map { k ->
+            when {
+                k.type != KeyType.CHARACTER -> k
+                k.label == "." -> k.copy(customVariants = ETH_PERIOD)
+                k.label == "," -> k.copy(customVariants = ETH_COMMA)
+                else -> k
+            }
+        }, r.heightWeight)
+    }
     private val PERIOD_VARIANTS = listOf("?", "!", "…", ".", ",", ":", "-")
 
     /** Своя клавиша у пробела на буквенной раскладке: «,» и «.» с вариантами как в Gboard, остальное — из каталога. */
@@ -328,6 +358,52 @@ object KeyboardLayouts {
         KeyRow(listOf(KeyModel("=\\<", KeyType.SYMBOLS_PAGE, 1.45f)) + c("*", "\"", "'", ":", ";", "!", "?") + back(1.5f))
     )
 
+    /**
+     * Валюта на странице «?123» — своя у языка: раньше «₽» стоял везде, и в английской раскладке
+     * не было «$». Остальные валюты — удержанием (см. CURRENCIES в каталоге вариантов).
+     */
+    fun currencyFor(lang: KeyboardLanguage): String {
+        val loc = lang.locale.lowercase()
+        val l = loc.substringBefore('-')
+        val region = loc.substringAfter('-', "")
+        return when {
+            l in setOf("ru", "tt", "ba", "cv", "sah", "os", "ce", "be", "udm", "mhr", "kv") -> "₽"
+            l == "uk" -> "₴"
+            l == "kk" -> "₸"
+            l == "az" -> "₼"
+            l == "ka" -> "₾"
+            l == "hy" -> "֏"
+            l == "tr" -> "₺"
+            l == "he" || l == "iw" -> "₪"
+            l == "ko" -> "₩"
+            l == "ja" || l == "zh" -> "¥"
+            l == "th" -> "฿"
+            l == "vi" -> "₫"
+            l == "fil" || l == "tl" -> "₱"
+            l == "mn" -> "₮"
+            l == "lo" -> "₭"
+            l == "km" -> "៛"
+            l == "pl" || l == "cs" || l == "hu" || l == "ro" || l == "bg" || l == "sv" || l == "da" || l == "no" || l == "nb" -> "€"
+            region == "bd" || l == "bn" && region == "bd" -> "৳"
+            region == "in" || l in setOf("hi", "mr", "ta", "te", "kn", "ml", "gu", "pa", "or", "as", "ne") -> "₹"
+            region == "gb" -> "£"
+            l == "am" || l == "ti" -> "$"
+            l in setOf("de", "fr", "es", "it", "pt", "nl", "fi", "el", "et", "lv", "lt", "sk", "sl", "mt", "ga", "ca", "eu", "gl", "hr", "lb") &&
+                region != "br" && region != "mx" && region != "ar" && region != "us" -> "€"
+            else -> "$"
+        }
+    }
+
+    private val symbolsByCurrency = java.util.concurrent.ConcurrentHashMap<String, List<KeyRow>>()
+
+    private fun symbols1For(lang: KeyboardLanguage): List<KeyRow> {
+        val cur = currencyFor(lang)
+        if (cur == "₽") return symbols1
+        return symbolsByCurrency.getOrPut(cur) {
+            symbols1.map { r -> KeyRow(r.keys.map { k -> if (k.type == KeyType.CHARACTER && k.label == "₽") k.copy(label = cur) else k }, r.heightWeight) }
+        }
+    }
+
     private val symbols2 = listOf(
         KeyRow(c("~", "`", "|", "•", "√", "π", "÷", "×", "¶", "∆")),
         KeyRow(c("£", "€", "$", "¥", "^", "°", "=", "{", "}", "\\")),
@@ -374,14 +450,15 @@ object KeyboardLayouts {
         // свои места клавиш (настройки → «Свои места клавиш»)
         val order = user[id]
         return when (page) {
-            1 -> UserLayouts.apply(custom ?: symbols1, order, bottom("ABC", lang.spaceLabel, false, globe, emoji, punct, languages))
+            1 -> UserLayouts.apply(custom ?: symbols1For(lang), order, bottom("ABC", lang.spaceLabel, false, globe, emoji, punct, languages))
             2 -> UserLayouts.apply(custom ?: symbols2, order, bottom("ABC", lang.spaceLabel, false, globe, emoji, punct, languages))
             else -> {
                 val base = UserLayouts.apply(
                     custom ?: lettersFor(lang), order,
                     bottom("?123", lang.spaceLabel, true, globe, emoji, punct, languages, leftSlot, rightSlot)
                 )
-                if (withNumbers) UserLayouts.apply(listOf(numberRow), user[UserLayouts.NUMBERS]) + base else base
+                val rows = if (withNumbers) UserLayouts.apply(listOf(numberRow), user[UserLayouts.NUMBERS]) + base else base
+                if (lang.composer == Composer.ETHIOPIC) withEthiopicPunct(rows) else rows
             }
         }
     }

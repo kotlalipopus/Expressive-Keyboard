@@ -213,13 +213,15 @@ internal fun FontSections(settings: KeyboardSettings) {
     // волнистая форма «печенек»: кнопки меню и микрофона, подсказка над клавишей (если у темы нет своих)
     SettingsSection("Форма кнопок") {
         GroupItem { Column(Modifier.padding(vertical = 16.dp)) { ShapePicker(settings) } }
-        SliderItem(
+        // у готовых форм (сердце, ромб, стрелка…) и круга волн нет
+        val tunable = ExpressiveShapePreset.fromId(settings.shapePreset).tunable
+        if (tunable) SliderItem(
             icon = Icons.Rounded.AutoAwesome, title = "Количество волн",
             value = settings.waveCount.toFloat(), range = 4f..18f, steps = 13,
             format = { "${it.roundToInt()}" },
             onCommit = { v -> KeyboardPrefs.edit(context) { putInt("wave_count", v.roundToInt()) } }
         )
-        SliderItem(
+        if (tunable) SliderItem(
             icon = Icons.Rounded.Tune, title = "Глубина волн",
             value = settings.waveAmplitudePercent, range = 0f..14f,
             format = { "${it.roundToInt()}%" },
@@ -529,6 +531,10 @@ internal fun KeysPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
             "Повернули телефон — клавиатура делится на две половины по краям, до всех букв легко дотянуться",
             settings.landscapeSplit
         ) { KeyboardPrefs.edit(context) { putBoolean("landscape_split", it) } }
+        ChoiceItem(
+            Icons.Rounded.Interests, "Вид окна удержания", "Как выглядят символы, которые всплывают при удержании клавиши",
+            listOf("SHAPE" to "Фигуры", "CIRCLE" to "Круги", "BOX" to "Квадраты", "PANEL" to "Одна панель"), settings.popupStyle
+        ) { v -> KeyboardPrefs.edit(context) { putString("popup_style", v) } }
         ToggleItem(Icons.Rounded.TouchApp, "Всплывающая буква при нажатии", null, settings.keyPreview) {
             KeyboardPrefs.edit(context) { putBoolean("key_preview", it) }
         }
@@ -581,6 +587,19 @@ internal fun KeysPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         ToggleItem(Icons.Outlined.Mic, "Кнопка микрофона", null, settings.showMicButton) {
             KeyboardPrefs.edit(context) { putBoolean("show_mic_button", it) }
         }
+        AnimatedVisibility(settings.showMicButton) {
+            ChoiceItem(
+                Icons.Rounded.TouchApp, "Кнопка справа вверху", "Что делает кнопка микрофона. Удержание — голосовой ввод",
+                listOf(
+                    "VOICE" to "Микрофон", "EMOJI" to "Эмодзи", "CLIPBOARD" to "Буфер", "TRANSLATE" to "Перевод",
+                    "GIF" to "GIF", "UNDO" to "Отменить", "HIDE" to "Скрыть"
+                ), settings.micAction
+            ) { v -> KeyboardPrefs.edit(context) { putString("mic_action", v) } }
+        }
+        ToggleItem(
+            Icons.Rounded.WidthFull, "Подсказкам вся ширина",
+            "Пока предлагаются слова, кнопки меню и микрофона прячутся", settings.suggestionsFullWidth
+        ) { KeyboardPrefs.edit(context) { putBoolean("suggestions_full_width", it) } }
         ToggleItem(
             Icons.Rounded.Dialpad, "Цифровая клавиатура для чисел",
             "В полях ввода числа и номера телефона — крупные цифры 4×4, как у системной клавиатуры",
@@ -594,6 +613,9 @@ internal fun KeysPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         ToggleItem(Icons.Rounded.Lightbulb, "Строка подсказок", "Если выключить, наверху всегда будут инструменты", settings.showSuggestions) {
             KeyboardPrefs.edit(context) { putBoolean("show_suggestions", it) }
         }
+        ActionItem(Icons.Rounded.TouchApp, "Символы при удержании", "Свои символы на любой клавише: ғ на «г», $ на «d»", onClick = {
+            onNavigate(SettingsPage.LONG_PRESS)
+        })
         ActionItem(Icons.Rounded.SwapHoriz, "Свои места клавиш", "Поменяйте местами буквы, цифры и знаки или поставьте свои", onClick = {
             onNavigate(SettingsPage.LAYOUT)
         })

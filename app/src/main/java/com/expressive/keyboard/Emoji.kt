@@ -127,7 +127,9 @@ object EmojiCatalog {
         context.assets.open("emoji/emoji.txt").bufferedReader().useLines { lines ->
             for (line in lines) {
                 if (line.isEmpty()) continue
-                if (line[0] == '#') {
+                // заголовок — «#symbols»; строка эмодзи #️⃣ тоже начинается с «#», но после неё табуляция.
+                // Раньше она открывала лишнюю вкладку «😀» перед флагами, и иконки вкладок в настройках съезжали на одну
+                if (line[0] == '#' && line.length > 1 && line.indexOf('\t') < 0 && line[1].isLetter()) {
                     flush()
                     group = line.substring(1)
                     groupItems = ArrayList()

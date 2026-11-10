@@ -228,6 +228,14 @@ data class KeyboardSettings(
     val myanmarVisual: Boolean = true,
     val showSuggestions: Boolean = true,
     val showMicButton: Boolean = true,
+    /** Что делает правая кнопка верхней панели: VOICE (микрофон), EMOJI, CLIPBOARD, TRANSLATE, GIF, UNDO, HIDE. */
+    val micAction: String = "VOICE",
+    /** Окно удержания: SHAPE — волнистые фигуры, CIRCLE, BOX — скруглённые квадраты, PANEL — одна панель со всеми символами. */
+    val popupStyle: String = "SHAPE",
+    /** Свои символы при удержании (JSON: клавиша → символы), см. UserVariants. */
+    val keyVariants: String = "",
+    /** Пока есть подсказки слов, кнопки меню и микрофона прячутся — подсказкам вся ширина. */
+    val suggestionsFullWidth: Boolean = false,
     val showEmojiKey: Boolean = true,
     val showGlobeKey: Boolean = true,
     val pressAnimation: Float = 1f,               // 0 = без анимации нажатия
@@ -425,6 +433,8 @@ data class KeyboardSettings(
 
     fun accentSpec(): WavySpec {
         val p = ExpressiveShapePreset.fromId(shapePreset)
+        // у готовых форм и круга волн нет — не плодим отдельные кэшированные пути для каждого значения ползунков
+        if (!p.tunable) return WavySpec.of(p)
         return WavySpec(p.profile, waveCount, waveAmplitudePercent / 100f, p)
     }
 }
@@ -552,6 +562,10 @@ object KeyboardPrefs {
             myanmarVisual = p.getBoolean("myanmar_visual", true),
             showSuggestions = p.getBoolean("show_suggestions", true),
             showMicButton = p.getBoolean("show_mic_button", true),
+            micAction = p.getString("mic_action", "VOICE") ?: "VOICE",
+            popupStyle = p.getString("popup_style", "SHAPE") ?: "SHAPE",
+            keyVariants = (p.getString(UserVariants.PREF, "") ?: "").also { UserVariants.update(it) },
+            suggestionsFullWidth = p.getBoolean("suggestions_full_width", false),
             showEmojiKey = p.getBoolean("show_emoji_key", true),
             showGlobeKey = p.getBoolean("show_globe_key", true),
             pressAnimation = p.getFloat("press_animation", 1f).coerceIn(0f, 2f),
@@ -675,7 +689,7 @@ object KeyboardPrefs {
         listOf(
             "show_number_row", "show_key_borders", "key_preview", "key_background", "emoji_return_keyboard", "auto_capitalize", "auto_correct_enabled",
             "double_space_period", "haptics_enabled", "vibrate_on_release", "strong_special_keys", "sound_enabled",
-            "show_hints", "show_header", "number_pad", "floating_keyboard", "liquid_glass", "glass_merge", "myanmar_visual", "show_suggestions", "show_mic_button", "show_emoji_key", "show_globe_key", "panel_animations",
+            "show_hints", "show_header", "number_pad", "floating_keyboard", "liquid_glass", "glass_merge", "myanmar_visual", "show_suggestions", "show_mic_button", "suggestions_full_width", "show_emoji_key", "show_globe_key", "panel_animations",
             "backspace_swipe", "swipe_down_hide", "clipboard_history", "instant_input", "glide_typing", "glide_trail", "swipe_up_hint",
             "space_long_press", "auto_pair", "incognito", "dict_auto_download", "punctuation_keys", "smart_punctuation",
             "system_spellcheck", "edit_bar", "auto_space_punct", "eco_mode", "eco_press", "eco_panels", "eco_blur", "eco_trail", "eco_preview", "eco_haptics", "eco_sound", "eco_suggestions", "dash_merge", "clip_screenshots", "correct_everywhere", "dynamic_zones", "ai_voice_cleanup", "tools_button", "pinned_tools", "landscape_split"
@@ -683,7 +697,7 @@ object KeyboardPrefs {
         listOf(
             "theme_mode", "accent_shape_preset", "haptic_mode", "font_style", "color_source", "one_handed", "space_swipe",
             "eco_when", "globe_long_press", "tools_long_press", "window_blur", "hold_mode", "ai_provider", "space_long_action", "languages", "auto_correct_strength", "translate_target", "gemini_model", "anthropic_model", "openai_model", "groq_model", "openrouter_model", "toolbar_order", "toolbar_hidden", "user_layouts",
-            "space_left_key", "space_right_key", "sound_style", "emoji_style", "clipboard_keep", "app_language", "design_style", "shape_amount", "skin_options", "anim_press", "anim_popup", "anim_panel", "custom_anims", "lang_layouts"
+            "space_left_key", "space_right_key", "mic_action", "popup_style", "key_variants", "sound_style", "emoji_style", "clipboard_keep", "app_language", "design_style", "shape_amount", "skin_options", "anim_press", "anim_popup", "anim_panel", "custom_anims", "lang_layouts"
         ).forEach { put(it, 's') }
     }
 

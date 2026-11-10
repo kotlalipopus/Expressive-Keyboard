@@ -3,6 +3,7 @@ package com.expressive.keyboard
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material.icons.automirrored.rounded.Backspace
+import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import kotlin.math.roundToInt
@@ -10,7 +11,7 @@ import kotlin.math.roundToInt
 // Страницы «Новое» и «Энергосбережение».
 
 /** Версия, о которой рассказывает «Новое»: страницу обновляем к каждому выпуску. */
-private const val NEW_IN_VERSION = "11.2.3"
+private const val NEW_IN_VERSION = "11.2.4"
 
 /** Размер клавиатуры в альбомной: и в «Клавишах», и в «Новом». */
 @Composable
@@ -30,6 +31,28 @@ internal fun WhatsNewPage(settings: KeyboardSettings, onNavigate: (SettingsPage)
 
     InfoCard(Icons.Rounded.NewReleases, tr("В версии {0}", NEW_IN_VERSION))
 
+    SettingsSection("Умнее подсказки") {
+        InfoCard(Icons.Rounded.Psychology, "Новая языковая модель русского: разговорная речь из субтитров, веб, новости, Википедия и книги — и тройки слов («я не» → «знаю»)")
+        InfoCard(Icons.Rounded.FitScreen, "Длинные подсказки уменьшаются, а не обрезаются")
+        InfoCard(Icons.AutoMirrored.Rounded.Undo, "Стёрли кусок текста свайпом по ⌫ — в подсказках «↶», чтобы вернуть")
+    }
+    SettingsSection("Удержание и кнопки") {
+        ActionItem(
+            Icons.Rounded.TouchApp, "Символы при удержании",
+            "Свои символы на любой клавише: ғ на «г», $ на «d»",
+            onClick = { onNavigate(SettingsPage.LONG_PRESS) }
+        )
+        ActionItem(
+            Icons.Rounded.Interests, "Вид окна удержания и кнопка справа",
+            "Фигуры, круги, квадраты или одна панель; микрофон можно заменить на эмодзи, буфер, перевод…",
+            onClick = { onNavigate(SettingsPage.KEYS) }
+        )
+        InfoCard(Icons.Rounded.Pin, "Цифры удержанием на e, y, u, i, o; на странице «?123» — валюта вашего языка")
+    }
+    SettingsSection("Эмодзи и языки") {
+        InfoCard(Icons.Rounded.Swipe, "Категории эмодзи листаются свайпом и открываются с начала")
+        InfoCard(Icons.Rounded.Language, "Амхарский и тигринья (selam → ሰላም) и ещё 45 языков")
+    }
     SettingsSection("Японский: кандзи") {
         InfoCard(Icons.Rounded.Translate, "Хирагана превращается в кандзи: にほんご → 日本語. Слова и целые фразы, словарь встроен")
     }

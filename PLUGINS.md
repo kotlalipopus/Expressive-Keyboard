@@ -597,7 +597,7 @@ Shift и ⌫ добавляются в последний ряд сами. Не�
 ```
 
 - `mode`: `SYSTEM`, `LIGHT`, `DARK` или `AMOLED`.
-- `shape`: `COOKIE_12`, `WAVY_8`, `FLOWER_6`, `CLOVER_4` или `CIRCLE`.
+- `shape`: `COOKIE_12`, `WAVY_8`, `FLOWER_6`, `CLOVER_4`, `CIRCLE` или любая форма Material 3: `SQUARE`, `SLANTED`, `ARCH`, `SEMICIRCLE`, `OVAL`, `PILL`, `TRIANGLE`, `ARROW`, `FAN`, `DIAMOND`, `CLAMSHELL`, `PENTAGON`, `GEM`, `VERY_SUNNY`, `COOKIE_4`, `COOKIE_6`, `COOKIE_7`, `COOKIE_9`, `CLOVER_8`, `BURST`, `SOFT_BURST`, `BOOM`, `SOFT_BOOM`, `PUFFY`, `PUFFY_DIAMOND`, `GHOSTISH`, `PIXEL_CIRCLE`, `PIXEL_TRIANGLE`, `BUN`, `HEART`.
 - Цвета пишутся как `#RRGGBB` или `#AARRGGBB`. Если цвет не указан, он берётся из темы.
 
 Кнопка в карточке плагина называется **«Применить оформление»**: она применяет `theme`, `settings` и включает `skin`

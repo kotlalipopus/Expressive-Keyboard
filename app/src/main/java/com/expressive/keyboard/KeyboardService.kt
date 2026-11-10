@@ -157,6 +157,12 @@ internal data class FieldFlags(
     val autoCap: Boolean = false
 )
 
+/** Подсказка «↶ …»: вернуть только что стёртый кусок текста. */
+private const val RESTORE_DELETED = "\u0000restore"
+
+/** Два последних слова перед курсором, между ними — только пробелы. */
+private val PREV2_RE = Regex("([\\p{L}\\p{M}'’-]+)\\s+([\\p{L}\\p{M}'’-]+)\\s*$")
+
 class ComposeKeyboardService : InputMethodService(),
     LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner, KeyboardActions, ScriptBridge {
 
@@ -540,7 +546,11 @@ class ComposeKeyboardService : InputMethodService(),
             setViewTreeLifecycleOwner(this@ComposeKeyboardService)
             setViewTreeViewModelStoreOwner(this@ComposeKeyboardService)
             setViewTreeSavedStateRegistryOwner(this@ComposeKeyboardService)
+            // при арабском/иврите в системе окно получало направление справа налево, и Compose зеркалил ряды
+            // (p o i … q). Раскладки сами задают порядок клавиш, текст в подсказках всё равно идёт по bidi
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
             setContent {
+              CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr) {
                 KeyboardRoot(kb, safeActions, voice, onBackground = { bg, transparent ->
                     navColor = if (transparent) AndroidColor.TRANSPARENT else bg.toArgb()
                     navLight = bg.luminance() > 0.5f
@@ -557,6 +567,7 @@ class ComposeKeyboardService : InputMethodService(),
                         inputView?.invalidate()
                     }
                 })
+              }
             }
         }
         composeView = view
@@ -695,6 +706,12 @@ class ComposeKeyboardService : InputMethodService(),
         if (kb.clipOffer != null && System.currentTimeMillis() - clipOfferAt > CLIP_OFFER_MS) kb.clipOffer = null
         expireClips()
         applyWindowColors()
+        // система иногда молча сбрасывает размытие окна (после чужого окна поверх, мастера настройки, смены темы):
+        // фон-дымка остаётся, а размытия нет — клавиатура выглядела просто полупрозрачной. Радиус ставим заново при
+        // каждом показе: это дёшево и не мигает, фон окна не трогаем
+        if (Build.VERSION.SDK_INT >= 31 && blurRadius > 0 && blurDrawable != null) {
+            runCatching { window?.window?.setBackgroundBlurRadius(blurRadius) }
+        }
         // высоту окна сравниваем с клавиатурой один раз, когда окно уже показалось: раньше это делалось при каждой
         // перекладке, и посреди анимации ответ на миг менялся — размытие выключалось и включалось, вся клавиатура
         // перерисовывалась и «прыгала»
@@ -1021,6 +1038,7 @@ class ComposeKeyboardService : InputMethodService(),
             return
         }
         // курсор переместил пользователь или само приложение
+        deletedText = null
         tokenHasSymbol = true
         expSelStart = newSelStart
         expSelEnd = newSelEnd
@@ -1175,6 +1193,15 @@ class ComposeKeyboardService : InputMethodService(),
             return
         }
         predictionJob?.cancel()
+        deletedText?.let { d ->
+            val shown = d.trim().replace(Regex("\\s+"), " ").let { if (it.length > 18) "…" + it.takeLast(17) else it }
+            kb.suggestions = listOf(
+                SuggestionChipModel.EMPTY,
+                SuggestionChipModel("↶ $shown", RESTORE_DELETED, isPrimary = true),
+                SuggestionChipModel.EMPTY
+            )
+            return
+        }
         val comp = kb.language.composer
         if (Cjk.isCjk(comp) && flags.suggestions && composing.isNotEmpty() && rawComposing.isNotEmpty()) {
             val raw = rawComposing
@@ -1220,10 +1247,11 @@ class ComposeKeyboardService : InputMethodService(),
         } else null
         // подсказки модов (событие "suggest") встают по бокам
         val extra = if (ScriptHost.has("suggest")) ScriptHost.suggestions(word, prev) else emptyList()
+        val prev2 = if (flags.isPassword) "" else wordBeforePrevious(prev)
         predictionJob = serviceScope.launch {
             val snap = withContext(Dispatchers.Default) {
                 val me = coroutineContext[Job]
-                WordPredictorEngine.predict(word, prev, u, lang, capNext, s.autoCorrectStrength, correct, touches, sys) { me?.isActive == false }
+                WordPredictorEngine.predict(word, prev, u, lang, capNext, s.autoCorrectStrength, correct, touches, sys, previous2 = prev2, cancelled = { me?.isActive == false })
             } ?: return@launch
             val chips = snap.chips.toMutableList()
             if (extra.isNotEmpty()) {
@@ -1310,6 +1338,19 @@ class ComposeKeyboardService : InputMethodService(),
         schedulePredictions()
     }
 
+    /**
+     * Слово перед предыдущим — для троек слов («я не» → «знаю»). Берётся из текста перед курсором, только если
+     * между словами одни пробелы: через знак препинания контекст уже другой.
+     */
+    private fun wordBeforePrevious(prev: String): String {
+        if (prev.isEmpty()) return ""
+        val ic = currentInputConnection ?: return ""
+        val before = runCatching { ic.getTextBeforeCursor(96, 0)?.toString() }.getOrNull() ?: return ""
+        val text = if (composing.isNotEmpty() && before.endsWith(composing)) before.dropLast(composing.length) else before
+        val m = PREV2_RE.find(text) ?: return ""
+        return if (m.groupValues[2].equals(prev, ignoreCase = true)) m.groupValues[1] else ""
+    }
+
     private fun learn(previous: String, word: String, boost: Int = 1) {
         // латиница пиньиня/ромадзи — не слова языка
         if (Cjk.isCjk(kb.language.composer)) return
@@ -1323,6 +1364,7 @@ class ComposeKeyboardService : InputMethodService(),
         Composer.HANGUL -> Hangul.compose(raw)
         Composer.TELEX -> Telex.compose(raw)
         Composer.KANA -> Kana.compose(raw)
+        Composer.ETHIOPIC -> Ethiopic.compose(raw)
         Composer.PINYIN, Composer.NONE -> raw
     }
 
@@ -1729,6 +1771,7 @@ class ComposeKeyboardService : InputMethodService(),
     }
 
     override fun deleteBackward() {
+        deletedText = null
         clearAiUndo()
         panelInput?.let { t ->
             val u = panelUndo
@@ -1891,7 +1934,9 @@ class ComposeKeyboardService : InputMethodService(),
     /** Следующий включённый язык (или предыдущий при direction < 0). */
     private fun toggleLanguage(direction: Int = 1) {
         val list = Languages.enabled(settings)
-        val i = list.indexOf(kb.language)
+        if (list.size < 2) return
+        // текущий язык мог остаться от прежнего набора — тогда начинаем с первого, а не прыгаем наугад
+        val i = list.indexOf(kb.language).let { if (it < 0) 0 else it }
         setLanguage(list[(i + (if (direction < 0) -1 else 1)).mod(list.size)])
     }
 
@@ -1965,6 +2010,7 @@ class ComposeKeyboardService : InputMethodService(),
     override fun keyTick() = HapticsEngine.tick(this, inputView, settings)
 
     override fun commitKey(key: KeyModel, text: String) {
+        deletedText = null
         clearAiUndo()
         // ошибка в обработке одного нажатия (поле ввода, словарь, мод) не должна ронять всю клавиатуру
         try {
@@ -2075,7 +2121,11 @@ class ComposeKeyboardService : InputMethodService(),
     }
 
     override fun swipeSpace(direction: Int) {
-        if (settings.spaceSwipe == "CURSOR" && panelInput == null) moveCursor(direction) else toggleLanguage(direction)
+        // язык меняет только свайп, который для этого выбран в настройках; остальные жесты — курсор
+        when (settings.spaceSwipe) {
+            "LANGUAGE", "BOTH" -> toggleLanguage(direction)
+            "CURSOR" -> if (panelInput == null) moveCursor(direction)
+        }
     }
 
     override fun spaceCursor(direction: Int) {
@@ -2147,6 +2197,8 @@ class ComposeKeyboardService : InputMethodService(),
     /** Где стоял курсор, когда начался свайп по ⌫ (-1 — свайпа нет), и текст перед ним. */
     private var swipeAnchor = -1
     private var swipeBefore = ""
+    /** Только что стёртый кусок (свайп по ⌫, выделение): в подсказках — «↶ …», как в Gboard. */
+    private var deletedText: String? = null
     private var swipeLength = 0
     private var swipeWords = 0
     /** Выделение было ещё до свайпа — стираем его целиком, слова не считаем. */
@@ -2195,6 +2247,7 @@ class ComposeKeyboardService : InputMethodService(),
         val anchor = swipeAnchor
         val len = swipeLength
         val hadSelection = swipeHadSelection
+        val before = swipeBefore
         swipeAnchor = -1
         swipeBefore = ""
         swipeLength = 0
@@ -2206,6 +2259,7 @@ class ComposeKeyboardService : InputMethodService(),
         val ic = currentInputConnection ?: return
         if (hadSelection) {
             if (delete) {
+                deletedText = runCatching { ic.getSelectedText(0)?.toString() }.getOrNull()?.takeIf { it.isNotEmpty() }
                 ic.commitText("", 1)
                 expectUnknown()
                 schedulePredictions()
@@ -2217,6 +2271,7 @@ class ComposeKeyboardService : InputMethodService(),
             if (delete) repeat(swipeWords) { deleteWord() }
             return
         }
+        if (delete && len > 0) deletedText = before.takeLast(len).takeIf { it.isNotBlank() }
         ic.beginBatchEdit()
         ic.setSelection(anchor, anchor)
         if (delete && len > 0) ic.deleteSurroundingText(len, 0)
@@ -2231,6 +2286,19 @@ class ComposeKeyboardService : InputMethodService(),
 
     override fun pickSuggestion(chip: SuggestionChipModel) {
         if (chip.isEmpty) return
+        if (chip.commitWord == RESTORE_DELETED) {
+            val d = deletedText
+            deletedText = null
+            val ic = currentInputConnection
+            if (d != null && ic != null) {
+                HapticsEngine.keyPress(this, inputView, settings, false)
+                ic.commitText(d, 1)
+                expectUnknown()
+            }
+            schedulePredictions()
+            return
+        }
+        deletedText = null
         // подсказки, которые показал мод со своим обработчиком: выбор достаётся ему
         val pick = scriptPick
         if (pick != null && kb.suggestions === scriptPickRow) {
@@ -2307,6 +2375,7 @@ class ComposeKeyboardService : InputMethodService(),
     }
 
     override fun commitText(text: String) {
+        deletedText = null
         val ic = currentInputConnection ?: return
         // набор пиньинем/ромадзи сначала превращается в иероглифы/кану, а не уходит латиницей
         if (Cjk.isCjk(kb.language.composer) && composing.isNotEmpty() && rawComposing.isNotEmpty()) commitCjk(ic, 0, all = true)
@@ -2324,6 +2393,7 @@ class ComposeKeyboardService : InputMethodService(),
     }
 
     override fun commitEmoji(emoji: String) {
+        deletedText = null
         HapticsEngine.keyPress(this, inputView, settings, false)
         EmojiRecents.add(this, emoji)
         commitText(emoji)

@@ -183,13 +183,17 @@ internal fun HeaderBar(
         else CookieButton(spec, palette.accent, button, onClick, onLong, content)
     }
     val context = LocalContext.current
+    // «подсказкам вся ширина»: пока в строке есть слова, кнопки меню и микрофона уходят
+    val wordsShown = panel == ActivePanel.KEYBOARD && !tools && !showCandidates && inline == null && offer == null &&
+        state.suggestions.any { !it.isEmpty }
+    val sideHidden = settings.suggestionsFullWidth && wordsShown
     Row(
         modifier = Modifier.fillMaxWidth().height(headerH),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
+        horizontalArrangement = Arrangement.spacedBy(if (sideHidden) 0.dp else 6.dp)
     ) {
         // кнопку панели функций можно убрать; «назад» в панелях остаётся всегда
-        if (panel != ActivePanel.KEYBOARD || settings.toolsButton) headerButton({ actions.headerMenu() }, {
+        if ((panel != ActivePanel.KEYBOARD || settings.toolsButton) && !sideHidden) headerButton({ actions.headerMenu() }, {
             // удержание на клавиатуре: по настройке — панель функций строкой над подсказками или панель редактирования
             if (panel == ActivePanel.KEYBOARD) {
                 if (settings.toolsLongPress == "EDIT_BAR") KeyboardPrefs.edit(context) { putBoolean("edit_bar", !settings.editBar) }
@@ -258,12 +262,33 @@ internal fun HeaderBar(
                 ) { m -> content(m) }
             } else content(mode)
         }
-        if (settings.showMicButton) {
-            // удержание — Rambler: диктовка без спешки, ИИ убирает «э-э», повторы и оговорки
-            val onMic = { actions.togglePanel(ActivePanel.VOICE) }
-            val onRambler = { actions.rambler() }
+        if (settings.showMicButton && !sideHidden) {
+            // правая кнопка: микрофон или другое действие из настроек («Кнопка справа»)
+            val act = settings.micAction
+            val onMic: () -> Unit = when (act) {
+                "EMOJI" -> { { actions.togglePanel(ActivePanel.EMOJI) } }
+                "CLIPBOARD" -> { { actions.togglePanel(ActivePanel.CLIPBOARD) } }
+                "TRANSLATE" -> { { actions.togglePanel(ActivePanel.TRANSLATE) } }
+                "GIF" -> { { actions.togglePanel(ActivePanel.GIF) } }
+                "UNDO" -> { { actions.editKey("undo") } }
+                "HIDE" -> { { actions.hideKeyboard() } }
+                else -> { { actions.togglePanel(ActivePanel.VOICE) } }
+            }
+            // удержание — Rambler: диктовка без спешки, ИИ убирает «э-э», повторы и оговорки (у микрофона);
+            // у других действий удержание — обычный голосовой ввод, чтобы он не потерялся совсем
+            val onRambler: () -> Unit = if (act == "VOICE") { { actions.rambler() } } else { { actions.togglePanel(ActivePanel.VOICE) } }
+            val micIcon = when (act) {
+                "EMOJI" -> Icons.Rounded.EmojiEmotions
+                "CLIPBOARD" -> Icons.Rounded.ContentPaste
+                "TRANSLATE" -> Icons.Rounded.Translate
+                "GIF" -> Icons.Rounded.Gif
+                "UNDO" -> Icons.AutoMirrored.Rounded.Undo
+                "HIDE" -> Icons.Rounded.KeyboardHide
+                else -> Icons.Outlined.Mic
+            }
             val mic: @Composable BoxScope.() -> Unit = {
-                SlotIcon("mic", btnFg, 22.dp) { Icon(Icons.Outlined.Mic, null, tint = btnFg, modifier = Modifier.size(22.dp)) }
+                if (act == "VOICE") SlotIcon("mic", btnFg, 22.dp) { Icon(micIcon, null, tint = btnFg, modifier = Modifier.size(22.dp)) }
+                else Icon(micIcon, null, tint = btnFg, modifier = Modifier.size(22.dp))
             }
             if (skinButtons != null) SkinButton(skinButtons, palette, button, onMic, onRambler, mic)
             else CookieButton(spec, palette.accent, button, onMic, onRambler, mic)
@@ -296,7 +321,8 @@ internal fun SuggestionStrip(state: KeyboardState, actions: KeyboardActions, pal
             val chipFill = chipStyle?.let { if (primary && it.pressedFill != null) it.copy(fill = it.pressedFill) else it }
             Box(
                 modifier = Modifier
-                    .weight(if (primary) 1.15f else 1f)
+                    // длинное слово получает больше места, короткие соседи — меньше
+                    .weight((if (primary) 1.15f else 1f) * chipWeight(chip))
                     .height(40.dp)
                     .chipBackground(chipFill, if (primary) palette.accentSoft else palette.func, RoundedCornerShape(corner))
                     .combinedClickable(
@@ -309,14 +335,12 @@ internal fun SuggestionStrip(state: KeyboardState, actions: KeyboardActions, pal
                     .padding(horizontal = 8.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
+                FitText(
                     text = if (chip.isEmpty) "…" else chip.displayText,
                     color = if (chip.isEmpty) fg.copy(alpha = 0.5f) else fg,
-                    fontFamily = font,
-                    fontSize = 15.sp,
-                    fontWeight = if (primary) FontWeight.ExtraBold else FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    font = font,
+                    maxSize = 15f,
+                    weight = if (primary) FontWeight.ExtraBold else FontWeight.SemiBold
                 )
             }
         }
@@ -538,7 +562,7 @@ internal fun PlainSuggestionStrip(chips: List<SuggestionChipModel>, actions: Key
             val down by interaction.collectIsPressedAsState()
             Box(
                 modifier = Modifier
-                    .weight(1f)
+                    .weight(chipWeight(chip))
                     .fillMaxHeight()
                     .padding(vertical = 2.dp)
                     .clip(CircleShape)
@@ -553,14 +577,12 @@ internal fun PlainSuggestionStrip(chips: List<SuggestionChipModel>, actions: Key
                 contentAlignment = Alignment.Center
             ) {
                 if (!chip.isEmpty) {
-                    Text(
+                    FitText(
                         text = chip.displayText,
                         color = if (primary) primaryFg else fg.copy(alpha = 0.82f),
-                        fontFamily = font,
-                        fontSize = 16.sp,
-                        fontWeight = if (primary) FontWeight.Bold else FontWeight.Normal,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        font = font,
+                        maxSize = 16f,
+                        weight = if (primary) FontWeight.Bold else FontWeight.Normal
                     )
                 }
             }
@@ -836,4 +858,23 @@ internal fun ToolText(text: String, tint: Color, onClick: () -> Unit) {
     ) {
         Text(text, color = tint, fontSize = if (text.length > 2) 11.sp else 17.sp, maxLines = 1, fontWeight = FontWeight.Bold)
     }
+}
+
+/** Доля ширины подсказки: длинное слово (до 1,8×) теснит короткие, чтобы не обрезаться. */
+private fun chipWeight(chip: SuggestionChipModel): Float =
+    if (chip.isEmpty) 0.8f else (chip.displayText.length / 7f).coerceIn(1f, 1.8f)
+
+/**
+ * Подсказка целиком: если слово не влезает, шрифт плавно уменьшается (до 10 sp), и только потом — «…».
+ * Раньше длинные подсказки просто обрезались.
+ */
+@Composable
+private fun FitText(text: String, color: Color, font: FontFamily, maxSize: Float, weight: FontWeight) {
+    androidx.compose.foundation.text.BasicText(
+        text = text,
+        style = androidx.compose.ui.text.TextStyle(color = color, fontFamily = font, fontWeight = weight, fontSize = maxSize.sp),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(minFontSize = 10.sp, maxFontSize = maxSize.sp, stepSize = 0.5.sp)
+    )
 }

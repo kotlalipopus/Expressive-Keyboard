@@ -450,11 +450,11 @@ object ScriptHost {
 
     private var lastPointerEvent = 0L
 
-    /** Палец на клавиатуре: движения — не чаще 30 раз в секунду, нажатие и отпускание — всегда. */
+    /** Палец на клавиатуре: движения — не чаще 60 раз в секунду, нажатие и отпускание — всегда. */
     fun pointerEvent(type: String, x: Float, y: Float, id: Int) {
         if (!has("pointer")) return
         val now = SystemClock.uptimeMillis()
-        if (type == "move" && now - lastPointerEvent < 33L) return
+        if (type == "move" && now - lastPointerEvent < 16L) return
         lastPointerEvent = now
         emit("pointer", mapOf("type" to type, "x" to x, "y" to y, "pointer" to id))
     }

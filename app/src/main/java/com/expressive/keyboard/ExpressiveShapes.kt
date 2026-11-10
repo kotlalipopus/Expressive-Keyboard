@@ -145,7 +145,8 @@ import androidx.graphics.shapes.toPath
 // что и в MaterialShapes: RoundedPolygon.star со скруглёнными вершинами.
 // ============================================================================
 
-enum class ShapeProfile { SINE, LOBES, CIRCLE }
+/** SINE/LOBES — волны, число и глубину можно менять; CIRCLE — круг; FIXED — готовая форма MaterialShapes, как есть. */
+enum class ShapeProfile { SINE, LOBES, CIRCLE, FIXED }
 
 enum class ExpressiveShapePreset(
     val id: String,
@@ -158,7 +159,37 @@ enum class ExpressiveShapePreset(
     SUNNY_8("WAVY_8", "Солнце", ShapeProfile.SINE, 8, 8f),
     FLOWER_6("FLOWER_6", "Цветок", ShapeProfile.LOBES, 6, 10f),
     CLOVER_4("CLOVER_4", "Клевер", ShapeProfile.LOBES, 4, 12f),
-    CIRCLE("CIRCLE", "Круг", ShapeProfile.CIRCLE, 12, 0f);
+    CIRCLE("CIRCLE", "Круг", ShapeProfile.CIRCLE, 12, 0f),
+    SQUARE("SQUARE", "Квадрат", ShapeProfile.FIXED, 12, 6f),
+    SLANTED("SLANTED", "Наклон", ShapeProfile.FIXED, 12, 6f),
+    ARCH("ARCH", "Арка", ShapeProfile.FIXED, 12, 6f),
+    SEMICIRCLE("SEMICIRCLE", "Полукруг", ShapeProfile.FIXED, 12, 6f),
+    OVAL("OVAL", "Овал", ShapeProfile.FIXED, 12, 6f),
+    PILL("PILL", "Таблетка", ShapeProfile.FIXED, 12, 6f),
+    TRIANGLE("TRIANGLE", "Треугольник", ShapeProfile.FIXED, 12, 6f),
+    ARROW("ARROW", "Стрелка", ShapeProfile.FIXED, 12, 6f),
+    FAN("FAN", "Веер", ShapeProfile.FIXED, 12, 6f),
+    DIAMOND("DIAMOND", "Ромб", ShapeProfile.FIXED, 12, 6f),
+    CLAMSHELL("CLAMSHELL", "Ракушка", ShapeProfile.FIXED, 12, 6f),
+    PENTAGON("PENTAGON", "Пятиугольник", ShapeProfile.FIXED, 12, 6f),
+    GEM("GEM", "Самоцвет", ShapeProfile.FIXED, 12, 6f),
+    VERY_SUNNY("VERY_SUNNY", "Яркое солнце", ShapeProfile.FIXED, 12, 6f),
+    COOKIE_4("COOKIE_4", "Печенька 4", ShapeProfile.FIXED, 12, 6f),
+    COOKIE_6("COOKIE_6", "Печенька 6", ShapeProfile.FIXED, 12, 6f),
+    COOKIE_7("COOKIE_7", "Печенька 7", ShapeProfile.FIXED, 12, 6f),
+    COOKIE_9("COOKIE_9", "Печенька 9", ShapeProfile.FIXED, 12, 6f),
+    CLOVER_8("CLOVER_8", "Клевер 8", ShapeProfile.FIXED, 12, 6f),
+    BURST("BURST", "Вспышка", ShapeProfile.FIXED, 12, 6f),
+    SOFT_BURST("SOFT_BURST", "Мягкая вспышка", ShapeProfile.FIXED, 12, 6f),
+    BOOM("BOOM", "Бум", ShapeProfile.FIXED, 12, 6f),
+    SOFT_BOOM("SOFT_BOOM", "Мягкий бум", ShapeProfile.FIXED, 12, 6f),
+    PUFFY("PUFFY", "Пышная", ShapeProfile.FIXED, 12, 6f),
+    PUFFY_DIAMOND("PUFFY_DIAMOND", "Пышный ромб", ShapeProfile.FIXED, 12, 6f),
+    GHOSTISH("GHOSTISH", "Привидение", ShapeProfile.FIXED, 12, 6f),
+    PIXEL_CIRCLE("PIXEL_CIRCLE", "Пиксельный круг", ShapeProfile.FIXED, 12, 6f),
+    PIXEL_TRIANGLE("PIXEL_TRIANGLE", "Пиксельный треугольник", ShapeProfile.FIXED, 12, 6f),
+    BUN("BUN", "Булочка", ShapeProfile.FIXED, 12, 6f),
+    HEART("HEART", "Сердце", ShapeProfile.FIXED, 12, 6f);
 
     /** Та же фигура из набора MaterialShapes. */
     @OptIn(ExperimentalMaterial3ExpressiveApi::class)
@@ -169,10 +200,49 @@ enum class ExpressiveShapePreset(
             FLOWER_6 -> MaterialShapes.Flower
             CLOVER_4 -> MaterialShapes.Clover4Leaf
             CIRCLE -> MaterialShapes.Circle
+            SQUARE -> MaterialShapes.Square
+            SLANTED -> MaterialShapes.Slanted
+            ARCH -> MaterialShapes.Arch
+            SEMICIRCLE -> MaterialShapes.SemiCircle
+            OVAL -> MaterialShapes.Oval
+            PILL -> MaterialShapes.Pill
+            TRIANGLE -> MaterialShapes.Triangle
+            ARROW -> MaterialShapes.Arrow
+            FAN -> MaterialShapes.Fan
+            DIAMOND -> MaterialShapes.Diamond
+            CLAMSHELL -> MaterialShapes.ClamShell
+            PENTAGON -> MaterialShapes.Pentagon
+            GEM -> MaterialShapes.Gem
+            VERY_SUNNY -> MaterialShapes.VerySunny
+            COOKIE_4 -> MaterialShapes.Cookie4Sided
+            COOKIE_6 -> MaterialShapes.Cookie6Sided
+            COOKIE_7 -> MaterialShapes.Cookie7Sided
+            COOKIE_9 -> MaterialShapes.Cookie9Sided
+            CLOVER_8 -> MaterialShapes.Clover8Leaf
+            BURST -> MaterialShapes.Burst
+            SOFT_BURST -> MaterialShapes.SoftBurst
+            BOOM -> MaterialShapes.Boom
+            SOFT_BOOM -> MaterialShapes.SoftBoom
+            PUFFY -> MaterialShapes.Puffy
+            PUFFY_DIAMOND -> MaterialShapes.PuffyDiamond
+            GHOSTISH -> MaterialShapes.Ghostish
+            PIXEL_CIRCLE -> MaterialShapes.PixelCircle
+            PIXEL_TRIANGLE -> MaterialShapes.PixelTriangle
+            BUN -> MaterialShapes.Bun
+            HEART -> MaterialShapes.Heart
         }
+
+    /** Можно ли менять число и глубину волн (у готовых форм и круга ползунки не нужны). */
+    val tunable: Boolean get() = profile == ShapeProfile.SINE || profile == ShapeProfile.LOBES
 
     companion object {
         fun fromId(id: String): ExpressiveShapePreset = entries.firstOrNull { it.id == id } ?: COOKIE_12
+
+        /** Компактные «круглые» формы для украшений: значки плагинов и плиток (полукруг, стрелка и т.п. там смотрятся плохо). */
+        val decorative: List<ExpressiveShapePreset> = listOf(
+            COOKIE_12, SUNNY_8, FLOWER_6, CLOVER_4, COOKIE_6, COOKIE_7, COOKIE_9, CLOVER_8,
+            SOFT_BURST, VERY_SUNNY, PUFFY, GEM, PENTAGON, SQUARE
+        )
     }
 }
 
@@ -208,6 +278,8 @@ private val unitPaths = ConcurrentHashMap<WavySpec, android.graphics.Path>()
 private fun polygonFor(spec: WavySpec): RoundedPolygon {
     val preset = spec.preset
     if (spec.profile == ShapeProfile.CIRCLE) return MaterialShapes.Circle
+    // готовые формы: волны и глубина на них не влияют
+    if (spec.profile == ShapeProfile.FIXED) return (preset ?: ExpressiveShapePreset.CIRCLE).material
     if (preset != null && spec.waves == preset.defaultWaves && abs(spec.amplitude - preset.defaultAmplitude / 100f) < 0.001f) {
         return preset.material
     }
@@ -227,8 +299,36 @@ private fun polygonFor(spec: WavySpec): RoundedPolygon {
     }.normalized()
 }
 
+private fun isPresetDefault(spec: WavySpec): Boolean {
+    val preset = spec.preset ?: return false
+    return spec.waves == preset.defaultWaves && abs(spec.amplitude - preset.defaultAmplitude / 100f) < 0.001f
+}
+
+/**
+ * Своя «печенька»/«солнце» (число или глубина волн изменены): синусоида по кругу, как до 11.1.10.
+ * RoundedPolygon.star со скруглением 0.5 превращал глубокие волны в кляксу — звёздочки (5 волн, большая глубина)
+ * стало не сделать; а при глубине 0 внутренний радиус равнялся внешнему, и star() ронял клавиатуру.
+ */
+private fun sinePath(spec: WavySpec, out: android.graphics.Path) {
+    val waves = spec.waves.coerceIn(3, 24)
+    val amp = spec.amplitude.coerceIn(0f, 0.16f)
+    val steps = (waves * 20).coerceIn(120, 400)
+    for (i in 0 until steps) {
+        val t = i.toDouble() / steps * 2.0 * PI
+        val k = 1f - amp + amp * cos(waves * t).toFloat()
+        val a = t - PI / 2.0
+        val x = 0.5f + 0.5f * k * cos(a).toFloat()
+        val y = 0.5f + 0.5f * k * sin(a).toFloat()
+        if (i == 0) out.moveTo(x, y) else out.lineTo(x, y)
+    }
+    out.close()
+}
+
 private fun unitPath(spec: WavySpec): android.graphics.Path = unitPaths.getOrPut(spec) {
-    android.graphics.Path().also { polygonFor(spec).toPath(it) }
+    android.graphics.Path().also { p ->
+        if (spec.profile == ShapeProfile.SINE && !isPresetDefault(spec)) sinePath(spec, p)
+        else runCatching { polygonFor(spec).toPath(p) }.onFailure { p.reset(); p.addOval(0f, 0f, 1f, 1f, android.graphics.Path.Direction.CW) }
+    }
 }
 
 private val shapeMatrix = ThreadLocal.withInitial { android.graphics.Matrix() }

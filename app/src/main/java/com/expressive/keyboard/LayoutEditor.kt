@@ -65,9 +65,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -92,6 +90,8 @@ object UserLayouts {
     /** Граница рядов в сохранённом порядке. */
     private const val ROW = "§/"
     private const val SERVICE = "§"
+    /** Клавиша, добавленная в редакторе: в ряду она дополняет места, а не занимает чужое. */
+    private const val ADDED = "§+"
 
     fun parse(raw: String): Map<String, List<String>> = runCatching {
         if (raw.isBlank()) return emptyMap()
@@ -103,7 +103,10 @@ object UserLayouts {
     }.getOrDefault(emptyMap())
 
     /** Чем клавиша записывается в порядке: символьная — подписью, служебная — своим типом. */
-    fun token(k: KeyModel): String = if (k.type == KeyType.CHARACTER) k.label else SERVICE + k.type.name
+    fun token(k: KeyModel): String = when {
+        k.type == KeyType.CHARACTER -> if (k.added) ADDED + k.label else k.label
+        else -> SERVICE + k.type.name
+    }
 
     /** Порядок всех клавиш рядов (промежутки не считаются) — для сохранения. */
     fun encode(rows: List<List<KeyModel>>): List<String> =
@@ -151,61 +154,158 @@ object UserLayouts {
     }
 
     /**
-     * Новый формат: клавиши берутся из раскладки по записи; места, для которых записи нет (раскладка с тех пор
-     * изменилась — например, включили кнопку эмодзи), занимают оставшиеся клавиши. Если служебная клавиша
-     * осталась без места — порядок не подходит, раскладка остаётся как есть.
+     * Новый формат: порядок записи — это и есть порядок клавиш в ряду. Клавиша ищется в текущей раскладке
+     * по записи (подпись или тип), поэтому замена символа применяется всегда, а не отменяется целиком из-за
+     * того, что раскладка успела измениться (включили ряд цифр, 🌐 или эмодзи).
+     *
+     * Служебные клавиши стоят на своих местах: добавленная в ряд клавиша не может сдвинуть пробел на место
+     * смены языка. Если же служебные клавиши намеренно переставлены (пробел и 🌐 поменяли местами), порядок
+     * из записи уважается. Клавиши, добавленные в редакторе, помечены и всегда дополняют ряд, а не занимают
+     * чужое место.
      */
     private fun applyFull(rows: List<KeyRow>, order: List<String>): List<KeyRow> {
         val want = ArrayList<MutableList<String>>().apply { add(ArrayList()) }
         for (t in order) if (t == ROW) want += ArrayList<String>() else want.last() += t
+        // Записи выравниваем по нижнему краю: раскладка могла получить или потерять верхний ряд (ряд цифр,
+        // новая строка букв), а нижний ряд с пробелом и Enter всегда остаётся последним.
+        val shift = want.size - rows.size
+        fun wanted(ri: Int): List<String> = want.getOrNull(ri + shift).orEmpty()
+
         val pool = rows.flatMap { r -> r.keys.filter { it.type != KeyType.SPACER } }.toMutableList()
-        val placed = rows.mapIndexed { ri, r ->
-            val places = r.keys.filter { it.type != KeyType.SPACER }
-            places.mapIndexed { j, place ->
-                val t = want.getOrNull(ri)?.getOrNull(j) ?: return@mapIndexed null
-                val i = pool.indexOfFirst { token(it) == t }
-                when {
-                    i >= 0 -> pool.removeAt(i)
-                    t.startsWith(SERVICE) -> null
-                    else -> KeyModel(t)
-                }
-            }.toMutableList()
-        }
-        // добавленные клавиши — записи сверх мест ряда: клавиша из раскладки (если её сюда переставили) или новая
-        val extras = rows.mapIndexed { ri, r ->
-            val places = r.keys.count { it.type != KeyType.SPACER }
-            (want.getOrNull(ri)?.drop(places) ?: emptyList()).take(MAX_ROW).mapNotNull { t ->
-                val i = pool.indexOfFirst { token(it) == t }
-                when {
-                    i >= 0 -> pool.removeAt(i)
-                    t.startsWith(SERVICE) -> null
-                    else -> KeyModel(t)
-                }
-            }
-        }
-        // свободные места: сначала новые клавиши (их нет в записи), потом остальные
-        val wanted = order.toSet()
-        pool.sortBy { if (token(it) in wanted) 1 else 0 }
-        for (row in placed) for (j in row.indices) if (row[j] == null && pool.isNotEmpty()) row[j] = pool.removeAt(0)
-        if (pool.any { it.type != KeyType.CHARACTER } || placed.any { r -> r.any { it == null } }) return rows
         return rows.mapIndexed { ri, r ->
-            var j = 0
-            val keys = r.keys.map { place ->
-                if (place.type == KeyType.SPACER) place
-                else {
-                    val k = placed[ri][j++]!!
-                    // буква на месте буквы — ширины места (ряды остаются ровными), остальные — своей ширины
-                    if (k.type == KeyType.CHARACTER && place.type == KeyType.CHARACTER) k.copy(weight = place.weight) else k
+            val places = r.keys.filter { it.type != KeyType.SPACER }
+            val recorded = wanted(ri)
+            // новая строка, о которой в записи ничего нет, остаётся как в раскладке (её клавиши больше
+            // не могут «переехать» в другую строку — иначе они задвоились бы)
+            if (recorded.isEmpty()) {
+                for (key in places) {
+                    val i = pool.indexOfFirst { it === key }
+                    if (i >= 0) pool.removeAt(i)
+                }
+                return@mapIndexed r
+            }
+
+            // добавленные в редакторе клавиши не занимают места: они просто дополняют ряд.
+            // Служебные клавиши не переставлялись — держим их на своих местах, иначе уважаем запись.
+            val base = recorded.filterNot { it.startsWith(ADDED) }
+            val anchored = serviceOrderKept(base, places)
+
+            val claimed = BooleanArray(places.size)
+            fun claim(match: (Int) -> Boolean): Int {
+                for (i in places.indices) if (!claimed[i] && match(i)) {
+                    claimed[i] = true
+                    return i
+                }
+                return -1
+            }
+            fun placeKey(pi: Int): KeyModel {
+                val key = places[pi]
+                val i = pool.indexOfFirst { it === key }
+                if (i >= 0) pool.removeAt(i)
+                return key
+            }
+
+            val line = ArrayList<KeyModel>(recorded.size + 2)
+            // место, которое заняла клавиша (-1 — добавленная, места не занимает)
+            val linePlace = ArrayList<Int>(recorded.size + 2)
+
+            if (anchored) {
+                // символы по порядку занимают символьные места, служебные остаются на своих
+                val charPlaces = places.indices.filter { places[it].type == KeyType.CHARACTER }
+                var nextChar = 0
+                for (t in recorded) {
+                    if (t.startsWith(ADDED)) {
+                        line += KeyModel(t.removePrefix(ADDED), added = true)
+                        linePlace += -1
+                        continue
+                    }
+                    if (t.startsWith(SERVICE)) {
+                        val pi = claim { token(places[it]) == t }
+                        if (pi >= 0) {
+                            line += placeKey(pi)
+                            linePlace += pi
+                        }
+                        continue
+                    }
+                    while (nextChar < charPlaces.size && claimed[charPlaces[nextChar]]) nextChar++
+                    val pi = charPlaces.getOrNull(nextChar)
+                    val i = pool.indexOfFirst { token(it) == t }
+                    val key = if (i >= 0) pool.removeAt(i) else KeyModel(t)
+                    if (pi == null) {
+                        line += key
+                        linePlace += -1
+                    } else {
+                        claimed[pi] = true
+                        nextChar++
+                        // буква на месте буквы — ширины места (ряды остаются ровными)
+                        line += if (key.type == KeyType.CHARACTER && places[pi].type == KeyType.CHARACTER) {
+                            key.copy(weight = places[pi].weight)
+                        } else key
+                        linePlace += pi
+                    }
+                }
+            } else {
+                // служебные клавиши намеренно переставлены — уважаем сохранённый порядок
+                for ((k, t) in recorded.withIndex()) {
+                    if (t.startsWith(ADDED)) {
+                        line += KeyModel(t.removePrefix(ADDED), added = true)
+                        linePlace += -1
+                        continue
+                    }
+                    if (t.startsWith(SERVICE)) {
+                        val pi = claim { token(places[it]) == t }
+                        if (pi >= 0) {
+                            line += placeKey(pi)
+                            linePlace += pi
+                        }
+                        continue
+                    }
+                    val i = pool.indexOfFirst { token(it) == t }
+                    val key = if (i >= 0) pool.removeAt(i) else KeyModel(t)
+                    // своё место: сначала клавиша с той же подписью, иначе — место с тем же номером
+                    var pi = claim { token(places[it]) == t }
+                    if (pi < 0 && k < places.size) pi = claim { it == k && places[it].type == KeyType.CHARACTER }
+                    line += if (key.type == KeyType.CHARACTER && pi >= 0 && places[pi].type == KeyType.CHARACTER) {
+                        key.copy(weight = places[pi].weight)
+                    } else key
+                    linePlace += pi
                 }
             }
-            val add = extras[ri]
-            if (add.isEmpty()) return@mapIndexed KeyRow(keys, r.heightWeight)
-            // добавленные — после последней клавиши, перед отступом в конце ряда; ширина — как у букв ряда
-            val letterW = r.keys.firstOrNull { it.type == KeyType.CHARACTER }?.weight ?: 1f
-            val at = keys.indexOfLast { it.type != KeyType.SPACER } + 1
-            val sized = add.map { if (it.type == KeyType.CHARACTER) it.copy(weight = letterW) else it }
-            KeyRow(keys.subList(0, at) + sized + keys.subList(at, keys.size), r.heightWeight)
+            // служебная клавиша, о которой запись ещё ничего не знает (включили 🌐, эмодзи), — на своё место
+            for (i in places.indices) {
+                if (claimed[i] || places[i].type == KeyType.CHARACTER) continue
+                claimed[i] = true
+                val at = linePlace.indexOfFirst { it > i }.let { if (it < 0) line.size else it }
+                line.add(at, placeKey(i))
+                linePlace.add(at, i)
+            }
+
+            // отступы ряда (половинки пробелов у Shift и ⌫) остаются на своих местах
+            val spacers = HashMap<Int, MutableList<KeyModel>>()
+            var slots = 0
+            for (place in r.keys) {
+                if (place.type == KeyType.SPACER) spacers.getOrPut(slots) { mutableListOf() } += place else slots++
+            }
+            val keys = ArrayList<KeyModel>(line.size + 2)
+            val spacerDone = HashSet<Int>()
+            for ((idx, key) in line.withIndex()) {
+                val place = linePlace[idx]
+                if (place >= 0) spacers[place]?.let { keys.addAll(it); spacerDone += place }
+                keys += key
+            }
+            // отступы, оставшиеся после последней клавиши (ряд стал короче)
+            for (i in 0..slots) if (i !in spacerDone) spacers[i]?.let { keys.addAll(it) }
+            KeyRow(keys, r.heightWeight)
         }
+    }
+
+    /** Порядок служебных клавиш в записи не противоречит раскладке (их не переставляли местами). */
+    private fun serviceOrderKept(base: List<String>, places: List<KeyModel>): Boolean {
+        val current = places.filter { it.type != KeyType.CHARACTER }.map(::token)
+        val recorded = base.filter { t -> t.startsWith(SERVICE) && current.any { it == t } }
+        var i = 0
+        for (t in current) if (i < recorded.size && recorded[i] == t) i++
+        return i == recorded.size
     }
 
     fun save(context: Context, current: Map<String, List<String>>, id: String, order: List<String>?) {
@@ -475,7 +575,7 @@ internal fun LayoutEditorPage(settings: KeyboardSettings) {
                     val row = grid.getOrNull(where.second) ?: return@Button
                     // после выбранной клавиши, если она в этом ряду, иначе — в конец ряда
                     val pos = if (after != null && after.section == where.first && after.row == where.second) after.index + 1 else row.size
-                    row.add(pos, KeyModel(text.trim()))
+                    row.add(pos, KeyModel(text.trim(), added = true))
                     saveSection(where.first, grid)
                     adding = null
                 }) { Text(tr("Добавить")) }
@@ -486,21 +586,26 @@ internal fun LayoutEditorPage(settings: KeyboardSettings) {
 
     val e = editing
     if (e != null) {
-        // старый символ выделен — набранный сразу его заменит
-        var text by remember(e) { mutableStateOf(TextFieldValue(e.key.label, TextRange(0, e.key.label.length))) }
+        // поле сразу пустое: набранный символ заменит старый целиком. Раньше старый символ был выделен, но
+        // после касания поля выделение сбрасывалось, и новый символ молча дописывался к старому.
+        var text by remember(e) { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { editing = null },
             title = { Text(tr("Символ на клавише")) },
             text = {
                 OutlinedTextField(
-                    value = text, onValueChange = { if (it.text.length <= 8) text = it }, singleLine = true,
-                    label = { Text(tr("Буква, цифра, знак или смайл")) }
+                    value = text, onValueChange = { text = it.take(8) }, singleLine = true,
+                    label = { Text(tr("Буква, цифра, знак или смайл")) },
+                    placeholder = { Text(e.key.label) },
+                    supportingText = { Text(tr("Сейчас на клавише «{0}». Набранное заменит его.", e.key.label)) },
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth()
                 )
             },
             confirmButton = {
-                TextButton(enabled = text.text.isNotBlank(), onClick = {
+                TextButton(enabled = text.isNotBlank(), onClick = {
                     val grid = sectionRows(e.section).map { r -> r.map { it.key }.toMutableList() }
-                    grid[e.row][e.index] = KeyModel(text.text.trim())
+                    grid[e.row][e.index] = KeyModel(text.trim(), added = e.key.added)
                     saveSection(e.section, grid)
                     editing = null
                 }) { Text(tr("Готово")) }

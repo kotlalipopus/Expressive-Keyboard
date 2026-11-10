@@ -15,11 +15,20 @@ class PhraseEval {
     private fun model(code: String): BigramModel? =
         File("src/main/assets/dict/${code}_bi.txt").takeIf { it.exists() }?.let { BigramModel(it.readLines()) }
 
-    private fun phrases(code: String) =
-        File("src/test/resources/phrases_$code.txt").readLines().map { it.trim().split(' ') }.filter { it.size > 1 }
+    /** Тройки: «слово слово следующее/вес» → контекст «слово|слово», как в Dictionaries.readTrigrams. */
+    private fun trigrams(code: String): BigramModel? =
+        File("src/main/assets/dict/${code}_tri.txt").takeIf { it.exists() }?.let { f ->
+            BigramModel(f.readLines().mapNotNull { l -> val a = l.indexOf(' '); if (a <= 0) null else l.substring(0, a) + "|" + l.substring(a + 1) })
+        }
+
+    private fun phrases(code: String, file: String = "phrases_$code.txt") =
+        File("src/test/resources/$file").takeIf { it.exists() }?.readLines().orEmpty()
+            .map { it.trim().lowercase().split(' ').filter { w -> w.isNotEmpty() } }.filter { it.size > 1 }
 
     private fun install(lang: KeyboardLanguage, code: String, withModel: Boolean) {
-        WordPredictorEngine.installDictionary(lang, words(code), bigrams = if (withModel) model(code) else null)
+        WordPredictorEngine.installDictionary(
+            lang, words(code), bigrams = if (withModel) model(code) else null, trigrams = if (withModel) trigrams(code) else null
+        )
     }
 
     private class Score(val nextTop1: Double, val nextTop3: Double, val prefixTop3: Double, val fixed: Double, val broken: Double)
@@ -33,16 +42,18 @@ class PhraseEval {
         val keys = lang.keyPositions
         for (phrase in list) for (i in 1 until phrase.size) {
             val prev = phrase[i - 1]
+            val prev2 = if (i >= 2) phrase[i - 2] else ""
             val w = phrase[i]
             // следующее слово: основной вариант и все три подсказки
-            val next = WordPredictorEngine.predict("", prev, null, lang, false, "NORMAL", true)?.chips.orEmpty().map { it.commitWord.lowercase() }
-            val primary = WordPredictorEngine.predict("", prev, null, lang, false, "NORMAL", true)?.chips?.firstOrNull { it.isPrimary }?.commitWord?.lowercase()
+            val snap = WordPredictorEngine.predict("", prev, null, lang, false, "NORMAL", true, previous2 = prev2)
+            val next = snap?.chips.orEmpty().map { it.commitWord.lowercase() }
+            val primary = snap?.chips?.firstOrNull { it.isPrimary }?.commitWord?.lowercase()
             total++
             if (primary == w) top1++
             if (w in next) top3++
             // продолжение по двум первым буквам
             if (w.length > 3) {
-                val c = WordPredictorEngine.predict(w.take(2), prev, null, lang, false, "NORMAL", false)?.chips.orEmpty().map { it.commitWord.lowercase() }
+                val c = WordPredictorEngine.predict(w.take(2), prev, null, lang, false, "NORMAL", false, previous2 = prev2)?.chips.orEmpty().map { it.commitWord.lowercase() }
                 prefixTotal++
                 if (w in c) prefixHit++
             }
@@ -84,6 +95,9 @@ class PhraseEval {
             if (model(code) != null) {
                 install(lang, code, true)
                 report.appendLine("$code с моделью:  ${fmt(score(lang, list))}")
+                // большой отложенный набор (в обучении не участвовал): точнее, чем 80 фраз
+                val held = phrases(code, "heldout_$code.txt")
+                if (held.isNotEmpty()) report.appendLine("$code отложенные (${held.size}): ${fmt(score(lang, held))}")
             }
         }
         val out = File("build/eval/phrases.txt")

@@ -1,6 +1,6 @@
 package com.expressive.keyboard
 
-// Строки версии 11.2.3: английский и испанский. tr() смотрит сюда раньше основных таблиц.
+// Строки версии 11.2.4: английский и испанский. tr() смотрит сюда раньше основных таблиц.
 
 internal val EN_EXTRA: Map<String, String> = hashMapOf(
     "Свайп вниз закрывает" to "Swipe down to hide",
@@ -17,7 +17,10 @@ internal val EN_EXTRA: Map<String, String> = hashMapOf(
     "Панель правки: добавлены «Вырезать» и «⌫»" to "Edit bar: added Cut and ⌫",
     "Бенгальский (Бангладеш)" to "Bangla (Bangladesh)",
     "Испанский интерфейс" to "Spanish interface",
-    "Язык интерфейса: Español" to "Interface language: Español"
+    "Язык интерфейса: Español" to "Interface language: Español",
+    "Сейчас на клавише «{0}». Набранное заменит его." to "The key now has “{0}”. What you type will replace it.",
+    "Словарь уже заполнен: {0} слов" to "The dictionary is already full: {0} words",
+    "Добавлено слов: {0}. Предел словаря — {1} слов" to "Words added: {0}. Dictionary limit: {1} words"
 )
 
 internal val ES_EXTRA: Map<String, String> = hashMapOf(
@@ -35,5 +38,8 @@ internal val ES_EXTRA: Map<String, String> = hashMapOf(
     "Панель правки: добавлены «Вырезать» и «⌫»" to "Barra de edición: añadidos Cortar y ⌫",
     "Бенгальский (Бангладеш)" to "Bengalí (Bangladés)",
     "Испанский интерфейс" to "Interfaz en español",
-    "Язык интерфейса: Español" to "Idioma de la interfaz: Español"
+    "Язык интерфейса: Español" to "Idioma de la interfaz: Español",
+    "Сейчас на клавише «{0}». Набранное заменит его." to "Ahora la tecla tiene «{0}». Lo que escribas lo reemplazará.",
+    "Словарь уже заполнен: {0} слов" to "El diccionario ya está lleno: {0} palabras",
+    "Добавлено слов: {0}. Предел словаря — {1} слов" to "Palabras añadidas: {0}. Límite del diccionario: {1} palabras"
 )

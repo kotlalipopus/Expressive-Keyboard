@@ -358,6 +358,14 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
         ) {
             KeyboardPrefs.edit(context) { putBoolean("system_spellcheck", it) }
         }
+        // красное подчёркивание и меню «Добавить в словарь / Удалить» рисует само приложение (Chrome, Telegram) по
+        // системной проверке; Chrome на время меню прячет клавиатуру — в поле почты было не попасть. Клавиатура это
+        // меню убрать не может, но может отвести туда, где проверку выключают
+        ActionItem(
+            Icons.Rounded.FormatStrikethrough, "Красное подчёркивание в приложениях",
+            "Если при нажатии на слово всплывает «Добавить в словарь / Удалить» и клавиатура закрывается — выключите здесь проверку правописания телефона",
+            onClick = { SystemSpell.openSettings(context) }
+        )
         ToggleItem(Icons.Rounded.MoreHoriz, "Знаки после пробела", "«слово ,» → «слово, » — пробел переезжает за запятую или точку", settings.smartPunctuation) {
             KeyboardPrefs.edit(context) { putBoolean("smart_punctuation", it) }
         }

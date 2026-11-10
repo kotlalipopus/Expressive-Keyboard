@@ -708,13 +708,22 @@ internal fun MyWordsPage(settings: KeyboardSettings) {
         if (uri != null) scope.launch {
             val r = withContext(Dispatchers.IO) {
                 runCatching {
-                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error(tr("Файл не открылся"))
-                    WordPredictorEngine.importMyWords(context, lang, bytes)
+                    val input = context.contentResolver.openInputStream(uri) ?: error(tr("Файл не открылся"))
+                    // потоком: словарь на сотни мегабайт не должен попадать в память целиком
+                    input.use { WordPredictorEngine.importMyWords(context, lang, it) }
                 }
             }
             all = WordPredictorEngine.readMyWords(context)
-            r.onSuccess { Toast.makeText(context, if (it > 0) tr("Добавлено слов: {0}", it) else tr("Нечего добавлять"), Toast.LENGTH_SHORT).show() }
-                .onFailure { Toast.makeText(context, tr("Ошибка: {0}", it.message), Toast.LENGTH_LONG).show() }
+            r.onSuccess { n ->
+                val capped = all[code].orEmpty().size >= WordPredictorEngine.MAX_MY_WORDS
+                val msg = when {
+                    capped && n <= 0 -> tr("Словарь уже заполнен: {0} слов", WordPredictorEngine.MAX_MY_WORDS)
+                    capped -> tr("Добавлено слов: {0}. Предел словаря — {1} слов", n, WordPredictorEngine.MAX_MY_WORDS)
+                    n > 0 -> tr("Добавлено слов: {0}", n)
+                    else -> tr("Нечего добавлять")
+                }
+                Toast.makeText(context, msg, if (capped) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
+            }.onFailure { Toast.makeText(context, tr("Ошибка: {0}", it.message), Toast.LENGTH_LONG).show() }
         }
     }
 

@@ -178,6 +178,7 @@ enum class SettingsPage(val title: String, val subtitle: String, val icon: Image
     COLORS("Цвета и фон", "Акцентный цвет, палитра Material You, цвета клавиш, картинка и размытие", Icons.Rounded.ColorLens, ExpressiveShapePreset.FLOWER_6),
     KEYS("Клавиши и шрифт", "Размер, шрифт, кнопки у пробела, ряд цифр, одна рука, свои места клавиш", Icons.Rounded.Keyboard, ExpressiveShapePreset.CLOVER_4),
     LAYOUT("Свои места клавиш", "Поменяйте местами любые клавиши: буквы, цифры, пробел, запятую, эмодзи…", Icons.Rounded.SwapHoriz, ExpressiveShapePreset.SUNNY_8),
+    LONG_PRESS("Символы при удержании", "Свои символы на любой клавише: ғ на «г», $ на «d»", Icons.Rounded.TouchApp, ExpressiveShapePreset.FLOWER_6),
     ANIMATIONS("Анимации", "Нажатие клавиш, свои анимации, скорость, подсказки и панели", Icons.Rounded.Animation, ExpressiveShapePreset.CLOVER_4),
     TOOLBAR("Панель, эмодзи и иконки", "Кнопки панели инструментов, стиль эмодзи, свои иконки", Icons.Rounded.DragIndicator, ExpressiveShapePreset.FLOWER_6),
     LANGUAGES("Языки", "Раскладки, китайский и японский ввод, словари подсказок", Icons.Rounded.Language, ExpressiveShapePreset.COOKIE_12),
@@ -196,6 +197,7 @@ enum class SettingsPage(val title: String, val subtitle: String, val icon: Image
         get() = when (this) {
             THEME_EDITOR -> THEMES
             LAYOUT -> KEYS
+            LONG_PRESS -> KEYS
             else -> HOME
         }
 }
@@ -357,6 +359,7 @@ internal fun SettingsPageScaffold(
                     SettingsPage.COLORS -> ColorsPage(settings)
                     SettingsPage.KEYS -> KeysPage(settings, onNavigate)
                     SettingsPage.LAYOUT -> LayoutEditorPage(settings)
+                    SettingsPage.LONG_PRESS -> LongPressPage(settings)
                     SettingsPage.TOOLBAR -> {
                         ToolbarPage(settings)
                         IconsPage(settings)
@@ -597,6 +600,9 @@ internal fun AboutPage() {
                     "Pinyin: mozillazg/pinyin-data, phrase-pinyin-data — MIT; OpenCC — Apache 2.0\n" +
                     "Word frequencies: hermitdave/FrequencyWords — MIT\n" +
                     "Russian word pairs: Google Books Ngram Viewer (v20200217) — CC BY 3.0\n" +
+                    "Russian word pairs and triples: OpenSubtitles 2018 (OPUS, opus.nlpl.eu, P. Lison & J. Tiedemann); " +
+                    "Leipzig Corpora Collection (web 2019, news 2023, Wikipedia 2021) — CC BY 4.0\n" +
+                    "Amharic word list: Leipzig Corpora Collection (Wikipedia 2021, community 2017) — CC BY 4.0\n" +
                     "English word pairs: Peter Norvig, count_1w / count_2w (from Google Web 1T)\n" +
                     "Nunito font — SIL OFL 1.1",
                 Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant

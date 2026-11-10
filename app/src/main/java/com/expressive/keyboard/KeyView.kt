@@ -247,9 +247,11 @@ internal fun KeyView(
 ) {
     val pluginState = PluginRepository.active
     // с рядом цифр цифра под буквой верхнего ряда лишняя — она и так на виду
-    val noDigits = settings.showNumberRow && !numberRow && key.type == KeyType.CHARACTER && key.label.firstOrNull()?.isLetter() == true
-    val hold = holdSymbol?.takeUnless { noDigits && it.length == 1 && it[0].isDigit() }
-    val variants = remember(key, upper, pluginState, hold, noDigits) {
+    // свои символы при удержании (настройка) важнее и режима «как в Gboard», и правила про цифры
+    val userSet = remember(key.label, settings.keyVariants) { UserVariants.has(key.label) }
+    val noDigits = !userSet && settings.showNumberRow && !numberRow && key.type == KeyType.CHARACTER && key.label.firstOrNull()?.isLetter() == true
+    val hold = holdSymbol?.takeUnless { userSet || (noDigits && it.length == 1 && it[0].isDigit()) }
+    val variants = remember(key, upper, pluginState, hold, noDigits, settings.keyVariants) {
         if (hold == null) key.variants(upper).let { v -> if (noDigits) v.filterNot { it.length == 1 && it[0].isDigit() } else v }
         else {
             // символ — по умолчанию (в середине), рядом только варианты самой буквы (ё, ъ, буквы с ударением)
@@ -299,7 +301,9 @@ internal fun KeyView(
         DisposableEffect(holder) { onDispose { GlassMerge.remove(holder) } }
     }
     val isChar = key.type == KeyType.CHARACTER
-    val upHint = if (isChar) remember(label, variants, hold) { hold ?: hintFor(label, variants) } else null
+    val upHint = if (isChar) remember(label, variants, hold, userSet) {
+        hold ?: (if (userSet) UserVariants.primary(key.label) else null) ?: hintFor(label, variants)
+    } else null
     val cKey by rememberUpdatedState(key)
     val cLabel by rememberUpdatedState(label)
     val cOutput by rememberUpdatedState(output)
@@ -551,11 +555,11 @@ internal fun KeyView(
                                             if (swiped) {
                                                 while (ch.position.x - lastX > cursorStep) {
                                                     lastX += cursorStep
-                                                    act.swipeSpace(1)
+                                                    act.spaceCursor(1)
                                                 }
                                                 while (lastX - ch.position.x > cursorStep) {
                                                     lastX -= cursorStep
-                                                    act.swipeSpace(-1)
+                                                    act.spaceCursor(-1)
                                                 }
                                             }
                                         }
@@ -955,17 +959,18 @@ internal fun Modifier.dotMatrix(cell: Dp = 2.3.dp): Modifier = this
 
 /** Слой всплывающих «печенек»: один Canvas, без shadow/border, не перехватывает касания. */
 @Composable
-internal fun BoxScope.PopupLayer(popup: PopupController, palette: KeyPalette, font: FontFamily, spec: WavySpec, animStyle: String = "POP", speed: Float = 1f) {
+internal fun BoxScope.PopupLayer(popup: PopupController, palette: KeyPalette, font: FontFamily, spec: WavySpec, animStyle: String = "POP", speed: Float = 1f, popupStyle: String = "SHAPE") {
     // один измеритель текста на все подсказки: не создаётся заново на каждое нажатие
     val measurer = rememberTextMeasurer(cacheSize = 32)
     val s = popup.state ?: return
-    key(s.owner) { PopupBubbles(s, palette, font, spec, animStyle, speed, measurer) }
+    key(s.owner) { PopupBubbles(s, palette, font, spec, animStyle, speed, measurer, popupStyle) }
 }
 
 @Composable
 internal fun BoxScope.PopupBubbles(
     s: PopupState, palette: KeyPalette, font: FontFamily, spec: WavySpec, animStyle: String = "POP", speed: Float = 1f,
-    measurer: TextMeasurer = rememberTextMeasurer()
+    measurer: TextMeasurer = rememberTextMeasurer(),
+    popupStyle: String = "SHAPE"
 ) {
     val skinPopup = LocalSkin.current?.popup
     val glass = skinPopup?.material == SkinMaterial.GLASS
@@ -974,7 +979,17 @@ internal fun BoxScope.PopupBubbles(
     val baseText = skinPopup?.text ?: palette.onAccentSoft
     val selText = skinPopup?.pressedText ?: palette.onAccent
     // без волнистых форм всплывающая буква — скруглённый прямоугольник, как в M3
-    val boxRadius = skinPopup?.radius ?: if (spec.profile == ShapeProfile.CIRCLE) 16f else null
+    val boxRadius = skinPopup?.radius ?: when {
+        popupStyle == "BOX" || popupStyle == "PANEL" -> 14f
+        popupStyle == "CIRCLE" -> null
+        spec.profile == ShapeProfile.CIRCLE -> 16f
+        // полукруг, стрелка и т.п. для буквы не годятся
+        spec.profile == ShapeProfile.FIXED && spec.preset !in ExpressiveShapePreset.decorative -> 16f
+        else -> null
+    }
+    val shapeSpec = if (popupStyle == "CIRCLE") WavySpec.Circle else spec
+    // одна панель со всеми символами (как в Gboard) вместо отдельной фигуры на каждый
+    val panel = popupStyle == "PANEL" && skinPopup?.radius == null
     val popupBorder = skinPopup?.border?.primary
     val style = remember(font) { TextStyle(fontFamily = font, fontWeight = FontWeight.ExtraBold, fontSize = 24.sp) }
     val items = if (s.expanded) s.variants else listOf(s.primary)
@@ -1043,6 +1058,34 @@ internal fun BoxScope.PopupBubbles(
                 ))
             }
         }
+        if (panel && n > 1) {
+            val h = selR * 2f
+            val top = baseCy - selR
+            val rr = 16.dp.toPx()
+            path.reset()
+            path.addRoundRect(RoundRect(Rect(left, top, left + width, top + h), CornerRadius(rr, rr)))
+            if (!glass) {
+                drawPath(path, palette.background, style = Stroke(ring * 2f))
+                translate(top = 1.5.dp.toPx()) { drawPath(path, Color.Black.copy(alpha = 0.18f)) }
+            }
+            drawPath(path, baseFill)
+            if (popupBorder != null) drawPath(path, popupBorder, style = Stroke(1.2.dp.toPx()))
+            // выбранная ячейка — плашка, плавно переезжающая за пальцем
+            val inset = 3.dp.toPx()
+            val sx = left + slot * selPos
+            path.reset()
+            path.addRoundRect(RoundRect(Rect(sx + inset, top + inset, sx + slot - inset, top + h - inset), CornerRadius(rr - inset, rr - inset)))
+            drawPath(path, selFill)
+            for (i in 0 until n) {
+                val e = emph(i)
+                val cx = left + slot * (i + 0.5f)
+                val lay = layouts[i]
+                scale(scale = (fit * 0.85f).coerceAtMost(1f), pivot = Offset(cx, baseCy)) {
+                    drawText(lay, color = lerp(baseText, selText, e), topLeft = Offset(cx - lay.size.width / 2f, baseCy - lay.size.height / 2f))
+                }
+            }
+            return@Canvas
+        }
         for (i in (0 until n).sortedBy { emph(it) }) {
             val e = emph(i)
             val r = lerpF(baseR, selR, e) * sc
@@ -1053,7 +1096,7 @@ internal fun BoxScope.PopupBubbles(
                 val hw = r * 0.82f
                 val rr = min(boxRadius.dp.toPx(), hw)
                 path.addRoundRect(RoundRect(Rect(cx - hw, cy - r, cx + hw, cy + r), CornerRadius(rr, rr)))
-            } else buildWavyPath(spec, cx, cy, r, path)
+            } else buildWavyPath(shapeSpec, cx, cy, r, path)
             if (!glass) drawPath(path, palette.background, style = Stroke(ring * 2f))
             if (boxRadius != null && !glass) {
                 // мягкая тень под прямоугольной подсказкой

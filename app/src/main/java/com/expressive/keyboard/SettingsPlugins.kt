@@ -287,7 +287,7 @@ internal fun PluginCard(p: KeyboardPlugin, expanded: Boolean, onExpand: () -> Un
     val settings by KeyboardPrefs.observe()
     val enabled = PluginRepository.isEnabled(p.id) && p.id !in PluginRepository.disabled
     val spec = remember(p.id, settings.shapeAmount) {
-        val presets = ExpressiveShapePreset.entries
+        val presets = ExpressiveShapePreset.decorative
         val pr = presets[(p.id.hashCode() and 0x7fffffff) % presets.size]
         WavySpec.of(pr).decor(settings)
     }

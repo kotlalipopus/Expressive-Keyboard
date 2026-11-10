@@ -233,7 +233,7 @@ fun KeyboardRoot(
             backdrop.bitmap = bmp
         }
         CompositionLocalProvider(LocalSkin provides skin, LocalBackdrop provides backdrop) {
-          FloatingFrame(floating, settings, palette, corner, onFloatBounds) {
+          FloatingFrame(floating, settings, raw.keyHeightDp, palette, corner, onFloatBounds) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = if (floating) RectangleShape else RoundedCornerShape(topStart = corner.dp, topEnd = corner.dp),
@@ -305,6 +305,8 @@ fun KeyboardRoot(
 internal fun FloatingFrame(
     enabled: Boolean,
     settings: KeyboardSettings,
+    /** Высота клавиш из настроек: в плавающем режиме на экране она меньше (×0.86), а сохранять надо исходную. */
+    baseKeyHeightDp: Float,
     palette: KeyPalette,
     cornerDp: Float,
     onBounds: (android.graphics.Rect?) -> Unit,
@@ -327,12 +329,16 @@ internal fun FloatingFrame(
         val widthPx = maxW * liveWidth.value
         val kbH = remember { mutableIntStateOf(0) }
         val pos = remember(maxW, maxH) { mutableStateOf<Offset?>(null) }
+        // пока тянут уголок: правый и нижний края карточки стоят на месте, растёт она влево-вверх, к пальцу
+        val anchorRight = remember { mutableStateOf<Float?>(null) }
+        val anchorBottom = remember { mutableStateOf<Float?>(null) }
         val fx = settings.floatX
         val fy = settings.floatY
         fun place(): Offset {
             val freeX = (maxW - widthPx).coerceAtLeast(0f)
             val freeY = (maxH - kbH.intValue).coerceAtLeast(0f)
-            val p = pos.value ?: Offset(freeX * fx, freeY * (1f - fy))
+            val base = pos.value ?: Offset(freeX * fx, freeY * (1f - fy))
+            val p = Offset(anchorRight.value?.let { it - widthPx } ?: base.x, anchorBottom.value?.let { it - kbH.intValue } ?: base.y)
             return Offset(p.x.coerceIn(0f, freeX), p.y.coerceIn(0f, freeY))
         }
         fun save() {
@@ -369,32 +375,61 @@ internal fun FloatingFrame(
                 contentAlignment = Alignment.Center
             ) {
                 Box(Modifier.size(width = 44.dp, height = 5.dp).clip(CircleShape).background(palette.onFunc.copy(alpha = 0.45f)))
-                // уголок: влево-вправо — ширина, вверх-вниз — высота клавиш
+                // уголок (левый верхний угол карточки): влево — шире, вверх — выше клавиши; размер меняется сразу.
+                // Ключ жеста — только ширина экрана: высота клавиш пишется в настройки по ходу жеста, и с ней в
+                // ключах жест обрывался бы на первом же шаге
+                val keyH by rememberUpdatedState(baseKeyHeightDp)
                 Box(
-                    Modifier.align(Alignment.CenterStart).padding(start = 8.dp).size(22.dp).clip(CircleShape).background(palette.func)
-                        .pointerInput(maxW, settings.keyHeightDp, settings.floatWidth) {
+                    Modifier.align(Alignment.CenterStart).padding(start = 2.dp).size(width = 36.dp, height = 26.dp)
+                        .pointerInput(maxW) {
+                            var startW = 0f
+                            var startH = 0f
+                            var lastH = 0f
                             var dxSum = 0f
                             var dySum = 0f
+                            fun finish() {
+                                val p = place()
+                                anchorRight.value = null
+                                anchorBottom.value = null
+                                pos.value = p
+                                KeyboardPrefs.edit(context) {
+                                    putFloat("float_width", liveWidth.value)
+                                    if (lastH != startH) putFloat("key_height_dp", lastH)
+                                }
+                                save()
+                            }
                             detectDragGestures(
-                                onDragStart = { dxSum = 0f; dySum = 0f },
-                                onDragEnd = {
-                                    val h = (settings.keyHeightDp + dySum / density.density).coerceIn(32f, 68f)
-                                    KeyboardPrefs.edit(context) {
-                                        putFloat("float_width", liveWidth.value)
-                                        if (kotlin.math.abs(dySum) > 6f) putFloat("key_height_dp", h)
-                                    }
+                                onDragStart = {
+                                    val p = place()
+                                    startW = liveWidth.value
+                                    startH = keyH
+                                    lastH = keyH
+                                    dxSum = 0f
+                                    dySum = 0f
+                                    anchorRight.value = p.x + maxW * startW
+                                    anchorBottom.value = p.y + kbH.intValue
                                 },
-                                onDragCancel = { liveWidth.value = settings.floatWidth }
+                                onDragEnd = { finish() },
+                                onDragCancel = { finish() }
                             ) { change, drag ->
                                 change.consume()
                                 dxSum += drag.x
                                 dySum += drag.y
-                                liveWidth.value = (settings.floatWidth + dxSum / maxW).coerceIn(0.5f, 1f)
+                                liveWidth.value = (startW - dxSum / maxW).coerceIn(0.5f, 1f)
+                                // ~4 ряда клавиш: палец вверх на N dp — клавиатура выше примерно на столько же
+                                val h = ((startH - dySum / density.density / 4f) * 2f).roundToInt() / 2f
+                                val hc = h.coerceIn(32f, 68f)
+                                if (hc != lastH) {
+                                    lastH = hc
+                                    KeyboardPrefs.edit(context) { putFloat("key_height_dp", hc) }
+                                }
                             }
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Rounded.OpenInFull, tr("Изменить размер"), tint = palette.onFunc, modifier = Modifier.size(14.dp))
+                    Box(Modifier.size(22.dp).clip(CircleShape).background(palette.func), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.OpenInFull, tr("Изменить размер"), tint = palette.onFunc, modifier = Modifier.size(14.dp))
+                    }
                 }
                 // вернуть клавиатуру вниз, на обычное место
                 Box(
@@ -504,7 +539,7 @@ internal fun KeyboardScreen(
         }
         GlideTrailLayer(glide, trailColor, settings.glideTrail)
         ScriptOverlayLayer()
-        PopupLayer(popup, palette, font, spec.decor(settings), settings.animPopup, settings.animSpeed)
+        PopupLayer(popup, palette, font, spec.decor(settings), settings.animPopup, settings.animSpeed, settings.popupStyle)
         ScriptFrameTicker()
         ModFxTicker()
     }

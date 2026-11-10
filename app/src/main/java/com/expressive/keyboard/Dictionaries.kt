@@ -402,6 +402,8 @@ class LangDict(words: List<String>, rare: RareWords? = null, typos: Map<String, 
     @Volatile var rare: RareWords? = rare
     @Volatile var typos: Map<String, String> = typos
     @Volatile var bigrams: BigramModel? = null
+    /** Тройки слов: контекст «слово|слово» → следующие (только там, где они меняют выбор пары). */
+    @Volatile var trigrams: BigramModel? = null
     /** Слова, которые пишутся с заглавной: имена, города. */
     @Volatile var names: Set<String> = emptySet()
     /** «Мой словарь»: слово в нижнем регистре → как его записал пользователь («анна» → «Анна»). */
@@ -555,6 +557,17 @@ object Dictionaries {
     fun readBigrams(context: Context, code: String): BigramModel? = runCatching {
         if (!bundled(context, code + "_bi")) null
         else BigramModel(context.assets.open("dict/${code}_bi.txt").bufferedReader().use { it.readLines() })
+    }.getOrNull()
+
+    /** Тройки: строки «слово слово следующее/вес …» → модель с контекстом «слово|слово». */
+    fun readTrigrams(context: Context, code: String): BigramModel? = runCatching {
+        if (!bundled(context, code + "_tri")) null
+        else BigramModel(context.assets.open("dict/${code}_tri.txt").bufferedReader().use { r ->
+            r.readLines().mapNotNull { l ->
+                val a = l.indexOf(' ')
+                if (a <= 0) null else l.substring(0, a) + "|" + l.substring(a + 1)
+            }
+        })
     }.getOrNull()
 
     fun readNames(context: Context, code: String): Set<String> = runCatching {
@@ -768,6 +781,18 @@ object SystemSpell {
         if (!tsm.isSpellCheckerEnabled) return null
         tsm.currentSpellCheckerInfo?.loadLabel(context.packageManager)?.toString()
     }.getOrNull()
+
+    /** Системный экран «Проверка правописания»; если прошивка его не даёт — «Язык и ввод». */
+    fun openSettings(context: Context) {
+        val tries = listOf(
+            android.content.Intent().setClassName("com.android.settings", "com.android.settings.Settings\$SpellCheckersSettingsActivity"),
+            android.content.Intent(android.provider.Settings.ACTION_INPUT_METHOD_SETTINGS),
+            android.content.Intent(android.provider.Settings.ACTION_SETTINGS)
+        )
+        for (i in tries) {
+            if (runCatching { context.startActivity(i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess) return
+        }
+    }
 
     private fun finish(k: String, r: Result?) {
         synchronized(cache) { cache[k] = r ?: NONE }

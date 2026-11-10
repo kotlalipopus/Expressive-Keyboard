@@ -127,7 +127,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedInputStream
 import java.io.File
+import java.io.InputStream
+import java.io.InputStreamReader
+import java.io.Reader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -485,6 +489,9 @@ object WordPredictorEngine {
         return p.isNotEmpty() &&("*:$lower" in p || "${lang.id}:$lower" in p || "${lang.locale.substringBefore('-')}:$lower" in p)
     }
 
+    /** Место «Моего словаря» в списке слов: после стольких самых частых слов языка. */
+    private const val MY_WORDS_RANK = 1500
+
     private const val KEY_DECAY_DAY = "decay_day"
     private const val DECAY_DAYS = 30L
 
@@ -548,18 +555,23 @@ object WordPredictorEngine {
                     }
                 }
                 pluginWords[lang.id]?.let { words += it.map { w -> w.lowercase() } }
-                // свои слова пользователя — в начало: они как самые частые, подсказываются и не исправляются
+                // свои слова пользователя не исправляются (dict.mine), но и не считаются самыми частыми: раньше они
+                // вставали в начало списка, и последнее добавленное слово («hoon») предлагалось после каждого пробела
+                // и при наборе любого слова. Теперь они идут после частых слов языка (если словарь у языка есть)
                 val mineCase = HashMap<String, String>()
                 readMyWords(app)[code]?.takeIf { it.isNotEmpty() }?.let { mine ->
                     // в словаре всё в нижнем регистре, а как писать — помнит mineCase
-                    val ordered = LinkedHashSet<String>()
+                    val own = LinkedHashSet<String>()
                     for (m in mine) {
                         val lower = m.lowercase()
-                        if (ordered.add(lower)) mineCase[lower] = m
+                        if (own.add(lower)) mineCase[lower] = m
                     }
-                    ordered.addAll(words)
+                    val base = words.filter { it.lowercase() !in own }
+                    val at = min(base.size, MY_WORDS_RANK)
                     words.clear()
-                    words.addAll(ordered)
+                    words.addAll(base.subList(0, at))
+                    words.addAll(own)
+                    words.addAll(base.subList(at, base.size))
                 }
                 val main = words.toList()
                 // сначала частые слова — подсказки работают сразу; редкие формы дочитываются следом
@@ -576,6 +588,7 @@ object WordPredictorEngine {
                 if (previous != null) {
                     dict.typos = previous.typos
                     dict.bigrams = previous.bigrams
+                    dict.trigrams = previous.trigrams
                     dict.names = previous.names
                 }
                 dicts[code] = dict
@@ -584,6 +597,7 @@ object WordPredictorEngine {
                 if (previous == null || previous.typos.isEmpty()) dict.typos = Dictionaries.readTypos(app, code)
                 dict.rare = Dictionaries.loadRare(app, code, main.size)
                 if (dict.bigrams == null) dict.bigrams = Dictionaries.readBigrams(app, code)
+                if (dict.trigrams == null) dict.trigrams = Dictionaries.readTrigrams(app, code)
                 if (dict.names.isEmpty()) dict.names = Dictionaries.readNames(app, code)
             } finally {
                 loading.remove(code)
@@ -600,17 +614,20 @@ object WordPredictorEngine {
         rare: List<Pair<String, Int>> = emptyList(),
         typos: Map<String, String> = emptyMap(),
         bigrams: BigramModel? = null,
-        names: Set<String> = emptySet()
+        names: Set<String> = emptySet(),
+        trigrams: BigramModel? = null
     ) {
         dicts[lang.dict ?: lang.id] = LangDict(words, rare.takeIf { it.isNotEmpty() }?.let { RareWords(it, words.size) }, typos).also {
             it.bigrams = bigrams
+            it.trigrams = trigrams
             it.names = names
         }
         glideCache.remove(lang.dict ?: lang.id)
     }
 
     private const val KEY_MY_WORDS = "my_words"
-    private const val MAX_MY_WORDS = 20_000
+    /** Предел «Моего словаря» на язык: больше подсказки только замедляют набор. */
+    const val MAX_MY_WORDS = 20_000
 
     /** «Мой словарь»: слова, которые пользователь добавил сам (с диакритикой и т. п.). Ключ — код словаря языка. */
     fun readMyWords(context: Context): Map<String, List<String>> = runCatching {
@@ -629,6 +646,88 @@ object WordPredictorEngine {
         context.applicationContext.getSharedPreferences(DATA_PREFS, Context.MODE_PRIVATE).edit().putString(KEY_MY_WORDS, json.toString()).apply()
     }
 
+    /**
+     * Разбирает слова по одному: проверка та же, что была при импорте, но без строки со всем файлом.
+     * Слова копятся до [MAX_MY_WORDS]; дальше файл можно не читать.
+     */
+    private class MyWordCollector(private val known: MutableSet<String>) {
+        val fresh = ArrayList<String>()
+        var tokens = 0
+            private set
+        val full: Boolean get() = known.size >= MAX_MY_WORDS
+
+        /** true — слово добавлено; false — не подошло или словарь уже полон. */
+        fun add(token: String): Boolean {
+            if (full) return false
+            tokens++
+            // типографский апостроф (don’t) — как обычный: раньше такое слово молча отбрасывалось
+            val w = token.trim().trim('.', '!', '?', ':', '"', '«', '»', '(', ')', '[', ']', '“', '”', '„')
+                .replace('’', '\'').replace('ʼ', '\'')
+            if (w.length < 2 || w.length > 40 || !w.all(::isWordChar)) return false
+            // регистр сохраняем: имена и названия («Анна», «iPhone») подсказываются так, как их записали;
+            // слово целиком заглавными («ПРИВЕТ») — не повод всегда писать капсом
+            val lower = w.lowercase()
+            if (!known.add(lower)) return false
+            fresh.add(if (w.length > 1 && w.all { !it.isLetter() || it.isUpperCase() }) lower else w)
+            return true
+        }
+    }
+
+    private fun isWordSeparator(c: Char): Boolean = c.isWhitespace() || c == ',' || c == ';'
+
+    /** Строки файла по одной, не длиннее [max] символов: огромный файл в память целиком не попадает. */
+    private class BoundedLines(private val reader: Reader, private val max: Int) {
+        private val buf = CharArray(1 shl 16)
+        private var pos = 0
+        private var len = 0
+        private val sb = StringBuilder()
+        /** Строка оборвана по пределу — остаток файла читать бессмысленно. */
+        var cut = false
+            private set
+
+        private fun nextChar(): Int {
+            if (pos >= len) {
+                len = reader.read(buf)
+                pos = 0
+                if (len <= 0) return -1
+            }
+            return buf[pos++].code
+        }
+
+        fun next(): String? {
+            sb.setLength(0)
+            cut = false
+            var c = nextChar()
+            if (c == -1) return null
+            while (c != -1 && c != '\n'.code) {
+                if (c != '\r'.code) {
+                    if (sb.length >= max) {
+                        cut = true
+                        return sb.toString()
+                    }
+                    sb.append(c.toChar())
+                }
+                c = nextChar()
+            }
+            return sb.toString()
+        }
+    }
+
+    /** Читатель с определением кодировки по BOM (выгрузки Gboard бывают в UTF-16). */
+    private fun textReader(input: InputStream): Reader {
+        val bin = if (input is BufferedInputStream) input else BufferedInputStream(input, 1 shl 16)
+        bin.mark(4)
+        val b0 = bin.read()
+        val b1 = bin.read()
+        bin.reset()
+        val charset = when {
+            b0 == 0xFF && b1 == 0xFE -> Charsets.UTF_16LE
+            b0 == 0xFE && b1 == 0xFF -> Charsets.UTF_16BE
+            else -> Charsets.UTF_8
+        }
+        return InputStreamReader(bin, charset)
+    }
+
     /** Добавляет слова из текста (через пробел, запятую или строки); возвращает, сколько новых добавлено. */
     fun addMyWords(context: Context, lang: KeyboardLanguage, raw: String): Int {
         val app = context.applicationContext
@@ -637,24 +736,19 @@ object WordPredictorEngine {
         val all = readMyWords(app).toMutableMap()
         val old = all[code].orEmpty()
         val known = old.mapTo(HashSet()) { it.lowercase() }
-        val fresh = ArrayList<String>()
-        val tokens = raw.split(Regex("[\\s,;]+"))
-        for (token in tokens) {
-            if (known.size >= MAX_MY_WORDS) break
-            // типографский апостроф (don’t) — как обычный: раньше такое слово молча отбрасывалось
-            val w = token.trim().trim('.', '!', '?', ':', '"', '«', '»', '(', ')', '[', ']', '“', '”', '„')
-                .replace('’', '\'').replace('ʼ', '\'')
-            val lower = w.lowercase()
-            if (w.length < 2 || w.length > 40 || !w.all(::isWordChar) || !known.add(lower)) continue
-            // регистр сохраняем: имена и названия («Анна», «iPhone») подсказываются так, как их записали;
-            // слово целиком заглавными («ПРИВЕТ») — не повод всегда писать капсом
-            fresh.add(if (w.length > 1 && w.all { !it.isLetter() || it.isUpperCase() }) lower else w)
-            // выученное слово сразу «своё»; большой файл не вытесняет слова, выученные при наборе
-            if (tokens.size <= 200) learn(lang, "", lower, LEARNED_TYPO + 2)
+        val collector = MyWordCollector(known)
+        var i = 0
+        while (i < raw.length && !collector.full) {
+            while (i < raw.length && isWordSeparator(raw[i])) i++
+            val start = i
+            while (i < raw.length && !isWordSeparator(raw[i])) i++
+            if (i > start) collector.add(raw.substring(start, i))
         }
-        val added = fresh.size
+        // слово сразу «знакомое», но не самое частое: небольшой список запоминаем и движком
+        if (collector.tokens <= 200) for (w in collector.fresh) learn(lang, "", w.lowercase(), LEARNED)
+        val added = collector.fresh.size
         if (added > 0) {
-            all[code] = fresh.asReversed() + old
+            all[code] = collector.fresh.asReversed() + old
             writeMyWords(app, all)
             invalidate(code, sameFiles = true)
         }
@@ -662,25 +756,59 @@ object WordPredictorEngine {
     }
 
     /**
-     * Личный словарь из файла: слова через пробел, запятую или по строкам. Понимает выгрузку Gboard
-     * («сокращение⇥слово⇥язык») и списки с частотами; строки с # пропускаются.
+     * Личный словарь из файла потоками: слова через пробел, запятую или по строкам. Понимает выгрузку Gboard
+     * («сокращение⇥слово⇥язык») и списки с частотами; строки с # пропускаются. Файл на сотни мегабайт
+     * не читается целиком — импорт останавливается, как только в словаре набралось [MAX_MY_WORDS] слов.
+     * Поток закрывает вызывающий.
      */
-    fun importMyWords(context: Context, lang: KeyboardLanguage, bytes: ByteArray): Int {
-        val text = when {
-            bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte() -> String(bytes, Charsets.UTF_16LE)
-            bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte() -> String(bytes, Charsets.UTF_16BE)
-            else -> String(bytes, Charsets.UTF_8)
-        }.removePrefix("\uFEFF")
-        val words = StringBuilder()
-        for (line in text.lineSequence()) {
-            if (line.startsWith("#")) continue
-            val cols = line.split('\t')
-            val w = if (cols.size >= 3) cols[1] else if (cols.size == 2) cols[0] else line
-            // фраза из выгрузки — не слово
-            if (cols.size > 1 && w.trim().any { it.isWhitespace() }) continue
-            words.append(w).append(' ')
+    fun importMyWords(context: Context, lang: KeyboardLanguage, input: InputStream): Int {
+        val app = context.applicationContext
+        appContext = appContext ?: app
+        val code = lang.dict ?: lang.id
+        val all = readMyWords(app).toMutableMap()
+        val old = all[code].orEmpty()
+        val known = old.mapTo(HashSet()) { it.lowercase() }
+        val collector = MyWordCollector(known)
+        val lines = BoundedLines(textReader(input), 1 shl 20)
+        var first = true
+        while (!collector.full) {
+            var line = lines.next() ?: break
+            if (first) {
+                line = line.removePrefix("\uFEFF")
+                first = false
+            }
+            if (!line.startsWith("#")) {
+                // выгрузка Gboard: «сокращение<TAB>слово<TAB>язык»; две колонки — «слово<TAB>частота»
+                val cols = line.split('\t')
+                val fromColumn = when {
+                    cols.size >= 3 -> cols[1]
+                    cols.size == 2 -> cols[0]
+                    else -> null
+                }
+                if (fromColumn != null) {
+                    // фраза из выгрузки — не слово
+                    if (fromColumn.none { it.isWhitespace() }) collector.add(fromColumn)
+                } else {
+                    var i = 0
+                    while (i < line.length && !collector.full) {
+                        while (i < line.length && isWordSeparator(line[i])) i++
+                        val start = i
+                        while (i < line.length && !isWordSeparator(line[i])) i++
+                        if (i > start) collector.add(line.substring(start, i))
+                    }
+                }
+            }
+            if (lines.cut) break
         }
-        return addMyWords(context, lang, words.toString())
+        // как в addMyWords: небольшой список слово сразу «знакомое» и для движка, большой файл его не засоряет
+        if (collector.tokens <= 200) for (w in collector.fresh) learn(lang, "", w.lowercase(), LEARNED)
+        val added = collector.fresh.size
+        if (added > 0) {
+            all[code] = collector.fresh.asReversed() + old
+            writeMyWords(app, all)
+            invalidate(code, sameFiles = true)
+        }
+        return added
     }
 
     /** Сырые данные выученного (для резервной копии): слова, пары слов, «Мой словарь». */
@@ -1039,6 +1167,16 @@ object WordPredictorEngine {
         @JvmField var realWordMinRank = 300
         /** Сила контекста в продолжениях по префиксу. */
         @JvmField var ctxCompletion = 2.4f
+        /** Исправление в другое слово может быть на столько менее вероятным, чем лучшее продолжение набранного. */
+        @JvmField var prefixSlack = 0.5f
+        /** Два возможных дописывания ближе этого — не дописываем за человека. */
+        @JvmField var extAmbiguous = 1.2f
+        /** Дописывание с опечаткой: предел цены опечатки, надбавка к оценке и перевес, нужный против точного продолжения. */
+        @JvmField var fuzzyMaxEdit = 6.5f
+        @JvmField var fuzzyExtra = 0.5f
+        @JvmField var fuzzyMargin = 1.0f
+        /** Сколько самых частых слов с набранным началом сравниваются по контексту. */
+        @JvmField var completionPool = 24
     }
 
     /** −ln P(касание | клавиша target) с точностью до константы: касание по клавише typed со смещением touch. */
@@ -1147,7 +1285,14 @@ object WordPredictorEngine {
             else -> null
         }
         if (builtin?.contains(w) == true) bonus += 1.2f
-        val c = dicts[lang.dict ?: lang.id]?.bigrams?.cost(prev, w) ?: -1f
+        val d = dicts[lang.dict ?: lang.id]
+        var c = d?.bigrams?.cost(prev, w) ?: -1f
+        // два слова контекста точнее одного: «я не» → «знаю», а не просто «не» → «знаю»
+        val p2 = prev2Local.get().orEmpty()
+        if (p2.isNotEmpty()) {
+            val t = d?.trigrams?.cost("$p2|$prev", w) ?: -1f
+            if (t >= 0f && (c < 0f || t < c)) c = t
+        }
         if (c >= 0f) bonus += (Typo.ctxWeight * (Typo.ctxCap - c)).coerceAtLeast(0.2f)
         return bonus
     }
@@ -1216,6 +1361,8 @@ object WordPredictorEngine {
     }
 
     private val cancelCheck = ThreadLocal<(() -> Boolean)?>()
+    /** Слово перед предыдущим (для троек) — на время одного predict. */
+    private val prev2Local = ThreadLocal<String>()
 
     private fun checkCancelled() {
         if (cancelCheck.get()?.invoke() == true) throw Cancelled()
@@ -1313,6 +1460,115 @@ object WordPredictorEngine {
         return text to bestScore
     }
 
+    /**
+     * Насколько вероятно, что набранное — начало слова, которое ещё не дописали: оценка лучшего продолжения
+     * (редкость − контекст, как у исправлений; меньше — вероятнее). Нет продолжений — Float.MAX_VALUE.
+     */
+    private fun unfinishedScore(lower: String, lang: KeyboardLanguage, prev: String): Float {
+        val d = dictFor(lang) ?: return Float.MAX_VALUE
+        var i = lowerBound(d.sorted, lower)
+        var seen = 0
+        // три самых частых продолжения: контекст считаем только для них
+        val top = arrayOfNulls<String>(3)
+        val ranks = intArrayOf(Int.MAX_VALUE, Int.MAX_VALUE, Int.MAX_VALUE)
+        while (i < d.sorted.size && seen < 400) {
+            val w = d.sorted[i++]
+            if (!w.startsWith(lower)) break
+            seen++
+            if (w.length == lower.length) continue
+            val r = d.rank[w] ?: continue
+            var k = 2
+            if (r >= ranks[k]) continue
+            while (k > 0 && r < ranks[k - 1]) { ranks[k] = ranks[k - 1]; top[k] = top[k - 1]; k-- }
+            ranks[k] = r; top[k] = w
+        }
+        var best = Float.MAX_VALUE
+        for (k in 0..2) {
+            val w = top[k] ?: continue
+            best = min(best, freqCost(ranks[k]) - userBonus(lang, w) - contextBonus(lang, prev, w))
+        }
+        // продолжение, обычное именно после предыдущего слова, даже если само слово не из частых
+        if (prev.isNotEmpty()) d.bigrams?.next(prev)?.forEach { w ->
+            if (w.length > lower.length && w.startsWith(lower)) {
+                val r = d.rankOf(w).takeIf { it >= 0 } ?: 100_000
+                best = min(best, freqCost(r) - userBonus(lang, w) - contextBonus(lang, prev, w))
+            }
+        }
+        return best
+    }
+
+    private fun lowerBound(sorted: Array<String>, key: String): Int {
+        var lo = 0
+        var hi = sorted.size
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (sorted[mid] < key) lo = mid + 1 else hi = mid
+        }
+        return lo
+    }
+
+    /**
+     * Дописывание с опечаткой в уже набранной части: «сигод» → «сегодня», «прмв» → «привет», «освабод» → «освободить».
+     * Перебираются правдоподобные варианты набранного (соседняя или похожая на слух буква, перестановка, лишняя и
+     * пропущенная буква), и для каждого берутся самые частые слова с таким началом. Точные продолжения сюда не входят.
+     */
+    private fun fuzzyCompletions(lower: String, lang: KeyboardLanguage, prev: String, touches: List<KeyTouch?>?, limit: Int): List<Candidate> {
+        val d = dictFor(lang) ?: return emptyList()
+        val n = lower.length
+        if (n < 3 || n > 16 || lower.any { !it.isLetter() }) return emptyList()
+        checkCancelled()
+        val variants = LinkedHashSet<String>()
+        val chars = lower.toCharArray()
+        for (i in chars.indices) {
+            val a = chars[i]
+            for (c in plausibleKeys(lang, a, touches?.getOrNull(i))) {
+                chars[i] = c
+                variants += String(chars)
+            }
+            chars[i] = a
+        }
+        for (i in 0 until n - 1) if (chars[i] != chars[i + 1]) {
+            val t = chars[i]; chars[i] = chars[i + 1]; chars[i + 1] = t
+            variants += String(chars)
+            chars[i + 1] = chars[i]; chars[i] = t
+        }
+        if (n >= 4) {
+            for (i in 0 until n) variants += lower.removeRange(i, i + 1)
+            val letters = lang.keyPositions.keys.filter { it.isLetter() }
+            for (i in 1 until n) for (c in letters) variants += lower.substring(0, i) + c + lower.substring(i)
+        }
+        variants.remove(lower)
+        val best = HashMap<String, Candidate>()
+        val maxCost = Typo.fuzzyMaxEdit
+        for (v in variants) {
+            var i = lowerBound(d.sorted, v)
+            if (i >= d.sorted.size || !d.sorted[i].startsWith(v)) continue
+            // два самых частых слова с таким началом
+            var w1: String? = null; var r1 = Int.MAX_VALUE
+            var w2: String? = null; var r2 = Int.MAX_VALUE
+            var seen = 0
+            while (i < d.sorted.size && seen < 400) {
+                val w = d.sorted[i++]
+                if (!w.startsWith(v)) break
+                seen++
+                if (w.startsWith(lower)) continue
+                val r = d.rank[w] ?: continue
+                if (r < r1) { w2 = w1; r2 = r1; w1 = w; r1 = r } else if (r < r2) { w2 = w; r2 = r }
+            }
+            if (w1 == null) continue
+            val cost = editCost(lang, lower, v, maxCost, touches)
+            if (cost > maxCost) continue
+            for ((w, r) in listOf(w1 to r1, w2 to r2)) {
+                if (w == null) continue
+                val score = cost + Typo.fuzzyExtra + freqCost(r) - userBonus(lang, w) - contextBonus(lang, prev, w)
+                val old = best[w]
+                if (old == null || score < old.score) best[w] = Candidate(w, cost, score, r)
+            }
+        }
+        checkCancelled()
+        return best.values.sortedBy { it.score }.take(limit)
+    }
+
     /** Цена того, что набранное — не опечатка, а слово, которого нет в словаре (имя, сленг, новое слово). */
     private fun keepCost(len: Int, normal: Boolean): Float =
         (if (normal) Typo.keepNormal else Typo.keepSafe) + Typo.keepPerChar * max(0, len - 4)
@@ -1340,12 +1596,19 @@ object WordPredictorEngine {
         var keep = keepCost(len, normal)
         // двухбуквенное — только явный промах мимо очень частого слова («мв» → «мы»)
         if (len == 2) keep -= 3.5f
-        val cands = nearWords(lower, lang, keep + 1f, 4, prev, touches)
+        // набранное — начало частого слова («сег…одня», «пом…ощь»): скорее слово не дописали или сократили, чем
+        // промахнулись мимо другого («все», «по»). Такое исправление должно быть намного убедительнее обычного
+        // Исправление в другое слово должно быть не менее вероятным, чем лучшее продолжение набранного
+        val unfinished = unfinishedScore(lower, lang, prev).let { if (it == Float.MAX_VALUE) it else it + Typo.prefixSlack }
+        val all = nearWords(lower, lang, keep + 1f, 4, prev, touches)
             .filter { if (len == 2) it.word.length == 2 && it.rank < 400 else true }
+        val cands = all.filter { it.word.startsWith(lower) || it.score <= unfinished }
         val best = cands.firstOrNull()
         val split = splitWords(lower, lang, normal)
-        if (split != null && split.second <= keep && (best == null || split.second < best.score)) return split.first
+        if (split != null && split.second <= min(keep, unfinished) && (best == null || split.second < best.score)) return split.first
         if (best == null || best.score > keep) return null
+        // дописывание наугад: «зна» может быть и «знаю», и «знал», и «знак» — не выбираем за человека
+        if (best.word.startsWith(lower) && cands.any { it !== best && it.word.startsWith(lower) && it.score - best.score < Typo.extAmbiguous }) return null
         val second = cands.getOrNull(1)
         // в осторожном режиме два почти равных варианта — не угадываем
         if (!normal && second != null && second.score - best.score < Typo.ambiguousSafe) return null
@@ -1548,13 +1811,17 @@ object WordPredictorEngine {
                 i++
             }
             top.sortBy { it.second }
-            for ((w, r) in top.take(limit * 2)) {
+            for ((w, r) in top.take(max(limit * 2, Typo.completionPool))) {
                 val s = kotlin.math.ln(2f + r) - 0.7f * kotlin.math.ln(1f + userCount(lang, w))
                 scored[w] = min(scored[w] ?: Float.MAX_VALUE, s)
             }
             // продолжения, обычные после предыдущего слова, — даже если само слово не из самых частых
-            if (prev.isNotEmpty()) d.bigrams?.next(prev)?.forEach { w ->
-                if (w.length > lower.length && w.startsWith(lower)) scored.putIfAbsent(w, kotlin.math.ln(2f + (d.rankOf(w).takeIf { it >= 0 } ?: 100_000)))
+            if (prev.isNotEmpty()) {
+                val p2 = prev2Local.get().orEmpty()
+                val after = if (p2.isNotEmpty()) d.trigrams?.next("$p2|$prev").orEmpty() + d.bigrams?.next(prev).orEmpty() else d.bigrams?.next(prev).orEmpty()
+                for (w in after) {
+                    if (w.length > lower.length && w.startsWith(lower)) scored.putIfAbsent(w, kotlin.math.ln(2f + (d.rankOf(w).takeIf { it >= 0 } ?: 100_000)))
+                }
             }
             // частых продолжений не хватило — редкие формы: «респонд…» → «респондентов»
             if (scored.size < limit && lower.length >= 3) {
@@ -1579,15 +1846,18 @@ object WordPredictorEngine {
         touches: List<KeyTouch?>? = null,
         sys: SystemSpell.Result? = null,
         wholeWord: Boolean = false,
+        previous2: String = "",
         cancelled: (() -> Boolean)? = null
     ): PredictionSnapshot? {
         cancelCheck.set(cancelled)
+        prev2Local.set(previous2.trim().lowercase())
         return try {
             predictInner(word, previous, undo, lang, capitalizeNext, strength, autoCorrect, touches, sys, wholeWord)
         } catch (_: Cancelled) {
             null
         } finally {
             cancelCheck.set(null)
+            prev2Local.set("")
         }
     }
 
@@ -1618,7 +1888,29 @@ object WordPredictorEngine {
             sys.suggestions.filter { sameScript(lang, it) }.map { applyCase(it, cap, allCaps) }.filter { it != clean && it != fix }
         } else emptyList()
         // слово уже набрано целиком (курсор поставили на него): дописывать нечего, нужны исправления
-        val comps = if (wholeWord && !known) emptyList() else completions(lower, lang, 3, previous.trim().lowercase()).map { applyCase(it, cap, allCaps) }.filter { it != clean && it != fix }
+        val prevLower = previous.trim().lowercase()
+        val exact = if (wholeWord && !known) emptyList() else completions(lower, lang, 3, prevLower)
+        // дописывание с опечаткой в набранной части встаёт впереди точного, только если оно заметно вероятнее
+        // (у готового слова из словаря «похожие» только мешают: «или» → «ели»)
+        val fuzzy = if (wholeWord || known) emptyList()
+        else fuzzyCompletions(lower, lang, prevLower, touches?.takeIf { it.size == clean.length }, 3)
+        val merged = if (fuzzy.isEmpty()) exact else {
+            val d = dictFor(lang)
+            fun unified(w: String): Float {
+                val l = w.lowercase()
+                return freqCost(d?.rankOf(l)?.takeIf { it >= 0 } ?: 200_000) - userBonus(lang, l) - contextBonus(lang, prevLower, l)
+            }
+            val out = ArrayList<String>(3)
+            var e = 0
+            var f = 0
+            while (out.size < 3 && (e < exact.size || f < fuzzy.size)) {
+                val takeFuzzy = f < fuzzy.size && (e >= exact.size || fuzzy[f].score + Typo.fuzzyMargin < unified(exact[e]))
+                val w = if (takeFuzzy) properCase(lang, fuzzy[f++].word) else exact[e++]
+                if (out.none { it.equals(w, true) }) out += w
+            }
+            out
+        }
+        val comps = merged.map { applyCase(it, cap, allCaps) }.filter { it != clean && it != fix }
 
         val chips = when {
             fix != null -> listOf(
@@ -1691,14 +1983,23 @@ object WordPredictorEngine {
                 .sortedByDescending { it.value }
                 .take(3)
                 .forEach { set.add(it.key.substringAfter('|')) }
-            when (lang.baseId) {
-                "ru" -> ruBigrams[prev]?.let { set.addAll(it) }
-                "en" -> enBigrams[prev]?.let { set.addAll(it) }
+            // тройка слов: самое точное, что есть, — раньше разговорных пар и модели
+            val p2 = prev2Local.get().orEmpty()
+            if (p2.isNotEmpty()) dictFor(lang)?.trigrams?.next("$p2|$prev")?.forEach { w ->
+                if (set.size < 3 && w != prev) set.add(properCase(lang, w))
             }
-            // сначала ваши привычки и разговорные пары, затем языковая модель
+            // ручной список разговорных пар: для английского он точнее модели Норвига, для русского модель из корпусов
+            // точнее — от ручного списка там берётся только первое слово («доброе» → «утро»), остальное по модели
+            val handmade = when (lang.baseId) {
+                "ru" -> ruBigrams[prev]?.take(1)
+                "en" -> enBigrams[prev]
+                else -> null
+            }
+            handmade?.forEach { if (set.size < 3) set.add(it) }
             if (set.size < 3) dictFor(lang)?.bigrams?.next(prev)?.forEach { w ->
                 if (set.size < 3 && w != prev) set.add(properCase(lang, w))
             }
+            if (set.size < 3 && lang.baseId == "ru") ruBigrams[prev]?.forEach { if (set.size < 3) set.add(it) }
             // связки, набранные хотя бы раз
             if (set.size < 3) userBigrams.entries.asSequence()
                 .filter { it.key.startsWith(prefix) }
@@ -1710,12 +2011,15 @@ object WordPredictorEngine {
         if (set.size < 3) {
             val starters = if (prev.isEmpty()) SENTENCE_STARTERS[lang.id].orEmpty() else emptyList()
             for (w in starters) if (set.size < 3) set.add(w)
-            val top = dictFor(lang)?.words
+            val d = dictFor(lang)
+            val top = d?.words
             if (top != null) {
+                // свои слова пользователя — не «самые частые слова языка» (если словарь не целиком из них)
+                val skipMine = d.mine.size * 2 < top.size
                 var i = 0
                 while (set.size < 3 && i < min(top.size, 60)) {
                     val w = top[i++]
-                    if (w != prev && w.isNotBlank() && w.all { it.isLetter() }) set.add(w)
+                    if (w != prev && w.isNotBlank() && w.all { it.isLetter() } && !(skipMine && d.mine.containsKey(w))) set.add(w)
                 }
             }
         }
