@@ -13,6 +13,10 @@ runs:
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v4
 
+    - name: Set up Android NDK
+      shell: bash
+      run: sdkmanager "ndk;28.2.13676358"
+
     - name: Make gradlew executable
       shell: bash
       run: chmod +x gradlew

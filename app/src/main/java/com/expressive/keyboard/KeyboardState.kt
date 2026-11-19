@@ -151,7 +151,18 @@ class KeyboardState {
     /** Поле числа или телефона: вместо букв — цифровая клавиатура. */
     var numberPad by mutableStateOf(false)
     var phoneField by mutableStateOf(false)
-    var panel by mutableStateOf(ActivePanel.KEYBOARD)
+    private var activePanel by mutableStateOf(ActivePanel.KEYBOARD)
+    var emojiRecents by mutableStateOf(emptyList<String>())
+        private set
+    var panel: ActivePanel
+        get() = activePanel
+        set(value) {
+            if ((value == ActivePanel.EMOJI || value == ActivePanel.EMOJI_SEARCH) &&
+                activePanel != ActivePanel.EMOJI && activePanel != ActivePanel.EMOJI_SEARCH
+            ) emojiRecents = EmojiRecents.items.toList()
+            activePanel = value
+        }
+    var calculation by mutableStateOf<SuggestionChipModel?>(null)
     /** Голосовая панель открыта удержанием микрофона — режим Rambler. */
     var rambler by mutableStateOf(false)
     var toolbarOpen by mutableStateOf(false)
@@ -206,6 +217,7 @@ interface KeyboardActions {
     fun keyUp()
     fun keyTick()
     fun commitKey(key: KeyModel, text: String)
+    fun holdEnter() {}
     /** Где именно нажата следующая клавиша: смещение от её центра в долях ширины и высоты (-0.5…0.5). */
     fun keyTouch(fx: Float, fy: Float) {}
     fun swipeSpace(direction: Int)
@@ -246,6 +258,8 @@ interface KeyboardActions {
     fun dismissClipOffer() {}
     /** Удержание кнопки языка, если в настройках выбрано не «список языков». */
     fun globeHold() {}
+    /** Следующий включённый язык: кнопка «смена языка» справа вверху. */
+    fun switchLanguage() {}
     /** Кнопка панели редактирования: home, end, up, down, left, right, select, select_all, copy, paste. */
     fun editKey(id: String) {}
     /** Исправить выделенный текст (или весь текст поля): Claude по ключу или бесплатная проверка. */
@@ -286,6 +300,7 @@ internal class SafeActions(private val a: KeyboardActions, private val onError: 
     override fun keyUp() = guard { a.keyUp() }
     override fun keyTick() = guard { a.keyTick() }
     override fun commitKey(key: KeyModel, text: String) = guard { a.commitKey(key, text) }
+    override fun holdEnter() = guard { a.holdEnter() }
     override fun keyTouch(fx: Float, fy: Float) = guard { a.keyTouch(fx, fy) }
     override fun swipeSpace(direction: Int) = guard { a.swipeSpace(direction) }
     override fun spaceCursor(direction: Int) = guard { a.spaceCursor(direction) }
@@ -319,6 +334,7 @@ internal class SafeActions(private val a: KeyboardActions, private val onError: 
     override fun pasteClipOffer() = guard { a.pasteClipOffer() }
     override fun dismissClipOffer() = guard { a.dismissClipOffer() }
     override fun globeHold() = guard { a.globeHold() }
+    override fun switchLanguage() = guard { a.switchLanguage() }
     override fun editKey(id: String) = guard { a.editKey(id) }
     override fun aiFix() = guard { a.aiFix() }
     override fun aiTool(id: String) = guard { a.aiTool(id) }

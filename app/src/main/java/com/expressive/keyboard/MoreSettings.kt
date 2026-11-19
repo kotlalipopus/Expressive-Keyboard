@@ -55,7 +55,9 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -152,8 +154,7 @@ internal fun MyanmarOrderSection(settings: KeyboardSettings) {
 }
 
 @Composable
-internal fun LanguagesPage(settings: KeyboardSettings) {
-    if (Languages.enabled(settings).any { it.id == "my" }) MyanmarOrderSection(settings)
+internal fun LanguagesPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> Unit) {
     val context = LocalContext.current
     val cs = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
@@ -161,7 +162,7 @@ internal fun LanguagesPage(settings: KeyboardSettings) {
     val dictVersion = Dictionaries.version
     val status = Dictionaries.status
     var query by remember { mutableStateOf("") }
-    var layoutFor by remember { mutableStateOf<KeyboardLanguage?>(null) }
+    var layoutFor by remember { mutableStateOf<String?>(null) }
     var showAll by remember { mutableStateOf(false) }
 
     fun save(list: List<KeyboardLanguage>) =
@@ -176,33 +177,35 @@ internal fun LanguagesPage(settings: KeyboardSettings) {
         }
     }
 
-    InfoCard(
-        Icons.Rounded.Language,
-        tr(
-            "Язык меняется кнопкой смены языка (удержание — список языков) или свайпом по пробелу. Всего языков: {0}. " +
-                "Подсказки работают по частотному словарю: русский, английский и китайский встроены, остальные скачиваются " +
-                "(~0,3–0,8 МБ). Китайский набирается пиньинем (nihao → 你好), японский — ромадзи (konnichiha → こんにちは), " +
-                "корейский собирает слоги сам, вьетнамский — по Telex.", Languages.all.size
-        )
-    )
     SettingsSection("Включённые языки") {
         enabled.forEachIndexed { i, lang ->
-            key(dictVersion, lang.id) {
+            key(dictVersion, lang.id, lang.rows, lang.customLayout) {
                 LanguageRow(
                     lang,
                     dictState(context, lang, status),
                     trailing = {
-                        IconButton(onClick = { layoutFor = lang }) {
+                        IconButton(onClick = { layoutFor = lang.id }) {
                             Icon(Icons.Rounded.Keyboard, tr("Раскладка"), tint = if (lang.customLayout) cs.primary else cs.onSurfaceVariant)
                         }
-                        IconButton(onClick = { if (i > 0) save(enabled.toMutableList().also { java.util.Collections.swap(it, i, i - 1) }) }, enabled = i > 0) {
-                            Icon(Icons.Rounded.KeyboardArrowUp, "Выше")
-                        }
-                        IconButton(onClick = { if (i < enabled.lastIndex) save(enabled.toMutableList().also { java.util.Collections.swap(it, i, i + 1) }) }, enabled = i < enabled.lastIndex) {
-                            Icon(Icons.Rounded.KeyboardArrowDown, "Ниже")
-                        }
-                        IconButton(onClick = { save(enabled - lang) }, enabled = enabled.size > 1) {
-                            Icon(Icons.Rounded.RemoveCircleOutline, "Убрать", tint = if (enabled.size > 1) cs.error else cs.outline)
+                        if (enabled.size > 1) {
+                            var menu by remember { mutableStateOf(false) }
+                            Box {
+                                IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, tr("Действия с языком")) }
+                                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                    if (i > 0) DropdownMenuItem(text = { Text(tr("Выше")) }, onClick = {
+                                        menu = false
+                                        save(enabled.toMutableList().also { java.util.Collections.swap(it, i, i - 1) })
+                                    })
+                                    if (i < enabled.lastIndex) DropdownMenuItem(text = { Text(tr("Ниже")) }, onClick = {
+                                        menu = false
+                                        save(enabled.toMutableList().also { java.util.Collections.swap(it, i, i + 1) })
+                                    })
+                                    DropdownMenuItem(text = { Text(tr("Убрать")) }, onClick = {
+                                        menu = false
+                                        save(enabled - lang)
+                                    })
+                                }
+                            }
                         }
                     },
                     onDict = { download(lang) }
@@ -210,6 +213,11 @@ internal fun LanguagesPage(settings: KeyboardSettings) {
             }
         }
     }
+    SettingsSection("Раскладка") {
+        ActionItem(Icons.Rounded.SwapHoriz, "Свои места клавиш", "Поменяйте местами буквы, цифры и знаки или поставьте свои",
+            onClick = { onNavigate(SettingsPage.LAYOUT) })
+    }
+    if (enabled.any { it.id == "my" }) MyanmarOrderSection(settings)
     SettingsSection("Добавить язык") {
         GroupItem {
             OutlinedTextField(
@@ -222,15 +230,18 @@ internal fun LanguagesPage(settings: KeyboardSettings) {
                 singleLine = true
             )
         }
-        val q = query.trim().lowercase()
+        val terms = query.trim().lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
         // строка поиска языка собирается один раз, а не на каждую букву для всех 120 языков
         val searchKeys = remember(I18n.isEnglish, Languages.all.size) {
-            Languages.all.associate { it.id to "${it.title}|${it.displayTitle()}|${it.spaceLabel}".lowercase() }
+            Languages.all.associate {
+                val english = Locale.forLanguageTag(it.locale).getDisplayName(Locale.ENGLISH)
+                it.id to "${it.id}|${it.title}|${it.displayTitle()}|${it.spaceLabel}|$english".lowercase()
+            }
         }
         val available = Languages.all.filter { it !in enabled }
-            .filter { q.isEmpty() || searchKeys[it.id]?.contains(q) == true || it.id.startsWith(q) }
+            .filter { lang -> terms.all { searchKeys[lang.id]?.contains(it) == true } }
         // весь список (больше сотни строк) строится только по просьбе: страница открывается сразу
-        val shown = if (q.isNotEmpty() || showAll) available else available.take(LANGS_PREVIEW)
+        val shown = if (terms.isNotEmpty() || showAll) available else available.take(LANGS_PREVIEW)
         shown.forEach { lang ->
                 key(dictVersion, lang.id) {
                     LanguageRow(lang, dictState(context, lang, status, enabled = false), trailing = {
@@ -250,7 +261,7 @@ internal fun LanguagesPage(settings: KeyboardSettings) {
             KeyboardPrefs.edit(context) { putBoolean("dict_auto_download", it) }
         }
     }
-    layoutFor?.let { l -> LangLayoutDialog(l, settings) { layoutFor = null } }
+    enabled.firstOrNull { it.id == layoutFor }?.let { lang -> LangLayoutDialog(lang) { layoutFor = null } }
 }
 
 private const val LANGS_PREVIEW = 12
@@ -285,8 +296,7 @@ private fun LanguageRow(lang: KeyboardLanguage, state: String, trailing: @Compos
                 Text(lang.label, color = cs.onSecondaryContainer, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
             }
             Column(Modifier.weight(1f)) {
-                val title = lang.displayTitle()
-                Text(if (title == lang.spaceLabel) title else "$title · ${lang.spaceLabel}", style = MaterialTheme.typography.titleMedium, color = cs.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(lang.displayTitle(), style = MaterialTheme.typography.titleMedium, color = cs.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(
                     state, style = MaterialTheme.typography.bodySmall,
                     color = if (error) cs.error else if (canDownload) cs.primary else cs.onSurfaceVariant
@@ -612,21 +622,21 @@ internal fun EmojiStylePicker(settings: KeyboardSettings, onCustom: () -> Unit) 
 // ----------------------------------------------------------------------- своя раскладка языка
 
 /** Сохранить ряды языка (null — вернуть раскладку языка). */
-internal fun saveLangLayout(context: Context, settings: KeyboardSettings, langId: String, rows: List<String>?) {
-    val o = runCatching { JSONObject(settings.langLayouts.ifBlank { "{}" }) }.getOrDefault(JSONObject())
-    if (rows == null) o.remove(langId) else o.put(langId, JSONArray(rows))
+private fun saveLangLayout(context: Context, langId: String, rows: List<List<String>>?) {
+    val stored = KeyboardPrefs.current(context).langLayouts
+    val o = runCatching { JSONObject(stored.ifBlank { "{}" }) }.getOrDefault(JSONObject())
+    if (rows == null) o.remove(langId) else o.put(langId, JSONArray(rows.map { JSONArray(it) }))
     KeyboardPrefs.edit(context) { putString("lang_layouts", if (o.length() == 0) "" else o.toString()) }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun LangLayoutDialog(lang: KeyboardLanguage, settings: KeyboardSettings, onDismiss: () -> Unit) {
+internal fun LangLayoutDialog(lang: KeyboardLanguage, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val cs = MaterialTheme.colorScheme
     val original = remember(lang.id) { Languages.original(lang.id) ?: lang }
-    val current = Languages.userRows[lang.id] ?: original.rows
-    var text by remember { mutableStateOf(current.joinToString("\n") { Languages.rowToText(it) }) }
-    var otherOpen by remember { mutableStateOf(false) }
+    var text by remember(lang.id) { mutableStateOf(lang.rows.joinToString("\n", transform = Languages::rowToText)) }
+    var pickingLayout by remember { mutableStateOf(false) }
+    var search by remember { mutableStateOf("") }
     val rows = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
     val parsed = rows.map { Languages.parseRowText(it) }
     val error = when {
@@ -635,7 +645,54 @@ internal fun LangLayoutDialog(lang: KeyboardLanguage, settings: KeyboardSettings
         parsed.any { it.size > 14 } -> tr("В ряду не больше 14 клавиш")
         else -> null
     }
-    fun fill(r: List<List<String>>) { text = r.joinToString("\n") { Languages.rowToText(it) } }
+    fun fill(rows: List<List<String>>) {
+        text = rows.joinToString("\n", transform = Languages::rowToText)
+        pickingLayout = false
+    }
+    if (pickingLayout) {
+        val query = search.trim()
+        val presets = Languages.presets.filter { (name, _) -> name.contains(query, ignoreCase = true) }
+        val choices = remember(search, lang.id, Languages.extra) {
+            Languages.all.filter {
+                it.id != lang.id &&
+                    listOf(it.displayTitle(), it.title, it.spaceLabel, it.id).any { label -> label.contains(query, ignoreCase = true) }
+            }
+        }
+        AlertDialog(
+            onDismissRequest = { pickingLayout = false },
+            title = { Text(tr("Выбрать раскладку")) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(search, { search = it }, label = { Text(tr("Название раскладки или языка")) },
+                        singleLine = true, modifier = Modifier.fillMaxWidth())
+                    if (query.isNotEmpty() && choices.isEmpty() && presets.isEmpty()) Text(tr("Ничего не нашлось"))
+                    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 300.dp)) {
+                        if (query.isEmpty()) item {
+                            ListItem(
+                                headlineContent = { Text(tr("Как у языка")) },
+                                modifier = Modifier.clickable { fill(original.rows) }
+                            )
+                        }
+                        items(presets) { (name, rows) ->
+                            ListItem(
+                                headlineContent = { Text(name) },
+                                modifier = Modifier.clickable { fill(rows.map(Languages::parseRowText)) }
+                            )
+                        }
+                        items(choices, key = { it.id }) { choice ->
+                            ListItem(
+                                headlineContent = { Text(choice.displayTitle()) },
+                                supportingContent = { Text(choice.rows.first().take(6).joinToString(" ")) },
+                                modifier = Modifier.clickable { fill(choice.rows) }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { pickingLayout = false }) { Text(tr("Назад")) } }
+        )
+        return
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Rounded.Keyboard, null) },
@@ -646,41 +703,21 @@ internal fun LangLayoutDialog(lang: KeyboardLanguage, settings: KeyboardSettings
                     tr("Словарь, подсказки и голосовой ввод остаются от языка — меняются только клавиши. Последний ряд получает Shift и ⌫."),
                     style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant
                 )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    AssistChip(onClick = { fill(original.rows) }, label = { Text(tr("Как у языка")) })
-                    Languages.presets.forEach { (name, r) ->
-                        AssistChip(onClick = { fill(r.map { Languages.parseRowText(it) }) }, label = { Text(name) })
-                    }
-                    AssistChip(onClick = { otherOpen = !otherOpen }, label = { Text(tr("Другого языка…")) })
-                }
-                if (otherOpen) {
-                    Column(
-                        Modifier.fillMaxWidth().heightIn(max = 220.dp).clip(RoundedCornerShape(16.dp)).background(cs.surfaceContainerHighest)
-                            .verticalScroll(rememberScrollState())
-                    ) {
-                        Languages.all.filter { it.id != lang.id && it.composer == Composer.NONE }.forEach { l ->
-                            Text(
-                                "${l.displayTitle()} · " + l.rows.firstOrNull()?.take(6)?.joinToString("").orEmpty(),
-                                Modifier.fillMaxWidth().clickable { fill(l.rows); otherOpen = false }.padding(horizontal = 14.dp, vertical = 10.dp),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                    }
-                }
+                OutlinedButton(onClick = { search = ""; pickingLayout = true }) { Text(tr("Выбрать раскладку")) }
                 OutlinedTextField(
                     value = text, onValueChange = { text = it },
                     label = { Text(tr("Ряды — по одному в строке")) },
-                    supportingText = { Text(error ?: tr("Буквы подряд: йцукен. Через пробел — если на клавише несколько знаков: sh ch ŋ")) },
+                    supportingText = { Text(error ?: tr("Буквы подряд: йцукен. Составные клавиши: sh ch ŋ. Одна составная клавиша: [\"sh\"].")) },
                     isError = error != null,
                     textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
-                    shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth(), minLines = 3
+                    shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth(), minLines = 3, maxLines = 6
                 )
             }
         },
         confirmButton = {
             Button(onClick = {
                 val same = parsed == original.rows
-                saveLangLayout(context, settings, lang.id, if (same) null else rows)
+                saveLangLayout(context, lang.id, if (same) null else parsed)
                 onDismiss()
             }, enabled = error == null) { Text(tr("Сохранить")) }
         },

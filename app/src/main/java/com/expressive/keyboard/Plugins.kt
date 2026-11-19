@@ -286,6 +286,8 @@ data class PluginTheme(
     val colors: Map<String, Int> = emptyMap()
 )
 
+enum class PluginScriptEngine { RHINO, QUICKJS }
+
 @Immutable
 data class KeyboardPlugin(
     val id: String,
@@ -317,7 +319,8 @@ data class KeyboardPlugin(
     /** Исходный JSON оформления: из него собираются варианты по настройкам темы. */
     val skinJson: String? = null,
     /** Свои настройки мода (блок "config"). */
-    val config: List<ModOption> = emptyList()
+    val config: List<ModOption> = emptyList(),
+    val scriptEngine: PluginScriptEngine = PluginScriptEngine.RHINO
 ) {
     val usesNetwork: Boolean get() = "network" in permissions && (actions.any { it.type == PluginActionType.HTTP } || script != null)
     /** Есть что применить кнопкой «Применить оформление». */
@@ -515,6 +518,11 @@ object PluginParser {
         ) {
             "Плагин пустой: нужны script, actions, shortcuts, symbols, theme, skin, settings, layouts, variants, icons, languages или dictionary"
         }
+        val scriptEngine = when (o.optString("scriptEngine", "rhino")) {
+            "rhino" -> PluginScriptEngine.RHINO
+            "quickjs" -> PluginScriptEngine.QUICKJS
+            else -> throw IllegalArgumentException("scriptEngine: expected rhino or quickjs")
+        }
         return KeyboardPlugin(
             id = id,
             name = name.take(40),
@@ -533,6 +541,7 @@ object PluginParser {
             layouts = layouts,
             variants = variants,
             script = script,
+            scriptEngine = scriptEngine,
             files = files,
             icons = icons,
             languages = languages,
@@ -769,6 +778,18 @@ object PluginTransforms {
 
 /** Калькулятор для преобразования "calc": + − × ÷ ^ %, скобки, запятая как десятичный разделитель. */
 object Calc {
+    const val EDITOR_LOOKBACK = 161
+    private val editorExpression = Regex("""(?<![\p{L}\p{N}.,])([0-9.,+−×÷*/^%()\-][0-9.,+−×÷*/^%() \t\-]*)=$""")
+
+    fun resultAfterEquals(before: CharSequence): String? {
+        if (before.length !in 1..EDITOR_LOOKBACK || before.last() != '=') return null
+        val match = editorExpression.find(before) ?: return null
+        if (match.range.first == 0 && before.length >= EDITOR_LOOKBACK) return null
+        val expression = match.groupValues[1].trim()
+        if (expression.none { it in "+-−×÷*/^%" }) return null
+        return eval(expression.replace("\t", ""))?.takeIf(Double::isFinite)?.let(::format)
+    }
+
     fun eval(src: String): Double? {
         val s = src.replace(',', '.').replace('×', '*').replace('÷', '/').replace('−', '-').replace(" ", "")
         if (s.isEmpty() || s.none { it.isDigit() }) return null

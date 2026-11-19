@@ -381,6 +381,38 @@ internal fun ColorsPage(settings: KeyboardSettings) {
         )
         AnimatedVisibility(settings.hasBackgroundImage) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                val frame = settings.photoFrame
+                val image = rememberBackgroundBitmap(settings.bgImageVersion)
+                if (image != null) {
+                    val palette = rememberKeyPalette(settings)
+                    Box(Modifier.fillMaxWidth().height(128.dp).clip(RoundedCornerShape(20.dp)).background(palette.background)) {
+                        KeyboardPhoto(image, settings, Modifier.matchParentSize(), 1f - settings.bgTransparency)
+                        Box(Modifier.matchParentSize().background(palette.background.copy(alpha = settings.bgDim)))
+                    }
+                }
+                ChoiceItem(Icons.Rounded.Crop, "Размещение фото", null,
+                    listOf("COVER" to "Заполнить", "FIT" to "Вписать", "STRETCH" to "Растянуть"), frame.mode.name
+                ) { mode -> KeyboardPrefs.edit(context) { putString("photo_fit", mode) } }
+                val sliders = listOf(
+                    Triple("Масштаб фото", "photo_zoom", frame.zoom to (0.5f..3f)),
+                    Triple("Ширина фото", "photo_width", frame.width to (0.5f..2f)),
+                    Triple("Высота фото", "photo_height", frame.height to (0.5f..2f)),
+                    Triple("Сдвиг фото по горизонтали", "photo_x", frame.x to (-1f..1f)),
+                    Triple("Сдвиг фото по вертикали", "photo_y", frame.y to (-1f..1f))
+                )
+                for ((title, pref, control) in sliders) {
+                    SliderItem(
+                        icon = Icons.Rounded.Tune, title = title, value = control.first, range = control.second,
+                        format = { "${(it * 100).roundToInt()}%" },
+                        onCommit = { v -> KeyboardPrefs.edit(context) { putFloat(pref, v) } }
+                    )
+                }
+                ActionItem(Icons.Rounded.RestartAlt, "Сбросить положение фото", null, onClick = {
+                    KeyboardPrefs.edit(context) {
+                        remove("photo_fit")
+                        sliders.forEach { remove(it.second) }
+                    }
+                })
                 SliderItem(
                     icon = Icons.Rounded.Brightness6, title = "Затемнение",
                     value = settings.bgDim, range = 0f..0.9f,
@@ -423,9 +455,8 @@ internal fun ColorsPage(settings: KeyboardSettings) {
 // ----------------------------------------------------------------------- клавиши
 
 @Composable
-internal fun KeysPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> Unit) {
+internal fun KeyboardSizePage(settings: KeyboardSettings) {
     val context = LocalContext.current
-    PreviewSection(settings)
     SettingsSection("Размеры") {
         SliderItem(
             icon = Icons.Rounded.Height, title = "Высота клавиш",
@@ -491,14 +522,27 @@ internal fun KeysPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
             settings.floating
         ) { KeyboardPrefs.edit(context) { putBoolean("floating_keyboard", it) } }
         AnimatedVisibility(settings.floating) {
-            SliderItem(
-                icon = Icons.Rounded.Straighten, title = "Ширина плавающей клавиатуры",
-                value = settings.floatWidth, range = 0.5f..1f,
-                format = { "${(it * 100).roundToInt()}%" },
-                onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("float_width", v) } }
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                SliderItem(
+                    icon = Icons.Rounded.Straighten, title = "Ширина плавающей клавиатуры",
+                    value = settings.floatWidth, range = 0.5f..1f,
+                    format = { "${(it * 100).roundToInt()}%" },
+                    onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("float_width", v) } }
+                )
+                SliderItem(
+                    icon = Icons.Rounded.Height, title = "Высота клавиш плавающей клавиатуры",
+                    value = settings.floatKeyHeightDp, range = 28f..68f,
+                    format = { "${it.roundToInt()} dp" },
+                    onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("float_key_height_dp", v) } }
+                )
+            }
         }
     }
+}
+
+@Composable
+internal fun KeysPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> Unit) {
+    val context = LocalContext.current
     SettingsSection("Клавиши и кнопки") {
         ToggleItem(Icons.Rounded.Dialpad, "Ряд цифр", null, settings.showNumberRow) {
             KeyboardPrefs.edit(context) { putBoolean("show_number_row", it) }
@@ -592,7 +636,7 @@ internal fun KeysPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
                 Icons.Rounded.TouchApp, "Кнопка справа вверху", "Что делает кнопка микрофона. Удержание — голосовой ввод",
                 listOf(
                     "VOICE" to "Микрофон", "EMOJI" to "Эмодзи", "CLIPBOARD" to "Буфер", "TRANSLATE" to "Перевод",
-                    "GIF" to "GIF", "UNDO" to "Отменить", "HIDE" to "Скрыть"
+                    "GIF" to "GIF", "UNDO" to "Отменить", "HIDE" to "Скрыть", "LANG" to "Смена языка"
                 ), settings.micAction
             ) { v -> KeyboardPrefs.edit(context) { putString("mic_action", v) } }
         }
@@ -615,9 +659,6 @@ internal fun KeysPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         }
         ActionItem(Icons.Rounded.TouchApp, "Символы при удержании", "Свои символы на любой клавише: ғ на «г», $ на «d»", onClick = {
             onNavigate(SettingsPage.LONG_PRESS)
-        })
-        ActionItem(Icons.Rounded.SwapHoriz, "Свои места клавиш", "Поменяйте местами буквы, цифры и знаки или поставьте свои", onClick = {
-            onNavigate(SettingsPage.LAYOUT)
         })
     }
     FontSections(settings)

@@ -14,6 +14,7 @@ keystore/
 *.keystore
 
 # файлы ИИ-ассистентов — только локально, не в репозиторий
+CODEX.md
 CLAUDE.md
 CLAUDE.local.md
 AGENTS.md

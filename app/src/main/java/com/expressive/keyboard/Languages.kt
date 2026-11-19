@@ -4,6 +4,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.max
 import kotlin.math.min
@@ -112,6 +113,11 @@ object Languages {
     )
 
     private val QWERTY = listOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
+    private val ARABIC_ROWS = listOf(
+        "ض ص ث ق ف غ ع ه خ ح ج د",
+        "ش س ي ب ل ا ت ن م ك ط",
+        "ئ ء ؤ ر لا ى ة و ز ظ"
+    )
 
     /** Амхарский и тигринья: на латинской клавише мелко — её слог (удержанием вставляется сразу). */
     private const val ETHIOPIC_ACCENTS = "hህሕ lል mም rር sስሽጽ xሽ qቅ bብ vቭ tትጥ cችጭ nንኝ kክ wው zዝዥ yይ dድ jጅ gግ fፍ pፕጵ aአ uኡ iኢ eእኤ oኦ"
@@ -212,8 +218,13 @@ object Languages {
         L("he", "HE", "עברית", "Иврит", "he-IL", listOf("קראטוןםפ", "שדגכעיחלךף", "זסבהנמצתץ"), dict = "he", hasCase = false, rtl = true),
         L(
             "ar", "AR", "العربية", "Арабский", "ar-SA",
-            listOf("ض ص ث ق ف غ ع ه خ ح ج د", "ش س ي ب ل ا ت ن م ك ط", "ئ ء ؤ ر لا ى ة و ز ظ"),
+            ARABIC_ROWS,
             "اأإآ يى هة وؤ", dict = "ar", hasCase = false, rtl = true
+        ),
+        L(
+            "ar-eg", "EG", "العربية (مصر)", "Арабский (Египет)", "ar-EG", ARABIC_ROWS,
+            "اأإآ يى هة وؤ ًَ ٌُ ٍِ", shift = "ضَ صً ثُ قٌ فِ غٍ عْ هّ خـ اٱ يئ",
+            dict = "ar", hasCase = false, rtl = true
         ),
         L(
             "fa", "FA", "فارسی", "Персидский", "fa-IR",
@@ -484,8 +495,9 @@ object Languages {
     /** Код языка → ряды своей раскладки (настройка "lang_layouts"). */
     @Volatile var userRows: Map<String, List<List<String>>> = emptyMap()
         private set
-    private val userCache = java.util.concurrent.ConcurrentHashMap<String, KeyboardLanguage>()
+    private val userCache = HashMap<String, Pair<KeyboardLanguage, KeyboardLanguage>>()
 
+    @Synchronized
     fun applyUserLayouts(raw: String) {
         if (raw == userRaw) return
         userRows = parseUserLayouts(raw)
@@ -496,23 +508,50 @@ object Languages {
     fun parseUserLayouts(raw: String): Map<String, List<List<String>>> = runCatching {
         if (raw.isBlank()) return emptyMap()
         val o = JSONObject(raw)
-        o.keys().asSequence().associateWith { k ->
-            val a = o.getJSONArray(k)
-            (0 until a.length()).map { r(a.getString(it).trim()) }.filter { it.isNotEmpty() }
-        }.filterValues { it.isNotEmpty() }
+        o.keys().asSequence().mapNotNull { id ->
+            val saved = o.optJSONArray(id) ?: return@mapNotNull null
+            val rows = (0 until saved.length()).mapNotNull { index ->
+                when (val row = saved.opt(index)) {
+                    is JSONArray -> (0 until row.length()).mapNotNull { row.opt(it) as? String }.takeIf { keys -> keys.none { it.isBlank() } }
+                    is String -> parseRowText(row)
+                    else -> null
+                }?.takeIf { it.isNotEmpty() }
+            }
+            if (rows.size in 1..5 && rows.all { it.size <= 14 }) id to rows else null
+        }.toMap()
     }.getOrDefault(emptyMap())
 
     /** Язык со своей раскладкой, если она задана; иначе он сам. */
+    @Synchronized
     fun withUser(lang: KeyboardLanguage): KeyboardLanguage {
-        val base = if (lang.customLayout) original(lang.id) ?: lang else lang
+        val base = original(lang.id) ?: lang
         val rows = userRows[base.id] ?: return base
-        return userCache.getOrPut(base.id) { base.withRows(rows) }
+        val cached = userCache[base.id]
+        if (cached?.first === base) return cached.second
+        return base.withRows(rows).also { userCache[base.id] = base to it }
     }
 
-    /** Ряд текстом: «qwerty» — по символу, «sh ch q» (с пробелами) — по клавишам. */
-    fun rowToText(row: List<String>): String = if (row.all { it.length == 1 }) row.joinToString("") else row.joinToString(" ")
+    /** «qwerty» — по символу, «sh ch q» — по клавишам, ["sh"] — одна клавиша. */
+    fun rowToText(row: List<String>): String {
+        val spaced = row.joinToString(" ")
+        val compact = row.joinToString("")
+        return when {
+            parseRowText(compact) == row -> compact
+            parseRowText(spaced) == row -> spaced
+            else -> JSONArray(row).toString()
+        }
+    }
 
-    fun parseRowText(text: String): List<String> = r(text.trim())
+    fun parseRowText(text: String): List<String> {
+        val row = text.trim()
+        if (row.startsWith('[') && row.endsWith(']')) {
+            runCatching {
+                val keys = JSONArray(row)
+                (0 until keys.length()).map { keys.get(it) as String }.takeIf { it.none(String::isBlank) }
+            }.getOrNull()?.let { return it }
+        }
+        return if (row.any(Char::isWhitespace)) row.split(Regex("\\s+")).filter { it.isNotBlank() } else r(row)
+    }
 
     /** Готовые раскладки: известные латинские и кириллические и раскладки всех языков. */
     val presets: List<Pair<String, List<String>>> by lazy {

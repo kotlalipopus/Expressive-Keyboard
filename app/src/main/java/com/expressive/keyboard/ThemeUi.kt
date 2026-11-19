@@ -385,11 +385,12 @@ internal fun ThemesPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -
 
     // настройки выбранной темы
     val current = PluginRepository.skinPlugin(settings)
+    val currentPalette = rememberKeyPalette(settings)
     if (current?.skin != null) ThemeOptionsSections(current, settings, dark)
 
     SettingsSection("Свои темы") {
         ActionItem(Icons.Rounded.Brush, "Создать тему на основе текущей", "Меняйте всё: фон, каждую группу клавиш, форму, тени, шрифт, подсказки", onClick = {
-            ThemeEditor.start(ThemeEditor.draftFrom(context, current, settings))
+            ThemeEditor.start(ThemeEditor.draftFrom(current, settings, currentPalette, dark), ThemeEditor.copyOptions(current, settings))
             onNavigate(SettingsPage.THEME_EDITOR)
         })
         ActionItem(Icons.Rounded.AddCircleOutline, "Создать тему с нуля", "Простая светлая и тёмная основа", onClick = {
@@ -497,11 +498,13 @@ object ThemeEditor {
     var editDark by mutableStateOf(false)
     /** Выбранная группа клавиш: "*", "letter", "func", "enter", "key:а"… */
     var group by mutableStateOf("*")
+    private var draftOptions = emptyMap<String, Any>()
 
-    fun start(o: JSONObject) {
+    fun start(o: JSONObject, options: Map<String, Any> = emptyMap()) {
         json = o.toString()
         editDark = false
         group = "*"
+        draftOptions = options
     }
 
     fun root(): JSONObject = runCatching { JSONObject(json) }.getOrDefault(JSONObject())
@@ -526,6 +529,8 @@ object ThemeEditor {
     fun inherited(path: List<String>, field: String): Any? =
         if (editDark) target(root(), path, false, dark = false)?.opt(field)?.takeIf { it != JSONObject.NULL } else null
 
+    fun effective(path: List<String>, field: String): Any? = get(path, field) ?: inherited(path, field)
+
     fun set(path: List<String>, field: String, value: Any?) = update { o ->
         val t = target(o, path, true)!!
         if (value == null) t.remove(field) else t.put(field, value)
@@ -533,6 +538,14 @@ object ThemeEditor {
 
     fun skin(): KeyboardSkin? = runCatching { SkinParser.parse(root().getJSONObject("skin")) }.getOrNull()
     fun error(): String? = runCatching { SkinParser.parse(root().getJSONObject("skin")); null }.getOrElse { it.message ?: "ошибка" }
+
+    fun preview(settings: KeyboardSettings): KeyboardSkin? = runCatching {
+        val plugin = PluginParser.parse(json, false)
+        plugin.skin?.let {
+            val options = ThemeOptions.values(settings, plugin.id) + draftOptions
+            ThemeOptions.build(plugin, it, options, settings, editDark)
+        }
+    }.getOrElse { skin()?.forMode(editDark) }
 
     fun blank(): JSONObject = JSONObject(
         """{"id":"user.theme.${System.currentTimeMillis()}","name":"${tr("Моя тема")}","version":"1.0","author":"","description":"","icon":"🎨",
@@ -546,8 +559,28 @@ object ThemeEditor {
     )
 
     /** Копия темы, со всеми выбранными в её настройках вариантами. */
-    fun draftFrom(context: Context, p: KeyboardPlugin?, settings: KeyboardSettings): JSONObject {
-        if (p?.skinJson == null) return blank()
+    fun draftFrom(p: KeyboardPlugin?, settings: KeyboardSettings, palette: KeyPalette, dark: Boolean): JSONObject {
+        if (p?.skinJson == null) return blank().also { draft ->
+            target(draft, listOf("colors"), true, dark)?.apply {
+                put("background", colorString(palette.background.toArgb()))
+                put("key", colorString(palette.letter.toArgb()))
+                put("keyText", colorString(palette.onLetter.toArgb()))
+                put("func", colorString(palette.func.toArgb()))
+                put("funcText", colorString(palette.onFunc.toArgb()))
+                put("accent", colorString(palette.accent.toArgb()))
+                put("accentText", colorString(palette.onAccent.toArgb()))
+            }
+            val selectedSkin = target(draft, emptyList(), true, dark)
+            selectedSkin?.remove("keys")
+            target(draft, listOf("keyboard"), true, dark)?.put("background", colorString(palette.background.toArgb()))
+            if (dark) {
+                // Keep the light styles from imposing their colors on a dark palette.
+                val keys = target(draft, listOf("keys"), true, dark)!!
+                keys.put("*", JSONObject().put("background", colorString(palette.letter.toArgb())).put("text", colorString(palette.onLetter.toArgb())))
+                keys.put("func", JSONObject().put("background", colorString(palette.func.toArgb())))
+                keys.put("enter", JSONObject().put("background", colorString(palette.accent.toArgb())).put("text", colorString(palette.onAccent.toArgb())))
+            }
+        }
         var skin = JSONObject(p.skinJson)
         val values = ThemeOptions.values(settings, p.id)
         for (opt in ThemeOptions.declared(p.skinJson)) {
@@ -559,14 +592,30 @@ object ThemeEditor {
             } ?: continue
             skin = ThemeOptions.merge(skin, patch)
         }
-        skin.remove("options")
-        val own = !p.builtIn
+        val sliders = skin.optJSONArray("options")
+        if (sliders != null) {
+            val kept = JSONArray()
+            for (i in 0 until sliders.length()) {
+                val option = sliders.optJSONObject(i) ?: continue
+                if (option.optString("type") !in setOf("choice", "toggle")) {
+                    values[option.optString("id")]?.let { option.put("default", it) }
+                    kept.put(option)
+                }
+            }
+            skin.put("options", kept)
+        }
         return JSONObject()
-            .put("id", if (own) p.id else "user.theme.${System.currentTimeMillis()}")
-            .put("name", if (own) p.name else tr("{0} — моя", p.name))
+            .put("id", "user.theme.${System.currentTimeMillis()}")
+            .put("name", tr("{0} — моя", p.name).take(40))
             .put("version", "1.0").put("author", "").put("description", p.description)
             .put("icon", p.icon.takeIf { !it.startsWith("data:") } ?: "🎨")
             .put("skin", skin)
+    }
+
+    fun copyOptions(p: KeyboardPlugin?, settings: KeyboardSettings): Map<String, Any> {
+        val skin = p?.skin ?: return emptyMap()
+        val ids = ThemeOptions.common(skin).mapTo(HashSet()) { it.id }
+        return ThemeOptions.values(settings, p.id).filterKeys { it in ids }
     }
 
     fun load(context: Context, p: KeyboardPlugin): JSONObject? =
@@ -584,7 +633,15 @@ object ThemeEditor {
         val o = root()
         if (!o.optString("id").startsWith("user.")) o.put("id", "user.theme.${System.currentTimeMillis()}")
         if (o.optString("name").isBlank()) o.put("name", tr("Моя тема"))
-        return PluginRepository.importText(context, o.toString(2)).onSuccess { apply(context, it.id) }
+        return PluginRepository.importText(context, o.toString(2)).onSuccess {
+            if (draftOptions.isNotEmpty()) {
+                val sp = KeyboardPrefs.current(context)
+                val options = runCatching { JSONObject(sp.skinOptions.ifBlank { "{}" }) }.getOrDefault(JSONObject())
+                options.put(it.id, JSONObject(draftOptions))
+                KeyboardPrefs.edit(context) { putString(ThemeOptions.PREF, options.toString()) }
+            }
+            apply(context, it.id)
+        }
     }
 
     fun share(context: Context, p: KeyboardPlugin) {
@@ -617,9 +674,10 @@ internal fun ThemeEditorPage(settings: KeyboardSettings, onNavigate: (SettingsPa
         return
     }
     val root = remember(json) { ThemeEditor.root() }
-    val skin = remember(json, ThemeEditor.editDark) { ThemeEditor.skin()?.forMode(ThemeEditor.editDark) }
+    val skin = remember(json, ThemeEditor.editDark, settings) { ThemeEditor.preview(settings) }
     val error = remember(json) { ThemeEditor.error() }
     var keyInput by remember { mutableStateOf(false) }
+    var section by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("base") }
 
     GroupItem {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -634,7 +692,18 @@ internal fun ThemeEditorPage(settings: KeyboardSettings, onNavigate: (SettingsPa
             )
         }
     }
-    SettingsSection("Основное") {
+    Button(
+        onClick = {
+            ThemeEditor.save(context)
+                .onSuccess {
+                    Toast.makeText(context, tr("Тема «{0}» сохранена и применена", it.name), Toast.LENGTH_SHORT).show()
+                    onNavigate(SettingsPage.THEMES)
+                }
+                .onFailure { Toast.makeText(context, tr("Ошибка: {0}", it.message), Toast.LENGTH_LONG).show() }
+        }, enabled = error == null, modifier = Modifier.fillMaxWidth()
+    ) { Text(tr("Сохранить и применить")) }
+    ButtonGroup(listOf("base" to "Основное", "colors" to "Фон", "keys" to "Клавиши", "panels" to "Панели"), section) { section = it }
+    if (section == "base") SettingsSection("Основное") {
         GroupItem {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
@@ -652,26 +721,30 @@ internal fun ThemeEditorPage(settings: KeyboardSettings, onNavigate: (SettingsPa
         EColor(listOf("keyboard"), "trail", "След свайп-набора")
         EColor(listOf("keyboard"), "edge", "Контур по верхнему краю")
     }
-    SettingsSection("Фон") {
+    if (section == "colors") SettingsSection("Фон") {
         EFill(listOf("keyboard"), "background", "Фон клавиатуры")
         EToggleNum(listOf("keyboard"), "windowBlur", "Размытие приложения под клавиатурой", 32.0)
-        if (ThemeEditor.get(listOf("keyboard"), "windowBlur") != null) {
+        if (ThemeEditor.effective(listOf("keyboard"), "windowBlur") != null) {
             ESlider(listOf("keyboard"), "windowBlur", "Сила размытия", 4f..100f, "dp")
             EColor(listOf("keyboard"), "blurTint", "Дымка поверх размытия")
         }
     }
-    SettingsSection("Цвета темы") {
+    if (section == "colors") SettingsSection("Цвета темы") {
         listOf(
             "background" to "Фон (для панелей)", "key" to "Клавиши", "keyText" to "Текст клавиш", "func" to "Служебные клавиши",
             "funcText" to "Текст служебных", "accent" to "Акцент", "accentText" to "Текст на акценте"
         ).forEach { (k, t) -> EColor(listOf("colors"), k, t) }
     }
-    SettingsSection("Клавиши") {
+    if (section == "keys") SettingsSection("Клавиши") {
         GroupItem {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(tr("Что настраиваем: сначала «Все клавиши», потом отличия групп"), style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    val own = (root.optJSONObject("skin")?.optJSONObject("keys")?.keys()?.asSequence()?.filter { it.startsWith("key:") }?.toList() ?: emptyList())
+                    val light = ThemeEditor.target(root, listOf("keys"), false, dark = false)
+                    val dark = ThemeEditor.target(root, listOf("keys"), false, dark = true)
+                    val own = listOfNotNull(light, dark).flatMap {
+                        it.keys().asSequence().filter { key -> key.startsWith("key:") }.toList()
+                    }.distinct()
                     (GROUPS + own.map { it to it.removePrefix("key:") }).forEach { (id, title) ->
                         FilterChip(selected = ThemeEditor.group == id, onClick = { ThemeEditor.group = id }, label = { Text(tr(title)) })
                     }
@@ -681,25 +754,15 @@ internal fun ThemeEditorPage(settings: KeyboardSettings, onNavigate: (SettingsPa
         }
         StyleEditor(listOf("keys", ThemeEditor.group), full = true)
     }
-    SettingsSection("Подсказка над клавишей") { StyleEditor(listOf("popup"), full = false) }
-    SettingsSection("Подсказки слов") { StyleEditor(listOf("chips"), full = false) }
-    SettingsSection("Круглые кнопки сверху") { StyleEditor(listOf("buttons"), full = false) }
-    SettingsSection("Панели (эмодзи, буфер, переводчик)") { StyleEditor(listOf("panel"), full = false) }
+    if (section == "panels") {
+        SettingsSection("Подсказка над клавишей") { StyleEditor(listOf("popup"), full = false) }
+        SettingsSection("Подсказки слов") { StyleEditor(listOf("chips"), full = false) }
+        SettingsSection("Круглые кнопки сверху") { StyleEditor(listOf("buttons"), full = false) }
+        SettingsSection("Панели (эмодзи, буфер, переводчик)") { StyleEditor(listOf("panel"), full = false) }
+    }
     SettingsSection(null) {
         GroupItem {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = {
-                    ThemeEditor.save(context)
-                        .onSuccess {
-                            Toast.makeText(context, tr("Тема «{0}» сохранена и применена", it.name), Toast.LENGTH_SHORT).show()
-                            onNavigate(SettingsPage.THEMES)
-                        }
-                        .onFailure { Toast.makeText(context, tr("Ошибка: {0}", it.message), Toast.LENGTH_LONG).show() }
-                }, enabled = error == null, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Rounded.Check, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(tr("Сохранить и применить"))
-                }
                 OutlinedButton(onClick = { ThemeEditor.shareText(context, root.toString(2), root.optString("name")) }, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Rounded.Share, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
@@ -714,7 +777,7 @@ internal fun ThemeEditorPage(settings: KeyboardSettings, onNavigate: (SettingsPa
             keyInput = false
             val k = t.trim().lowercase().take(4)
             if (k.isNotEmpty()) {
-                ThemeEditor.update { o -> ThemeEditor.target(o, listOf("keys", "key:$k"), true, dark = false) }
+                ThemeEditor.update { o -> ThemeEditor.target(o, listOf("keys", "key:$k"), true) }
                 ThemeEditor.group = "key:$k"
             }
         }
@@ -830,7 +893,8 @@ private fun ColorSwatch(argb: Int?) {
 @Composable
 private fun EFill(path: List<String>, field: String, title: String) {
     val cs = MaterialTheme.colorScheme
-    val v = ThemeEditor.get(path, field)
+    val own = ThemeEditor.get(path, field)
+    val v = own ?: ThemeEditor.inherited(path, field)
     val obj = v as? JSONObject
     val kind = when {
         v == null -> ""
@@ -867,6 +931,9 @@ private fun EFill(path: List<String>, field: String, title: String) {
             ButtonGroup(listOf("" to "Нет", "solid" to "Цвет", "gradient" to "Градиент", "pattern" to "Узор"), kind) { k ->
                 val base = colors.ifEmpty { listOf(0xFFFFFFFF.toInt()) }
                 write(k, if (k == "solid") base.take(1) else if (base.size < 2) base + base.first() else base)
+            }
+            if (own != null && ThemeEditor.editDark) {
+                TextButton(onClick = { ThemeEditor.set(path, field, null) }) { Text(tr("Как в светлой версии")) }
             }
             if (kind.isNotEmpty()) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -934,7 +1001,7 @@ private fun ESlider(path: List<String>, field: String, title: String, range: Clo
                 if (own != null) IconButton(onClick = { ThemeEditor.set(path, field, null) }) { Icon(Icons.Rounded.Close, tr("Сбросить"), Modifier.size(18.dp)) }
                 else Spacer(Modifier.width(12.dp))
             }
-            var local by remember(shown) { mutableFloatStateOf(shown ?: range.start) }
+            var local by remember(path, field, ThemeEditor.editDark, shown) { mutableFloatStateOf(shown ?: range.start) }
             Slider(
                 value = local.coerceIn(range.start, range.endInclusive),
                 onValueChange = { local = it },

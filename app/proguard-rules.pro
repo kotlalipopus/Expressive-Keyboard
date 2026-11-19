@@ -11,6 +11,10 @@
 # Rhino (JavaScript модов): классы ищутся по имени через рефлексию
 -keep class !org.mozilla.javascript.tools.**, org.mozilla.javascript.** { *; }
 -dontwarn org.mozilla.javascript.**
+-keep class com.expressive.keyboard.QuickJsPluginRuntime {
+    native <methods>;
+    byte[] dispatchHost(int, byte[]);
+}
 -dontwarn java.beans.**
 -dontwarn javax.lang.model.**
 -dontwarn jdk.dynalink.**

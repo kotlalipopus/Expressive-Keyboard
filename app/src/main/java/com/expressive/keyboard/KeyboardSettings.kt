@@ -175,6 +175,9 @@ data class KeyboardSettings(
     val strongSpecialKeys: Boolean = true,
     val soundEnabled: Boolean = false,
     val longPressMs: Float = 320f,
+    val enterHoldSend: Boolean = true,
+    val enterHoldMs: Float = 550f,
+    val flickSensitivity: Float = 0.5f,
     val fontStyle: String = "ROUNDED",
     val customFontName: String = "",
     val customFontVersion: Long = 0L,
@@ -199,6 +202,7 @@ data class KeyboardSettings(
     // --- фон ---
     val bgImageVersion: Long = 0L,
     val bgDim: Float = 0.35f,
+    val photoFrame: PhotoFrame = PhotoFrame(),
     val bgBlurDp: Float = 0f,
     // --- клавиши ---
     val keyLabelScale: Float = 1f,
@@ -211,6 +215,7 @@ data class KeyboardSettings(
     val floating: Boolean = false,
     /** Ширина плавающей клавиатуры — доля ширины экрана. */
     val floatWidth: Float = 0.8f,
+    val floatKeyHeightDp: Float = 46f,
     /** Где стоит плавающая клавиатура: доли свободного места по горизонтали и снизу вверх. */
     val floatX: Float = 0.5f,
     val floatY: Float = 0.15f,
@@ -227,6 +232,7 @@ data class KeyboardSettings(
     /** Бирманский: ေ и ြ набираются перед согласной, как на экране, а в поле попадают в порядке Unicode. */
     val myanmarVisual: Boolean = true,
     val showSuggestions: Boolean = true,
+    val inlineCalculator: Boolean = true,
     val showMicButton: Boolean = true,
     /** Что делает правая кнопка верхней панели: VOICE (микрофон), EMOJI, CLIPBOARD, TRANSLATE, GIF, UNDO, HIDE. */
     val micAction: String = "VOICE",
@@ -350,7 +356,7 @@ data class KeyboardSettings(
     val landscapeSplit: Boolean = true,
     /** Размер клавиатуры в альбомной: 1 — как подобрано под экран. */
     val landscapeScale: Float = 1f,
-    /** Свои раскладки языков: JSON { "код языка": ["ряд", "ряд", …] }. */
+    /** Свои раскладки языков: JSON { "код языка": [["клавиша", …], …] }. */
     val langLayouts: String = "",
     val translateTarget: String = "en",
     // --- панель инструментов ---
@@ -453,6 +459,10 @@ object KeyboardPrefs {
         if (listener != null) return
         val sp = prefs(context)
         SecretBox.migrate(sp)
+        if (!sp.contains("float_key_height_dp") && sp.contains("key_height_dp")) {
+            val previousHeight = runCatching { sp.getFloat("key_height_dp", 54f) }.getOrDefault(54f)
+            sp.edit().putFloat("float_key_height_dp", (previousHeight * 0.86f).coerceIn(28f, 68f)).apply()
+        }
         state.value = read(sp)
         I18n.apply(state.value.appLanguage)
         val l = SharedPreferences.OnSharedPreferenceChangeListener { p, _ ->
@@ -526,6 +536,9 @@ object KeyboardPrefs {
             strongSpecialKeys = p.getBoolean("strong_special_keys", true),
             soundEnabled = p.getBoolean("sound_enabled", false),
             longPressMs = p.getFloat("long_press_ms", 320f).coerceIn(180f, 700f),
+            enterHoldSend = p.getBoolean("enter_hold_send", true),
+            enterHoldMs = p.getFloat("enter_hold_ms", 550f).coerceIn(300f, 1500f),
+            flickSensitivity = p.getFloat("flick_sensitivity", 0.5f).coerceIn(0f, 1f),
             fontStyle = if (font == null || font == "DEFAULT") "ROUNDED" else font,
             customFontName = p.getString("custom_font_name", "") ?: "",
             customFontVersion = p.getLong("custom_font_version", 0L),
@@ -543,6 +556,14 @@ object KeyboardPrefs {
             bgTransparency = p.getFloat("bg_transparency", 0f).coerceIn(0f, 1f),
             bgImageVersion = p.getLong("bg_image_version", 0L),
             bgDim = p.getFloat("bg_dim", 0.35f).coerceIn(0f, 0.9f),
+            photoFrame = PhotoFrame(
+                mode = PhotoFit.entries.firstOrNull { it.name == p.getString("photo_fit", "COVER") } ?: PhotoFit.COVER,
+                zoom = p.getFloat("photo_zoom", 1f).coerceIn(0.5f, 3f),
+                width = p.getFloat("photo_width", 1f).coerceIn(0.5f, 2f),
+                height = p.getFloat("photo_height", 1f).coerceIn(0.5f, 2f),
+                x = p.getFloat("photo_x", 0f).coerceIn(-1f, 1f),
+                y = p.getFloat("photo_y", 0f).coerceIn(-1f, 1f)
+            ),
             bgBlurDp = p.getFloat("bg_blur_dp", 0f).coerceIn(0f, 24f),
             keyLabelScale = p.getFloat("key_label_scale", 1f).coerceIn(0.7f, 1.4f),
             fontWeight = p.getInt("font_weight", 700).coerceIn(300, 900),
@@ -552,6 +573,7 @@ object KeyboardPrefs {
             oneHandedWidth = p.getFloat("one_handed_w", 0.7f).coerceIn(0.55f, 0.9f),
             floating = p.getBoolean("floating_keyboard", false),
             floatWidth = p.getFloat("float_width", 0.8f).coerceIn(0.5f, 1f),
+            floatKeyHeightDp = p.getFloat("float_key_height_dp", 46f).coerceIn(28f, 68f),
             floatX = p.getFloat("float_x", 0.5f).coerceIn(0f, 1f),
             floatY = p.getFloat("float_y", 0.15f).coerceIn(0f, 1f),
             keyboardWidth = p.getFloat("keyboard_width", 1f).coerceIn(0.5f, 1f),
@@ -561,6 +583,7 @@ object KeyboardPrefs {
             glassMerge = p.getBoolean("glass_merge", false),
             myanmarVisual = p.getBoolean("myanmar_visual", true),
             showSuggestions = p.getBoolean("show_suggestions", true),
+            inlineCalculator = p.getBoolean("inline_calculator", true),
             showMicButton = p.getBoolean("show_mic_button", true),
             micAction = p.getString("mic_action", "VOICE") ?: "VOICE",
             popupStyle = p.getString("popup_style", "SHAPE") ?: "SHAPE",
@@ -679,8 +702,9 @@ object KeyboardPrefs {
     val KEY_TYPES: Map<String, Char> = buildMap {
         listOf(
             "key_height_dp", "header_height_dp", "landscape_scale", "corner_radius_dp", "key_spacing_dp", "row_spacing_dp", "bottom_offset_dp",
-            "wave_amplitude_percent", "vibration_ms", "vibration_amplitude", "long_press_ms", "key_opacity", "bg_transparency", "bg_dim",
-            "bg_blur_dp", "window_blur_dp", "key_label_scale", "side_padding_dp", "one_handed_w", "float_width", "enter_width", "number_row_scale", "press_animation", "sound_volume", "anim_speed"
+            "wave_amplitude_percent", "vibration_ms", "vibration_amplitude", "long_press_ms", "enter_hold_ms", "key_opacity", "bg_transparency", "bg_dim",
+            "photo_zoom", "photo_width", "photo_height", "photo_x", "photo_y",
+            "bg_blur_dp", "window_blur_dp", "key_label_scale", "side_padding_dp", "one_handed_w", "float_width", "float_key_height_dp", "flick_sensitivity", "enter_width", "number_row_scale", "press_animation", "sound_volume", "anim_speed"
         ).forEach { put(it, 'f') }
         listOf(
             "wave_count", "seed_color", "color_background", "color_key", "color_key_text", "color_func",
@@ -689,13 +713,13 @@ object KeyboardPrefs {
         listOf(
             "show_number_row", "show_key_borders", "key_preview", "key_background", "emoji_return_keyboard", "auto_capitalize", "auto_correct_enabled",
             "double_space_period", "haptics_enabled", "vibrate_on_release", "strong_special_keys", "sound_enabled",
-            "show_hints", "show_header", "number_pad", "floating_keyboard", "liquid_glass", "glass_merge", "myanmar_visual", "show_suggestions", "show_mic_button", "suggestions_full_width", "show_emoji_key", "show_globe_key", "panel_animations",
+            "show_hints", "show_header", "number_pad", "floating_keyboard", "liquid_glass", "glass_merge", "myanmar_visual", "show_suggestions", "inline_calculator", "enter_hold_send", "show_mic_button", "suggestions_full_width", "show_emoji_key", "show_globe_key", "panel_animations",
             "backspace_swipe", "swipe_down_hide", "clipboard_history", "instant_input", "glide_typing", "glide_trail", "swipe_up_hint",
             "space_long_press", "auto_pair", "incognito", "dict_auto_download", "punctuation_keys", "smart_punctuation",
             "system_spellcheck", "edit_bar", "auto_space_punct", "eco_mode", "eco_press", "eco_panels", "eco_blur", "eco_trail", "eco_preview", "eco_haptics", "eco_sound", "eco_suggestions", "dash_merge", "clip_screenshots", "correct_everywhere", "dynamic_zones", "ai_voice_cleanup", "tools_button", "pinned_tools", "landscape_split"
         ).forEach { put(it, 'b') }
         listOf(
-            "theme_mode", "accent_shape_preset", "haptic_mode", "font_style", "color_source", "one_handed", "space_swipe",
+            "theme_mode", "accent_shape_preset", "haptic_mode", "font_style", "color_source", "one_handed", "space_swipe", "photo_fit",
             "eco_when", "globe_long_press", "tools_long_press", "window_blur", "hold_mode", "ai_provider", "space_long_action", "languages", "auto_correct_strength", "translate_target", "gemini_model", "anthropic_model", "openai_model", "groq_model", "openrouter_model", "toolbar_order", "toolbar_hidden", "user_layouts",
             "space_left_key", "space_right_key", "mic_action", "popup_style", "key_variants", "sound_style", "emoji_style", "clipboard_keep", "app_language", "design_style", "shape_amount", "skin_options", "anim_press", "anim_popup", "anim_panel", "custom_anims", "lang_layouts"
         ).forEach { put(it, 's') }

@@ -148,7 +148,7 @@ import kotlin.math.sqrt
 // ============================================================================
 
 /** Что сейчас в строке над клавиатурой. */
-internal enum class HeaderMode { TOOLS, CANDIDATES, INLINE, OFFER, SUGGESTIONS }
+internal enum class HeaderMode { TOOLS, CANDIDATES, INLINE, OFFER, CALCULATION, SUGGESTIONS }
 
 @Composable
 internal fun HeaderBar(
@@ -233,6 +233,7 @@ internal fun HeaderBar(
             contentAlignment = Alignment.Center
         ) {
             val mode = when {
+                panel == ActivePanel.KEYBOARD && !state.toolbarOpen && settings.inlineCalculator && state.calculation != null -> HeaderMode.CALCULATION
                 tools -> HeaderMode.TOOLS
                 showCandidates -> HeaderMode.CANDIDATES
                 inline != null -> HeaderMode.INLINE
@@ -247,7 +248,10 @@ internal fun HeaderBar(
                     HeaderMode.CANDIDATES -> CandidateStrip(candidates, actions, palette, font)
                     HeaderMode.INLINE -> inline?.let { InlineSuggestionStrip(it) }
                     HeaderMode.OFFER -> state.clipOffer?.let { ClipOfferStrip(it, actions, palette, font, secret = state.clipOfferSecret) }
-                    HeaderMode.SUGGESTIONS -> SuggestionStrip(state, actions, palette, font)
+                    HeaderMode.CALCULATION -> state.calculation?.let {
+                        SuggestionStrip(listOf(SuggestionChipModel.EMPTY, it, SuggestionChipModel.EMPTY), actions, palette, font)
+                    }
+                    HeaderMode.SUGGESTIONS -> SuggestionStrip(state.suggestions, actions, palette, font)
                 }
             }
             if (settings.panelAnimations && mode != HeaderMode.INLINE) {
@@ -272,6 +276,7 @@ internal fun HeaderBar(
                 "GIF" -> { { actions.togglePanel(ActivePanel.GIF) } }
                 "UNDO" -> { { actions.editKey("undo") } }
                 "HIDE" -> { { actions.hideKeyboard() } }
+                "LANG" -> { { actions.switchLanguage() } }
                 else -> { { actions.togglePanel(ActivePanel.VOICE) } }
             }
             // удержание — Rambler: диктовка без спешки, ИИ убирает «э-э», повторы и оговорки (у микрофона);
@@ -284,11 +289,15 @@ internal fun HeaderBar(
                 "GIF" -> Icons.Rounded.Gif
                 "UNDO" -> Icons.AutoMirrored.Rounded.Undo
                 "HIDE" -> Icons.Rounded.KeyboardHide
+                "LANG" -> Icons.Rounded.Language
                 else -> Icons.Outlined.Mic
             }
             val mic: @Composable BoxScope.() -> Unit = {
-                if (act == "VOICE") SlotIcon("mic", btnFg, 22.dp) { Icon(micIcon, null, tint = btnFg, modifier = Modifier.size(22.dp)) }
-                else Icon(micIcon, null, tint = btnFg, modifier = Modifier.size(22.dp))
+                when (act) {
+                    "VOICE" -> SlotIcon("mic", btnFg, 22.dp) { Icon(micIcon, null, tint = btnFg, modifier = Modifier.size(22.dp)) }
+                    "LANG" -> SlotIcon("globe", btnFg, 22.dp) { Icon(micIcon, null, tint = btnFg, modifier = Modifier.size(22.dp)) }
+                    else -> Icon(micIcon, null, tint = btnFg, modifier = Modifier.size(22.dp))
+                }
             }
             if (skinButtons != null) SkinButton(skinButtons, palette, button, onMic, onRambler, mic)
             else CookieButton(spec, palette.accent, button, onMic, onRambler, mic)
@@ -297,8 +306,7 @@ internal fun HeaderBar(
 }
 
 @Composable
-internal fun SuggestionStrip(state: KeyboardState, actions: KeyboardActions, palette: KeyPalette, font: FontFamily) {
-    val chips = state.suggestions
+internal fun SuggestionStrip(chips: List<SuggestionChipModel>, actions: KeyboardActions, palette: KeyPalette, font: FontFamily) {
     val skin = LocalSkin.current
     if (skin?.plainChips == true) {
         val plainFg = skin.chips?.text ?: palette.onLetter

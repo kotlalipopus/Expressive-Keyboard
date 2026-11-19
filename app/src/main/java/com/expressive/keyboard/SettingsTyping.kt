@@ -167,10 +167,37 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
             }
         }
     }
-    if (part == SettingsPage.GESTURES) SettingsSection("Удобства") {
+    if (part == SettingsPage.GESTURES) SettingsSection("Жесты на клавишах") {
         ToggleItem(Icons.Rounded.North, "Свайп вверх по клавише", "Вводит маленький символ-подсказку без удержания", settings.swipeUpHint) {
             KeyboardPrefs.edit(context) { putBoolean("swipe_up_hint", it) }
         }
+        SliderItem(
+            icon = Icons.Rounded.TouchApp, title = "Чувствительность свайпа по клавише",
+            value = settings.flickSensitivity, range = 0f..1f,
+            format = { "${(it * 100).roundToInt()}%" },
+            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("flick_sensitivity", v) } }
+        )
+        SliderItem(
+            icon = Icons.Rounded.Timer, title = "Задержка удержания",
+            value = settings.longPressMs, range = 180f..700f,
+            format = { "${it.roundToInt()} " + tr("мс") },
+            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("long_press_ms", v) } }
+        )
+        ToggleItem(Icons.AutoMirrored.Rounded.Backspace, "Свайп влево по ⌫", "Удаляет целые слова", settings.backspaceSwipe) {
+            KeyboardPrefs.edit(context) { putBoolean("backspace_swipe", it) }
+        }
+    }
+    if (part == SettingsPage.GESTURES) SettingsSection("Пробел") {
+        ChoiceItem(
+            Icons.Rounded.Swipe, "Свайп по пробелу",
+            when (settings.spaceSwipe) {
+                "CURSOR" -> "Ведите палец по пробелу — курсор двигается"
+                "LANGUAGE" -> "Свайп меняет язык"
+                "BOTH" -> "Быстрый свайп меняет язык, задержите палец и ведите — курсор"
+                else -> "Жест выключен"
+            },
+            listOf("CURSOR" to "Курсор", "LANGUAGE" to "Язык", "BOTH" to "Оба", "OFF" to "Выкл"), settings.spaceSwipe
+        ) { v -> KeyboardPrefs.edit(context) { putString("space_swipe", v) } }
         val spaceActions = listOf(
             "PICKER" to "Выбор клавиатуры", "LANGUAGE" to "Смена языка", "AI_FIX" to "Улучшить текст", "VOICE" to "Голосовой ввод", "EMOJI" to "Эмодзи",
             "CLIPBOARD" to "Буфер обмена", "TOOLBAR" to "Панель функций", "SETTINGS" to "Настройки", "OFF" to "Ничего"
@@ -185,8 +212,29 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
                 putBoolean("space_long_press", v != "OFF")
             }
         }
+    }
+    if (part == SettingsPage.GESTURES) SettingsSection("Enter") {
+        ToggleItem(Icons.Rounded.Send, "Отправка долгим нажатием Enter",
+            "Если приложение поддерживает IME-действие отправки", settings.enterHoldSend
+        ) { KeyboardPrefs.edit(context) { putBoolean("enter_hold_send", it) } }
+        if (settings.enterHoldSend) SliderItem(
+            icon = Icons.Rounded.Timer, title = "Задержка удержания Enter",
+            value = settings.enterHoldMs, range = 300f..1500f,
+            format = { "${it.roundToInt()} " + tr("мс") },
+            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("enter_hold_ms", v) } }
+        )
+    }
+    if (part == SettingsPage.TYPING) SettingsSection("Калькулятор") {
+        ToggleItem(Icons.Rounded.Calculate, "Ответ после знака «=»",
+            "Например, 199+123= показывает 322. Нажмите на ответ, чтобы вставить его.", settings.inlineCalculator
+        ) { KeyboardPrefs.edit(context) { putBoolean("inline_calculator", it) } }
+    }
+    if (part == SettingsPage.GESTURES) SettingsSection("Удобства") {
         ToggleItem(Icons.Rounded.DataArray, "Парные скобки", "( [ { « сразу закрываются, курсор встаёт внутрь", settings.autoPair) {
             KeyboardPrefs.edit(context) { putBoolean("auto_pair", it) }
+        }
+        ToggleItem(Icons.Rounded.SwipeDown, "Свайп вниз закрывает", "Проведите вниз по строке подсказок — клавиатура скроется", settings.swipeDownHide) {
+            KeyboardPrefs.edit(context) { putBoolean("swipe_down_hide", it) }
         }
     }
     if (part == SettingsPage.TYPING) SettingsSection("Исправление текста ИИ") {
@@ -386,30 +434,6 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
         ToggleItem(Icons.Rounded.VisibilityOff, "Инкогнито", "Не учить новые слова и не запоминать буфер. Кнопка есть и на панели инструментов", settings.incognito) {
             KeyboardPrefs.edit(context) { putBoolean("incognito", it) }
         }
-    }
-    if (part == SettingsPage.GESTURES) SettingsSection("Жесты") {
-        ChoiceItem(
-            Icons.Rounded.Swipe, "Свайп по пробелу",
-            when (settings.spaceSwipe) {
-                "CURSOR" -> "Ведите палец по пробелу — курсор двигается"
-                "LANGUAGE" -> "Свайп меняет язык"
-                "BOTH" -> "Быстрый свайп меняет язык, задержите палец и ведите — курсор"
-                else -> "Жест выключен"
-            },
-            listOf("CURSOR" to "Курсор", "LANGUAGE" to "Язык", "BOTH" to "Оба", "OFF" to "Выкл"), settings.spaceSwipe
-        ) { v -> KeyboardPrefs.edit(context) { putString("space_swipe", v) } }
-        ToggleItem(Icons.Rounded.SwipeDown, "Свайп вниз закрывает", "Проведите вниз по строке подсказок — клавиатура скроется", settings.swipeDownHide) {
-            KeyboardPrefs.edit(context) { putBoolean("swipe_down_hide", it) }
-        }
-        ToggleItem(Icons.AutoMirrored.Rounded.Backspace, "Свайп влево по ⌫", "Удаляет целые слова", settings.backspaceSwipe) {
-            KeyboardPrefs.edit(context) { putBoolean("backspace_swipe", it) }
-        }
-        SliderItem(
-            icon = Icons.Rounded.Timer, title = "Задержка удержания",
-            value = settings.longPressMs, range = 180f..700f,
-            format = { "${it.roundToInt()} " + tr("мс") },
-            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("long_press_ms", v) } }
-        )
     }
     if (part == SettingsPage.CLIPBOARD) SettingsSection("Буфер обмена") {
         ToggleItem(

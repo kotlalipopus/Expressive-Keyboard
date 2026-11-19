@@ -383,6 +383,7 @@ object KeyboardLayouts {
             l == "mn" -> "₮"
             l == "lo" -> "₭"
             l == "km" -> "៛"
+            region == "eg" -> "ج.م"
             l == "pl" || l == "cs" || l == "hu" || l == "ro" || l == "bg" || l == "sv" || l == "da" || l == "no" || l == "nb" -> "€"
             region == "bd" || l == "bn" && region == "bd" -> "৳"
             region == "in" || l in setOf("hi", "mr", "ta", "te", "kn", "ml", "gu", "pa", "or", "as", "ne") -> "₹"
@@ -413,12 +414,16 @@ object KeyboardLayouts {
     )
 
     /** Ряды по языку и его буквам: своя раскладка того же языка — другой ключ. */
-    private val languageRows = java.util.concurrent.ConcurrentHashMap<Pair<String, List<List<String>>>, List<KeyRow>>()
+    private val languageRows = java.util.concurrent.ConcurrentHashMap<KeyboardLanguage, Pair<KeyboardLanguage, List<KeyRow>>>()
 
     private fun lettersFor(lang: KeyboardLanguage): List<KeyRow> = when {
         lang.id == "ru" && lang.fromPlugin == null && !lang.customLayout -> russianLetters
         lang.baseId == "en" && lang.fromPlugin == null && !lang.customLayout -> englishLetters
-        else -> languageRows.getOrPut(lang.id to lang.rows) { Languages.buildRows(lang) }
+        else -> {
+            val cached = languageRows[lang]
+            if (cached?.first === lang) cached.second
+            else Languages.buildRows(lang).also { languageRows[lang] = lang to it }
+        }
     }
 
     fun rows(
@@ -448,7 +453,7 @@ object KeyboardLayouts {
             }
         }
         // свои места клавиш (настройки → «Свои места клавиш»)
-        val order = user[id]
+        val order = user[userLayoutId(lang, page)]
         return when (page) {
             1 -> UserLayouts.apply(custom ?: symbols1For(lang), order, bottom("ABC", lang.spaceLabel, false, globe, emoji, punct, languages))
             2 -> UserLayouts.apply(custom ?: symbols2, order, bottom("ABC", lang.spaceLabel, false, globe, emoji, punct, languages))
@@ -523,6 +528,14 @@ object KeyboardLayouts {
         1 -> "symbols"
         2 -> "symbols2"
         else -> lang.id
+    }
+
+    fun userLayoutId(lang: KeyboardLanguage, page: Int): String {
+        val id = layoutId(lang, page)
+        if (page != 0 || !lang.customLayout) return id
+        return lang.rows.joinToString(prefix = "$id:rows:", separator = ";") { row ->
+            row.joinToString(separator = "") { key -> "${key.length}:$key" }
+        }
     }
 
     /**

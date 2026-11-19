@@ -20,17 +20,13 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import androidx.compose.ui.graphics.toArgb
-import org.mozilla.javascript.BaseFunction
-import org.mozilla.javascript.ContextFactory
 import org.mozilla.javascript.NativeArray
 import org.mozilla.javascript.RhinoException
 import org.mozilla.javascript.Scriptable
-import org.mozilla.javascript.ScriptableObject
 import org.mozilla.javascript.Undefined
 import java.net.HttpURLConnection
 import java.net.URL
 import org.mozilla.javascript.Context as Rhino
-import org.mozilla.javascript.Function as JsFunction
 
 // ============================================================================
 // 14. МОДЫ: JAVASCRIPT-СКРИПТЫ ПЛАГИНОВ
@@ -85,7 +81,11 @@ data class ScriptPanel(val pluginId: String, val id: String, val title: String, 
 
 /** Ссылка на функцию скрипта (обработчик нажатия в панели). */
 @Stable
-class ScriptCall(val pluginId: String, internal val fn: JsFunction)
+class ScriptCall internal constructor(
+    val pluginId: String,
+    internal val fn: PluginScriptFunction,
+    internal val runtime: PluginScriptRuntime
+)
 
 /** Элементы панели, которую рисует скрипт: render() возвращает массив таких объектов. */
 @Immutable
@@ -130,48 +130,12 @@ sealed interface UiNode {
 @Immutable
 data class GridItem(val text: String, val icon: String, val value: Any?)
 
-private class SandboxFactory : ContextFactory() {
-    override fun makeContext(): Rhino = super.makeContext().apply {
-        @Suppress("DEPRECATION")
-        optimizationLevel = -1 // на Android байт-код JVM не загрузить — только интерпретатор
-        languageVersion = Rhino.VERSION_ES6
-        instructionObserverThreshold = 5_000
-        maximumInterpreterStackDepth = 1_000
-        // никаких Java-классов из скрипта
-        setClassShutter { false }
-    }
-
-    override fun observeInstructionCount(cx: Rhino, instructionCount: Int) {
-        val deadline = cx.getThreadLocal(DEADLINE) as? Long ?: return
-        if (SystemClock.uptimeMillis() > deadline) throw ScriptTimeout()
-    }
-
-    companion object {
-        const val DEADLINE = "deadline"
-    }
-}
-
-private class ScriptTimeout : Error("скрипт работает слишком долго и остановлен")
-
-/** Функция kb.* — обычная JS-функция без доступа к Java-объекту за ней. */
-private class Fn(scope: Scriptable, private val fname: String, private val body: (Rhino, Array<Any?>) -> Any?) : BaseFunction() {
-    init {
-        parentScope = scope
-        prototype = getFunctionPrototype(scope)
-    }
-
-    override fun call(cx: Rhino, scope: Scriptable, thisObj: Scriptable?, args: Array<Any?>): Any? =
-        ScriptHost.toJs(cx, parentScope, body(cx, args))
-
-    override fun getFunctionName(): String = fname
-}
-
 private class Mod(val plugin: KeyboardPlugin) {
-    lateinit var scope: ScriptableObject
-    val handlers = HashMap<String, MutableList<JsFunction>>()
-    val commands = HashMap<String, JsFunction>()
-    val buttons = LinkedHashMap<String, Pair<ScriptButton, JsFunction?>>()
-    val panels = LinkedHashMap<String, Pair<ScriptPanel, JsFunction?>>()
+    lateinit var runtime: PluginScriptRuntime
+    val handlers = HashMap<String, MutableList<PluginScriptFunction>>()
+    val commands = HashMap<String, PluginScriptFunction>()
+    val buttons = LinkedHashMap<String, Pair<ScriptButton, PluginScriptFunction?>>()
+    val panels = LinkedHashMap<String, Pair<ScriptPanel, PluginScriptFunction?>>()
     val timers = HashMap<Int, Runnable>()
     /** Таймеры, которые сработали, пока клавиатура скрыта: ждут показа, а не крутят процесс в фоне. */
     val parked = ArrayList<Runnable>()
@@ -203,7 +167,6 @@ private class Mod(val plugin: KeyboardPlugin) {
 }
 
 object ScriptHost {
-    private val factory = SandboxFactory()
     private val main = Handler(Looper.getMainLooper())
     private val io = CoroutineScope(SupervisorJob() + Dispatchers.IO + BackgroundErrors)
     private var mods: Map<String, Mod> = emptyMap()
@@ -255,7 +218,7 @@ object ScriptHost {
         }
 
     // --- поле ввода мода (kb.prompt, элемент input)
-    private class Prompt(val m: Mod, val onSubmit: JsFunction?, val onChange: JsFunction?, val call: ScriptCall?, val change: ScriptCall?)
+    private class Prompt(val m: Mod, val onSubmit: PluginScriptFunction?, val onChange: PluginScriptFunction?, val call: ScriptCall?, val change: ScriptCall?)
     private var prompt: Prompt? = null
     var promptTitle by mutableStateOf("")
         private set
@@ -271,6 +234,14 @@ object ScriptHost {
     /** Обёртки на промисах поверх функций с обратным вызовом: kb.fetch(url).then(...). */
     private val PRELUDE = """
         (function () {
+          var storage = kb.storage;
+          var read = storage.get, write = storage.set;
+          var parse = JSON.parse, stringify = JSON.stringify;
+          storage.get = function (key, fallback) {
+            var raw = read(key);
+            return raw === null ? fallback : parse(raw);
+          };
+          storage.set = function (key, value) { write(key, stringify(value)); };
           function later(fn) { return new Promise(fn); }
           function done(res, rej) { return function (e, r) { if (e) rej(new Error(e)); else res(r); }; }
           kb.fetch = function (url, o) {
@@ -310,30 +281,19 @@ object ScriptHost {
         else -> t.message ?: t.javaClass.simpleName
     }
 
-    private fun <T> exec(m: Mod?, budgetMs: Long, block: (Rhino) -> T): Result<T> {
-        val cx = factory.enterContext()
-        val before = cx.getThreadLocal(SandboxFactory.DEADLINE)
+    private fun <T> exec(m: Mod, budgetMs: Long, block: () -> T): Result<T> {
         return try {
-            cx.putThreadLocal(SandboxFactory.DEADLINE, SystemClock.uptimeMillis() + budgetMs)
-            val r = block(cx)
-            // .then() у промисов выполняется сразу после вызова, в том же бюджете времени
-            cx.processMicrotasks()
-            Result.success(r)
+            Result.success(m.runtime.execute(budgetMs, block))
         } catch (t: Throwable) {
-            if (m != null) {
-                log(m.plugin.id, "✕ " + describe(t))
-                // мод, который трижды подвесил клавиатуру, больше не получает событий и таймеров
-                if (t is ScriptTimeout && ++m.timeouts >= 3 && m.handlers.isNotEmpty()) {
-                    m.handlers.clear()
-                    m.timers.values.forEach(main::removeCallbacks)
-                    m.timers.clear()
-                    log(m.plugin.id, "⏸ " + tr("мод тормозил клавиатуру и отключён до перезапуска"))
-                }
+            log(m.plugin.id, "✕ " + describe(t))
+            // мод, который трижды подвесил клавиатуру, больше не получает событий и таймеров
+            if (t is ScriptTimeout && ++m.timeouts >= 3 && m.handlers.isNotEmpty()) {
+                m.handlers.clear()
+                m.timers.values.forEach(main::removeCallbacks)
+                m.timers.clear()
+                log(m.plugin.id, "⏸ " + tr("мод тормозил клавиатуру и отключён до перезапуска"))
             }
             Result.failure(t)
-        } finally {
-            if (before != null) cx.putThreadLocal(SandboxFactory.DEADLINE, before) else cx.removeThreadLocal(SandboxFactory.DEADLINE)
-            Rhino.exit()
         }
     }
 
@@ -369,11 +329,8 @@ object ScriptHost {
         }
         firstLoad = false
         appContext = context.applicationContext
-        mods.values.forEach { m ->
-            m.timers.values.forEach(main::removeCallbacks)
-            m.players.values.forEach { runCatching { it.release() } }
-            m.players.clear()
-        }
+        mods.values.forEach(::stop)
+        mods = emptyMap()
         if (prompt != null) {
             prompt = null
             bridge?.scriptPrompt(false)
@@ -384,19 +341,34 @@ object ScriptHost {
         for (p in plugins) {
             val src = p.script ?: continue
             val m = Mod(p)
-            next[p.id] = m
             val started = SystemClock.uptimeMillis()
-            exec(m, LOAD_BUDGET_MS) { cx ->
-                m.scope = cx.initSafeStandardObjects()
-                installApi(cx, m)
-                cx.evaluateString(m.scope, PRELUDE, "kb-prelude.js", 1, null)
-                cx.evaluateString(m.scope, src, "${p.id}.js", 1, null)
-            }.onSuccess { log(p.id, "✓ " + tr("загружен за {0} мс", SystemClock.uptimeMillis() - started)) }
+            val runtime = runCatching {
+                when (p.scriptEngine) {
+                    PluginScriptEngine.RHINO -> RhinoPluginRuntime()
+                    PluginScriptEngine.QUICKJS -> QuickJsPluginRuntime(context.assets)
+                }
+            }.onFailure { log(p.id, "✕ " + describe(it)) }.getOrNull() ?: continue
+            m.runtime = runtime
+            exec(m, LOAD_BUDGET_MS) {
+                runtime.load(bindings(m), PRELUDE, src, p.id + ".js")
+            }.onSuccess {
+                next[p.id] = m
+                log(p.id, "✓ " + tr("загружен за {0} мс", SystemClock.uptimeMillis() - started))
+            }.onFailure { stop(m) }
         }
         mods = next
         lastApp = ""
         publish()
         renderTick++
+    }
+
+    private fun stop(m: Mod) {
+        m.timers.values.forEach(main::removeCallbacks)
+        m.timers.clear()
+        m.parked.clear()
+        m.players.values.forEach { runCatching { it.release() } }
+        m.players.clear()
+        m.runtime.close()
     }
 
     private fun publish() {
@@ -532,9 +504,8 @@ object ScriptHost {
                 val perm = EVENT_PERMS[event]
                 if (perm != null && (privateMode || !m.has(perm))) continue
                 for (h in hs.toList()) {
-                    exec(m, CALL_BUDGET_MS) { cx ->
-                        val jsArgs = args.map { toJs(cx, m.scope, it) }.toTypedArray()
-                        fromJs(h.call(cx, m.scope, m.scope, jsArgs))
+                    exec(m, CALL_BUDGET_MS) {
+                        fromJs(m.runtime.call(h, args, readResult = true))
                     }.onSuccess { out += it }
                 }
             }
@@ -566,28 +537,28 @@ object ScriptHost {
     fun runButton(pluginId: String, id: String) {
         val m = mods[pluginId] ?: return
         val fn = m.buttons[id]?.second ?: return
-        exec(m, CALL_BUDGET_MS) { cx -> fn.call(cx, m.scope, m.scope, emptyArray()) }
+        exec(m, CALL_BUDGET_MS) { m.runtime.call(fn, emptyArray()) }
     }
 
     /** Клавиша раскладки с "action": "pluginId/команда". */
     fun runCommand(spec: String): Boolean {
         val m = mods[spec.substringBefore('/')] ?: return false
         val fn = m.commands[spec.substringAfter('/')] ?: return false
-        exec(m, CALL_BUDGET_MS) { cx -> fn.call(cx, m.scope, m.scope, emptyArray()) }
+        exec(m, CALL_BUDGET_MS) { m.runtime.call(fn, emptyArray()) }
         return true
     }
 
     fun invoke(call: ScriptCall, vararg args: Any?) {
-        val m = mods[call.pluginId] ?: return
-        exec(m, CALL_BUDGET_MS) { cx ->
-            call.fn.call(cx, m.scope, m.scope, args.map { toJs(cx, m.scope, it) }.toTypedArray())
+        val m = mods[call.pluginId]?.takeIf { it.runtime === call.runtime } ?: return
+        exec(m, CALL_BUDGET_MS) {
+            m.runtime.call(call.fn, args)
         }
     }
 
     fun render(panel: ScriptPanel): List<UiNode> {
         val m = mods[panel.pluginId] ?: return listOf(UiNode.Error("Плагин выключен"))
         val fn = m.panels[panel.id]?.second ?: return emptyList()
-        return exec(m, CALL_BUDGET_MS) { cx -> parseNodes(m, fn.call(cx, m.scope, m.scope, emptyArray())) }
+        return exec(m, CALL_BUDGET_MS) { parseNodes(m, m.runtime.call(fn, emptyArray(), readResult = true)) }
             .getOrElse { listOf(UiNode.Error(describe(it))) }
     }
 
@@ -612,7 +583,7 @@ object ScriptHost {
         promptText = text
         val p = prompt ?: return
         p.change?.let { invoke(it, text) }
-        p.onChange?.let { fn -> exec(p.m, CALL_BUDGET_MS) { cx -> fn.call(cx, p.m.scope, p.m.scope, arrayOf(text)) } }
+        p.onChange?.let { fn -> exec(p.m, CALL_BUDGET_MS) { p.m.runtime.call(fn, arrayOf(text)) } }
     }
 
     /** ✓ или Enter. true — обработчик сразу открыл следующее поле. */
@@ -621,7 +592,7 @@ object ScriptHost {
         prompt = null
         val text = promptText
         p.call?.let { invoke(it, text) }
-        p.onSubmit?.let { fn -> exec(p.m, CALL_BUDGET_MS) { cx -> fn.call(cx, p.m.scope, p.m.scope, arrayOf(text)) } }
+        p.onSubmit?.let { fn -> exec(p.m, CALL_BUDGET_MS) { p.m.runtime.call(fn, arrayOf(text)) } }
         renderTick++
         return prompt != null
     }
@@ -630,7 +601,7 @@ object ScriptHost {
     fun promptClosed(): Boolean {
         val p = prompt ?: return false
         prompt = null
-        p.onSubmit?.let { fn -> exec(p.m, CALL_BUDGET_MS) { cx -> fn.call(cx, p.m.scope, p.m.scope, arrayOf(null)) } }
+        p.onSubmit?.let { fn -> exec(p.m, CALL_BUDGET_MS) { p.m.runtime.call(fn, arrayOf(null)) } }
         return prompt != null
     }
 
@@ -642,8 +613,8 @@ object ScriptHost {
         }
         val m = mods[pluginId] ?: return
         val hs = m.handlers["option"] ?: return
-        for (h in hs.toList()) exec(m, CALL_BUDGET_MS) { cx ->
-            h.call(cx, m.scope, m.scope, arrayOf(toJs(cx, m.scope, mapOf("id" to id, "value" to value))))
+        for (h in hs.toList()) exec(m, CALL_BUDGET_MS) {
+            m.runtime.call(h, arrayOf(mapOf("id" to id, "value" to value)))
         }
         renderTick++
     }
@@ -655,8 +626,8 @@ object ScriptHost {
         for (m in mods.values) {
             if (!m.touches) continue
             val hs = m.handlers["touch"] ?: continue
-            for (h in hs.toList()) exec(m, CALL_BUDGET_MS) { cx ->
-                h.call(cx, m.scope, m.scope, arrayOf(toJs(cx, m.scope, mapOf("type" to type, "x" to x, "y" to y, "pointer" to pointer))))
+            for (h in hs.toList()) exec(m, CALL_BUDGET_MS) {
+                m.runtime.call(h, arrayOf(mapOf("type" to type, "x" to x, "y" to y, "pointer" to pointer)))
             }
         }
     }
@@ -672,8 +643,8 @@ object ScriptHost {
         publishTouches()
         for (m in held) {
             val hs = m.handlers["touch"] ?: continue
-            for (h in hs.toList()) exec(m, CALL_BUDGET_MS) { cx ->
-                h.call(cx, m.scope, m.scope, arrayOf(toJs(cx, m.scope, mapOf("type" to "cancel", "x" to 0, "y" to 0, "pointer" to 0))))
+            for (h in hs.toList()) exec(m, CALL_BUDGET_MS) {
+                m.runtime.call(h, arrayOf(mapOf("type" to "cancel", "x" to 0, "y" to 0, "pointer" to 0)))
             }
         }
     }
@@ -708,8 +679,8 @@ object ScriptHost {
             for (m in mods.values) {
                 if (m === from) continue
                 val hs = m.handlers["message"] ?: continue
-                for (h in hs.toList()) exec(m, CALL_BUDGET_MS) { cx ->
-                    h.call(cx, m.scope, m.scope, arrayOf(toJs(cx, m.scope, mapOf("from" to from.plugin.id, "name" to name, "data" to data))))
+                for (h in hs.toList()) exec(m, CALL_BUDGET_MS) {
+                    m.runtime.call(h, arrayOf(mapOf("from" to from.plugin.id, "name" to name, "data" to data)))
                 }
             }
         }
@@ -892,23 +863,13 @@ object ScriptHost {
 
     // ------------------------------------------------------------------ преобразования JS ⇄ Kotlin
 
-    internal fun toJs(cx: Rhino, scope: Scriptable, v: Any?): Any? = when (v) {
-        null -> null
-        is Unit -> Undefined.instance
-        is String, is Boolean, is Double -> v
-        is Number -> v.toDouble()
-        is Scriptable -> v
-        is List<*> -> cx.newArray(scope, v.map { toJs(cx, scope, it) }.toTypedArray())
-        is Map<*, *> -> cx.newObject(scope).also { o -> v.forEach { (k, x) -> ScriptableObject.putProperty(o, k.toString(), toJs(cx, scope, x)) } }
-        else -> v.toString()
-    }
-
     internal fun fromJs(v: Any?, depth: Int = 0): Any? = when {
         v == null || v is Undefined -> null
         v is CharSequence -> v.toString()
         v is Boolean -> v
         v is Number -> v.toDouble()
-        v is JsFunction -> v
+        v is org.mozilla.javascript.Function -> RhinoPluginFunction(v)
+        v is PluginScriptFunction || v is Map<*, *> || v is List<*> -> v
         // глубже 32 уровней — почти наверняка объект ссылается сам на себя
         depth > 32 -> null
         v is NativeArray -> (0 until minOf(v.length, 100_000L).toInt()).map { fromJs(v.get(it, v), depth + 1) }
@@ -933,116 +894,114 @@ object ScriptHost {
 
     // ------------------------------------------------------------------ API kb.*
 
-    private fun installApi(cx: Rhino, m: Mod) {
-        val s = m.scope
+    private fun bindings(m: Mod): Map<String, Any?> {
+        val globals = linkedMapOf<String, Any?>()
         val ctx = appContext!!
         val id = m.plugin.id
-        fun def(obj: Scriptable, name: String, body: (Rhino, Array<Any?>) -> Any?) =
-            ScriptableObject.putProperty(obj, name, Fn(s, name, body))
+        fun def(obj: MutableMap<String, Any?>, name: String, body: (Array<Any?>) -> Any?) {
+            obj[name] = ScriptBinding(name, body)
+        }
         fun b() = bridge
 
-        val kb = cx.newObject(s)
-        ScriptableObject.putProperty(kb, "pluginId", id)
-        ScriptableObject.putProperty(kb, "apiVersion", 4)
-
+        val kb = linkedMapOf<String, Any?>("pluginId" to id, "apiVersion" to 4)
         // --- регистрация
-        def(kb, "on") { _, a ->
+        def(kb, "on") { a ->
             val ev = str(a, 0)
-            val fn = a.getOrNull(1) as? JsFunction ?: throw IllegalArgumentException("kb.on(событие, функция)")
+            val fn = a.getOrNull(1).scriptFunction() ?: throw IllegalArgumentException("kb.on(событие, функция)")
             m.handlers.getOrPut(ev) { ArrayList() } += fn
             main.post { publish() }
             Unit
         }
-        def(kb, "off") { _, a -> m.handlers.remove(str(a, 0)); main.post { publish() }; Unit }
-        def(kb, "addButton") { _, a ->
+        def(kb, "off") { a -> m.handlers.remove(str(a, 0)); main.post { publish() }; Unit }
+        def(kb, "addButton") { a ->
             val o = opts(a, 0)
             val title = o["title"]?.toString() ?: throw IllegalArgumentException("addButton: нужно title")
             val bid = o["id"]?.toString() ?: title
-            m.buttons[bid] = ScriptButton(id, bid, title, o["icon"]?.toString() ?: "🔘", o["toolbar"] == true) to (o["onClick"] as? JsFunction)
+            m.buttons[bid] = ScriptButton(id, bid, title, o["icon"]?.toString() ?: "🔘", o["toolbar"] == true) to (o["onClick"].scriptFunction())
             main.post { publish() }
             bid
         }
-        def(kb, "removeButton") { _, a -> m.buttons.remove(str(a, 0)); main.post { publish() }; Unit }
-        def(kb, "addPanel") { _, a ->
+        def(kb, "removeButton") { a -> m.buttons.remove(str(a, 0)); main.post { publish() }; Unit }
+        def(kb, "addPanel") { a ->
             val o = opts(a, 0)
             val title = o["title"]?.toString() ?: throw IllegalArgumentException("addPanel: нужно title")
             val pid = o["id"]?.toString() ?: title
-            m.panels[pid] = ScriptPanel(id, pid, title, o["icon"]?.toString() ?: m.plugin.icon) to (o["render"] as? JsFunction)
+            m.panels[pid] = ScriptPanel(id, pid, title, o["icon"]?.toString() ?: m.plugin.icon) to (o["render"].scriptFunction())
             main.post { publish() }
             pid
         }
-        def(kb, "addCommand") { _, a ->
-            val fn = a.getOrNull(1) as? JsFunction ?: throw IllegalArgumentException("kb.addCommand(имя, функция)")
+        def(kb, "addCommand") { a ->
+            val fn = a.getOrNull(1).scriptFunction() ?: throw IllegalArgumentException("kb.addCommand(имя, функция)")
             m.commands[str(a, 0)] = fn
             Unit
         }
-        def(kb, "refresh") { _, _ -> main.post { renderTick++ }; Unit }
+        def(kb, "refresh") { _ -> main.post { renderTick++ }; Unit }
 
         // --- текст
-        def(kb, "commit") { _, a -> b()?.scriptCommit(str(a, 0)); Unit }
-        def(kb, "insert") { _, a -> b()?.scriptCommit(str(a, 0)); Unit }
-        def(kb, "deleteBefore") { _, a -> b()?.scriptDelete(num(a, 0, 1.0).toInt().coerceIn(0, 5_000), 0); Unit }
-        def(kb, "deleteAfter") { _, a -> b()?.scriptDelete(0, num(a, 0, 1.0).toInt().coerceIn(0, 100_000)); Unit }
-        def(kb, "replaceBefore") { _, a ->
+        def(kb, "commit") { a -> b()?.scriptCommit(str(a, 0)); Unit }
+        def(kb, "insert") { a -> b()?.scriptCommit(str(a, 0)); Unit }
+        def(kb, "deleteBefore") { a -> b()?.scriptDelete(num(a, 0, 1.0).toInt().coerceIn(0, 5_000), 0); Unit }
+        def(kb, "deleteAfter") { a -> b()?.scriptDelete(0, num(a, 0, 1.0).toInt().coerceIn(0, 100_000)); Unit }
+        def(kb, "replaceBefore") { a ->
             b()?.scriptDelete(num(a, 0, 0.0).toInt().coerceIn(0, 100_000), 0)
             b()?.scriptCommit(str(a, 1))
             Unit
         }
-        def(kb, "textBefore") { _, a -> need(m, "read_text"); if (privateMode) "" else b()?.scriptTextBefore(num(a, 0, 200.0).toInt().coerceIn(0, 5_000)).orEmpty() }
-        def(kb, "textAfter") { _, a -> need(m, "read_text"); if (privateMode) "" else b()?.scriptTextAfter(num(a, 0, 200.0).toInt().coerceIn(0, 5_000)).orEmpty() }
-        def(kb, "selectedText") { _, _ -> need(m, "read_text"); b()?.scriptSelected().orEmpty() }
-        def(kb, "currentWord") { _, _ ->
+        def(kb, "textBefore") { a -> need(m, "read_text"); if (privateMode) "" else b()?.scriptTextBefore(num(a, 0, 200.0).toInt().coerceIn(0, 5_000)).orEmpty() }
+        def(kb, "textAfter") { a -> need(m, "read_text"); if (privateMode) "" else b()?.scriptTextAfter(num(a, 0, 200.0).toInt().coerceIn(0, 5_000)).orEmpty() }
+        def(kb, "selectedText") { _ -> need(m, "read_text"); b()?.scriptSelected().orEmpty() }
+        def(kb, "currentWord") { _ ->
             need(m, "read_text")
             Regex("[\\p{L}\\p{M}\\p{N}'_-]+$").find(b()?.scriptTextBefore(64).orEmpty())?.value.orEmpty()
         }
-        def(kb, "setSelection") { _, a -> b()?.scriptSetSelection(num(a, 0, 0.0).toInt(), num(a, 1, num(a, 0, 0.0)).toInt()); Unit }
-        def(kb, "key") { _, a -> b()?.scriptKey(str(a, 0).lowercase()); Unit }
-        def(kb, "enter") { _, _ -> b()?.scriptKey("enter"); Unit }
+        def(kb, "setSelection") { a -> b()?.scriptSetSelection(num(a, 0, 0.0).toInt(), num(a, 1, num(a, 0, 0.0)).toInt()); Unit }
+        def(kb, "key") { a -> b()?.scriptKey(str(a, 0).lowercase()); Unit }
+        def(kb, "enter") { _ -> b()?.scriptKey("enter"); Unit }
 
         // --- состояние клавиатуры
-        def(kb, "language") { _, _ -> b()?.scriptLanguage() ?: "" }
-        def(kb, "setLanguage") { _, a -> b()?.scriptSetLanguage(str(a, 0)) ?: false }
-        def(kb, "languages") { _, _ -> Languages.enabled(KeyboardPrefs.current(ctx)).map { it.id } }
-        def(kb, "shift") { _, _ -> b()?.scriptShift() ?: "off" }
-        def(kb, "setShift") { _, a -> b()?.scriptSetShift(str(a, 0)); Unit }
+        def(kb, "language") { _ -> b()?.scriptLanguage() ?: "" }
+        def(kb, "setLanguage") { a -> b()?.scriptSetLanguage(str(a, 0)) ?: false }
+        def(kb, "languages") { _ -> Languages.enabled(KeyboardPrefs.current(ctx)).map { it.id } }
+        def(kb, "shift") { _ -> b()?.scriptShift() ?: "off" }
+        def(kb, "setShift") { a -> b()?.scriptSetShift(str(a, 0)); Unit }
         // приложение и подсказка поля выдают, где человек печатает (банк, мессенджер) — только с read_text
-        def(kb, "field") { _, _ ->
+        def(kb, "field") { _ ->
             val f = b()?.scriptField() ?: emptyMap<String, Any?>()
             if (m.has("read_text") && !privateMode) f else f - setOf("package", "hint")
         }
-        def(kb, "openPanel") { _, a -> b()?.scriptOpenPanel(str(a, 0, "keyboard")); Unit }
-        def(kb, "closePanel") { _, _ -> b()?.scriptOpenPanel("keyboard"); Unit }
-        def(kb, "hide") { _, _ -> b()?.scriptHide(); Unit }
-        def(kb, "status") { _, a -> b()?.scriptStatus(str(a, 0)); Unit }
-        def(kb, "toast") { _, a -> Toast.makeText(ctx, str(a, 0), Toast.LENGTH_SHORT).show(); Unit }
-        def(kb, "vibrate") { _, a -> b()?.scriptVibrate(num(a, 0, 20.0).toInt().coerceIn(1, 400)); Unit }
+        def(kb, "openPanel") { a -> b()?.scriptOpenPanel(str(a, 0, "keyboard")); Unit }
+        def(kb, "closePanel") { _ -> b()?.scriptOpenPanel("keyboard"); Unit }
+        def(kb, "hide") { _ -> b()?.scriptHide(); Unit }
+        def(kb, "status") { a -> b()?.scriptStatus(str(a, 0)); Unit }
+        def(kb, "toast") { a -> Toast.makeText(ctx, str(a, 0), Toast.LENGTH_SHORT).show(); Unit }
+        def(kb, "vibrate") { a -> b()?.scriptVibrate(num(a, 0, 20.0).toInt().coerceIn(1, 400)); Unit }
 
         // --- слой поверх клавиатуры, клавиши и анимация
-        def(kb, "overlay") { _, a ->
+        def(kb, "overlay") { a ->
             m.overlay = parseItems(m, fromJs(a.getOrNull(0)))
             publishOverlay()
             Unit
         }
-        def(kb, "clearOverlay") { _, _ -> m.overlay = emptyList(); publishOverlay(); Unit }
+        def(kb, "clearOverlay") { _ -> m.overlay = emptyList(); publishOverlay(); Unit }
         // то же, но под клавишами: фон, волны, частицы — клавиши остаются сверху
-        def(kb, "background") { _, a ->
+        def(kb, "background") { a ->
             m.background = parseItems(m, fromJs(a.getOrNull(0)))
             publishOverlay()
             Unit
         }
-        def(kb, "clearBackground") { _, _ -> m.background = emptyList(); publishOverlay(); Unit }
+        def(kb, "clearBackground") { _ -> m.background = emptyList(); publishOverlay(); Unit }
         // --- наклон и эффекты клавиш, шейдер на всю клавиатуру
-        def(kb, "keyEffects") { _, a ->
+        def(kb, "keyEffects") { a ->
             val v = fromJs(a.getOrNull(0)) as? Map<*, *>
             m.keyFx = v?.entries?.take(200)?.mapNotNull { (k, x) -> (x as? Map<*, *>)?.let { k.toString() to KeyFx.parse(it) } }?.toMap() ?: emptyMap()
             publishKeyFx()
             Unit
         }
-        def(kb, "keyboardEffect") { _, a ->
+        def(kb, "keyboardEffect") { a ->
             ModFx.keyboardFx = (fromJs(a.getOrNull(0)) as? Map<*, *>)?.let { KeyFx.parse(it) }
             Unit
         }
-        def(kb, "postEffect") { _, a ->
+        def(kb, "postEffect") { a ->
             val o = fromJs(a.getOrNull(0)) as? Map<*, *>
             if (o == null) {
                 ModFx.post = null
@@ -1061,8 +1020,8 @@ object ScriptHost {
             syncDevices()
             true
         }
-        def(kb, "shaderError") { _, a -> ModShaders.error(str(a, 0)) }
-        def(kb, "supports") { _, a ->
+        def(kb, "shaderError") { a -> ModShaders.error(str(a, 0)) }
+        def(kb, "supports") { a ->
             when (str(a, 0)) {
                 "shader", "postEffect" -> ModShaders.supported
                 "labelBlur" -> android.os.Build.VERSION.SDK_INT >= 31
@@ -1074,56 +1033,56 @@ object ScriptHost {
         }
 
         // --- частицы: считаются клавиатурой, а не скриптом
-        val particles = cx.newObject(s)
+        val particles = linkedMapOf<String, Any?>()
         fun sysKey(name: String) = "$id/$name"
-        def(particles, "set") { _, a ->
+        def(particles, "set") { a ->
             val name = str(a, 0, "default")
             require(ModFx.system(sysKey(name)) != null || ModFx.systemsOf("$id/") < 8) { "particles: не больше 8 систем у мода" }
             ModFx.setSystem(sysKey(name), ParticleConfig.parse(opts(a, 1)))
             syncDevices()
             Unit
         }
-        def(particles, "emit") { _, a ->
+        def(particles, "emit") { a ->
             val sys = ModFx.system(sysKey(str(a, 0, "default"))) ?: throw IllegalArgumentException("particles.emit: сначала particles.set")
             val o = opts(a, 1)
             fun f(k: String, def: Float) = (o[k] as? Number)?.toFloat() ?: def
             sys.emit(f("count", 10f).toInt(), f("x", 0f), f("y", 0f), f("w", 0f), f("h", 0f), f("speed", 0f), f("angle", 0f), f("spread", 360f))
             Unit
         }
-        def(particles, "clear") { _, a -> ModFx.system(sysKey(str(a, 0, "default")))?.clear(); Unit }
-        def(particles, "remove") { _, a -> ModFx.removeSystem(sysKey(str(a, 0, "default"))); syncDevices(); Unit }
-        def(particles, "count") { _, a -> ModFx.system(sysKey(str(a, 0, "default")))?.count ?: 0 }
-        ScriptableObject.putProperty(kb, "particles", particles)
+        def(particles, "clear") { a -> ModFx.system(sysKey(str(a, 0, "default")))?.clear(); Unit }
+        def(particles, "remove") { a -> ModFx.removeSystem(sysKey(str(a, 0, "default"))); syncDevices(); Unit }
+        def(particles, "count") { a -> ModFx.system(sysKey(str(a, 0, "default")))?.count ?: 0 }
+        kb["particles"] = particles
 
         // --- микрофон: только громкость и полосы частот, не сам звук
-        val audio = cx.newObject(s)
-        def(audio, "start") { _, _ ->
+        val audio = linkedMapOf<String, Any?>()
+        def(audio, "start") { _ ->
             need(m, "microphone")
             if (!ModAudio.hasPermission(ctx)) return@def false
             m.audio = true
             syncDevices()
             true
         }
-        def(audio, "stop") { _, _ -> m.audio = false; syncDevices(); Unit }
-        def(audio, "level") { _, _ -> if (m.audio && m.has("microphone") && !privateMode) ModAudio.level else 0f }
-        ScriptableObject.putProperty(kb, "audio", audio)
+        def(audio, "stop") { _ -> m.audio = false; syncDevices(); Unit }
+        def(audio, "level") { _ -> if (m.audio && m.has("microphone") && !privateMode) ModAudio.level else 0f }
+        kb["audio"] = audio
 
-        def(kb, "tilt") { _, _ ->
+        def(kb, "tilt") { _ ->
             need(m, "sensors")
             if (privateMode) mapOf("x" to 0f, "y" to 0f, "z" to 0f)
             else mapOf("x" to ModSensors.tiltX, "y" to ModSensors.tiltY, "z" to ModSensors.tiltZ)
         }
-        def(kb, "appInfo") { _, _ ->
+        def(kb, "appInfo") { _ ->
             need(m, "app_info")
             val pkg = lastApp
             if (privateMode || pkg.isEmpty()) emptyMap<String, Any?>() else appInfoOf(ctx, pkg)
         }
 
-        def(kb, "keyboardSize") { _, _ ->
+        def(kb, "keyboardSize") { _ ->
             val sz = KeyboardGeometry.size()
             mapOf("width" to (sz?.width ?: 0f), "height" to (sz?.height ?: 0f))
         }
-        def(kb, "keys") { _, _ ->
+        def(kb, "keys") { _ ->
             KeyboardGeometry.visible().mapNotNull { (h, r) ->
                 val name = KeyboardGeometry.nameOf(h)
                 if (name.isEmpty()) null
@@ -1133,12 +1092,12 @@ object ScriptHost {
                 )
             }
         }
-        def(kb, "keyRect") { _, a ->
+        def(kb, "keyRect") { a ->
             val h = KeyboardGeometry.find(str(a, 0)) ?: return@def null
             val r = KeyboardGeometry.rectOf(h) ?: return@def null
             mapOf("x" to r.left, "y" to r.top, "w" to r.width, "h" to r.height, "cx" to r.center.x, "cy" to r.center.y)
         }
-        def(kb, "pressKey") { _, a ->
+        def(kb, "pressKey") { a ->
             val h = KeyboardGeometry.find(str(a, 0)) ?: return@def false
             h.pulse()
             if (opts(a, 1)["type"] != false) {
@@ -1152,7 +1111,7 @@ object ScriptHost {
             }
             true
         }
-        def(kb, "colors") { _, _ ->
+        def(kb, "colors") { _ ->
             val p = KeyboardGeometry.palette ?: return@def emptyMap<String, Any?>()
             fun hex(c: androidx.compose.ui.graphics.Color) = String.format("#%08X", c.toArgb())
             mapOf(
@@ -1160,7 +1119,7 @@ object ScriptHost {
                 "func" to hex(p.func), "funcText" to hex(p.onFunc), "accent" to hex(p.accent), "accentText" to hex(p.onAccent)
             )
         }
-        def(kb, "setLayout") { _, a ->
+        def(kb, "setLayout") { a ->
             val lid = str(a, 0)
             require(lid in PluginParser.LAYOUT_IDS || Regex("^[a-z]{2,3}([-_][a-z0-9]{2,8})?$").matches(lid)) { "setLayout: код языка, symbols или symbols2" }
             val rows = fromJs(a.getOrNull(1)) as? List<*>
@@ -1173,7 +1132,7 @@ object ScriptHost {
             publish()
             Unit
         }
-        def(kb, "setSkin") { _, a ->
+        def(kb, "setSkin") { a ->
             val v = fromJs(a.getOrNull(0)) as? Map<*, *>
             m.skin = v?.let { SkinParser.parse(JSONObject(it)) }
             publish()
@@ -1181,16 +1140,16 @@ object ScriptHost {
         }
 
         // --- буфер обмена
-        def(kb, "clipboard") { _, _ -> need(m, "clipboard"); b()?.scriptClipboard() ?: emptyList<String>() }
+        def(kb, "clipboard") { _ -> need(m, "clipboard"); b()?.scriptClipboard() ?: emptyList<String>() }
         // запись в буфер обмена — тоже только с разрешением: иначе мод мог бы незаметно подменить скопированное
-        def(kb, "copy") { _, a -> need(m, "clipboard"); b()?.scriptCopy(str(a, 0).take(100_000)); Unit }
+        def(kb, "copy") { a -> need(m, "clipboard"); b()?.scriptCopy(str(a, 0).take(100_000)); Unit }
 
         // --- иконки
-        def(kb, "setIcon") { _, a -> IconStore.setPluginIcon(id, str(a, 0), str(a, 1)); Unit }
-        def(kb, "resetIcon") { _, a -> IconStore.setPluginIcon(id, str(a, 0), ""); Unit }
+        def(kb, "setIcon") { a -> IconStore.setPluginIcon(id, str(a, 0), str(a, 1)); Unit }
+        def(kb, "resetIcon") { a -> IconStore.setPluginIcon(id, str(a, 0), ""); Unit }
 
         // --- файлы из архива плагина
-        def(kb, "asset") { _, a ->
+        def(kb, "asset") { a ->
             val path = str(a, 0)
             val data = m.plugin.files[path] ?: return@def null
             if (path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".webp") || path.endsWith(".gif")) {
@@ -1200,39 +1159,33 @@ object ScriptHost {
 
         // --- хранилище плагина (переживает перезапуск)
         val prefs = ctx.getSharedPreferences("plugin_storage_$id", Context.MODE_PRIVATE)
-        val json = ScriptableObject.getProperty(s, "JSON") as Scriptable
-        val stringify = ScriptableObject.getProperty(json, "stringify") as JsFunction
-        val parse = ScriptableObject.getProperty(json, "parse") as JsFunction
-        val storage = cx.newObject(s)
-        def(storage, "get") { c, a ->
-            val raw = prefs.getString(str(a, 0), null) ?: return@def a.getOrNull(1)
-            parse.call(c, s, s, arrayOf(raw))
-        }
-        def(storage, "set") { c, a ->
-            val raw = Rhino.toString(stringify.call(c, s, s, arrayOf(a.getOrNull(1))))
+        val storage = linkedMapOf<String, Any?>()
+        def(storage, "get") { a -> prefs.getString(str(a, 0), null) }
+        def(storage, "set") { a ->
+            val raw = str(a, 1, "undefined")
             require(raw.length < 256 * 1024) { "storage: значение больше 256 КБ" }
             prefs.edit().putString(str(a, 0), raw).apply()
             Unit
         }
-        def(storage, "remove") { _, a -> prefs.edit().remove(str(a, 0)).apply(); Unit }
-        def(storage, "keys") { _, _ -> prefs.all.keys.toList() }
-        def(storage, "clear") { _, _ -> prefs.edit().clear().apply(); Unit }
-        ScriptableObject.putProperty(kb, "storage", storage)
+        def(storage, "remove") { a -> prefs.edit().remove(str(a, 0)).apply(); Unit }
+        def(storage, "keys") { _ -> prefs.all.keys.toList() }
+        def(storage, "clear") { _ -> prefs.edit().clear().apply(); Unit }
+        kb["storage"] = storage
 
         // --- настройки клавиатуры
-        val settings = cx.newObject(s)
-        def(settings, "get") { _, a -> KeyboardPrefs.prefs(ctx).all[str(a, 0)] }
-        def(settings, "set") { _, a ->
+        val settings = linkedMapOf<String, Any?>()
+        def(settings, "get") { a -> KeyboardPrefs.prefs(ctx).all[str(a, 0)] }
+        def(settings, "set") { a ->
             val v = fromJs(a.getOrNull(1)) ?: return@def false
             KeyboardPrefs.applyPluginSettings(ctx, mapOf(str(a, 0) to v)) > 0
         }
-        ScriptableObject.putProperty(kb, "settings", settings)
+        kb["settings"] = settings
 
         // --- сеть
-        def(kb, "http") { _, a ->
+        def(kb, "http") { a ->
             need(m, "network")
             val o = opts(a, 0)
-            val cb = a.getOrNull(1) as? JsFunction
+            val cb = a.getOrNull(1).scriptFunction()
             val url = o["url"]?.toString() ?: throw IllegalArgumentException("http: нужно url")
             require(url.startsWith("https://")) { "http: разрешены только https-адреса" }
             require(!isPrivateHost(url)) { "http: адреса домашней сети и самого телефона недоступны" }
@@ -1244,49 +1197,50 @@ object ScriptHost {
                 val r = runCatching { httpCall(url, o) }
                 withContext(Dispatchers.Main) {
                     if (cb == null || mods[id] !== m) return@withContext
-                    exec(m, CALL_BUDGET_MS) { c ->
+                    exec(m, CALL_BUDGET_MS) {
                         r.fold(
                             onSuccess = { (code, body) ->
                                 val b64 = o["responseType"] == "base64"
-                                val res = mapOf("status" to code, (if (b64) "base64" else "text") to body, "ok" to (code in 200..299))
-                                val jsRes = toJs(c, s, res) as Scriptable
-                                if (!b64) runCatching { ScriptableObject.putProperty(jsRes, "json", parse.call(c, s, s, arrayOf(body))) }
-                                cb.call(c, s, s, arrayOf(null, jsRes))
+                                val res = linkedMapOf<String, Any?>(
+                                    "status" to code, (if (b64) "base64" else "text") to body, "ok" to (code in 200..299)
+                                )
+                                if (!b64) res["json"] = ScriptJson(body)
+                                m.runtime.call(cb, arrayOf(null, res))
                             },
-                            onFailure = { e -> cb.call(c, s, s, arrayOf(e.message ?: "ошибка сети", null)) }
+                            onFailure = { e -> m.runtime.call(cb, arrayOf(e.message ?: "ошибка сети", null)) }
                         )
                     }
                 }
             }
             Unit
         }
-        def(kb, "translate") { _, a ->
+        def(kb, "translate") { a ->
             need(m, "network")
             val text = str(a, 0)
             val to = str(a, 1, "en")
-            val cb = a.getOrNull(2) as? JsFunction
+            val cb = a.getOrNull(2).scriptFunction()
             io.launch {
                 val r = Translator.translate(text, "auto", to)
                 withContext(Dispatchers.Main) {
                     if (cb == null || mods[id] !== m) return@withContext
-                    exec(m, CALL_BUDGET_MS) { c -> cb.call(c, s, s, arrayOf(r.exceptionOrNull()?.message, r.getOrNull())) }
+                    exec(m, CALL_BUDGET_MS) { m.runtime.call(cb, arrayOf(r.exceptionOrNull()?.message, r.getOrNull())) }
                 }
             }
             Unit
         }
 
         // --- журнал
-        val logFn: (Rhino, Array<Any?>) -> Any? = { _, a -> log(id, a.joinToString(" ") { v -> if (v is Undefined) "undefined" else Rhino.toString(v) }); Unit }
+        val logFn: (Array<Any?>) -> Any? = { a -> log(id, a.joinToString(" ") { v -> if (v is Undefined) "undefined" else Rhino.toString(v) }); Unit }
         def(kb, "log", logFn)
-        val console = cx.newObject(s)
+        val console = linkedMapOf<String, Any?>()
         def(console, "log", logFn)
         def(console, "warn", logFn)
         def(console, "error", logFn)
-        ScriptableObject.putProperty(s, "console", console)
+        globals["console"] = console
 
         // --- таймеры
         fun timer(a: Array<Any?>, repeat: Boolean): Int {
-            val fn = a.getOrNull(0) as? JsFunction ?: throw IllegalArgumentException("нужна функция")
+            val fn = a.getOrNull(0).scriptFunction() ?: throw IllegalArgumentException("нужна функция")
             require(m.timers.size < MAX_TIMERS) { "слишком много таймеров" }
             require(mods.values.sumOf { it.timers.size } < MAX_TIMERS * 2) { "слишком много таймеров у всех модов вместе" }
             val delay = num(a, 1, 0.0).toLong().coerceIn(if (repeat) 50L else 0L, 24 * 3600_000L)
@@ -1300,7 +1254,7 @@ object ScriptHost {
                         return
                     }
                     if (!repeat) m.timers.remove(tid)
-                    exec(m, CALL_BUDGET_MS) { c -> fn.call(c, s, s, emptyArray()) }
+                    exec(m, CALL_BUDGET_MS) { m.runtime.call(fn, emptyArray()) }
                     if (repeat && m.timers.containsKey(tid)) main.postDelayed(this, delay)
                 }
             }
@@ -1308,26 +1262,26 @@ object ScriptHost {
             main.postDelayed(r, delay)
             return tid
         }
-        val clear: (Rhino, Array<Any?>) -> Any? = { _, a -> m.timers.remove(num(a, 0, -1.0).toInt())?.let(main::removeCallbacks); Unit }
-        ScriptableObject.putProperty(s, "setTimeout", Fn(s, "setTimeout") { _, a -> timer(a, false) })
-        ScriptableObject.putProperty(s, "setInterval", Fn(s, "setInterval") { _, a -> timer(a, true) })
-        ScriptableObject.putProperty(s, "clearTimeout", Fn(s, "clearTimeout", clear))
-        ScriptableObject.putProperty(s, "clearInterval", Fn(s, "clearInterval", clear))
+        val clear: (Array<Any?>) -> Any? = { a -> m.timers.remove(num(a, 0, -1.0).toInt())?.let(main::removeCallbacks); Unit }
+        def(globals, "setTimeout") { a -> timer(a, false) }
+        def(globals, "setInterval") { a -> timer(a, true) }
+        def(globals, "clearTimeout", clear)
+        def(globals, "clearInterval", clear)
 
         // ================================================================ API 3: всё остальное
 
         // --- свой набор: «подчёркнутое» слово, курсор, весь текст, настоящие клавиши
-        def(kb, "setComposing") { _, a -> b()?.scriptSetComposing(str(a, 0).take(5_000)); Unit }
-        def(kb, "finishComposing") { _, _ -> b()?.scriptFinishComposing(); Unit }
-        def(kb, "cursor") { _, _ ->
+        def(kb, "setComposing") { a -> b()?.scriptSetComposing(str(a, 0).take(5_000)); Unit }
+        def(kb, "finishComposing") { _ -> b()?.scriptFinishComposing(); Unit }
+        def(kb, "cursor") { _ ->
             need(m, "read_text")
             val c = b()?.scriptCursor().orEmpty()
             if (c.size < 2 || privateMode) null else mapOf("start" to c[0], "end" to c[1])
         }
-        def(kb, "allText") { _, _ -> need(m, "read_text"); if (privateMode) "" else b()?.scriptAllText().orEmpty() }
-        def(kb, "replaceSelection") { _, a -> b()?.scriptReplaceSelection(str(a, 0).take(1_000_000)); Unit }
-        def(kb, "replaceAll") { _, a -> b()?.scriptReplaceAll(str(a, 0).take(1_000_000)); Unit }
-        def(kb, "sendKey") { _, a ->
+        def(kb, "allText") { _ -> need(m, "read_text"); if (privateMode) "" else b()?.scriptAllText().orEmpty() }
+        def(kb, "replaceSelection") { a -> b()?.scriptReplaceSelection(str(a, 0).take(1_000_000)); Unit }
+        def(kb, "replaceAll") { a -> b()?.scriptReplaceAll(str(a, 0).take(1_000_000)); Unit }
+        def(kb, "sendKey") { a ->
             val o = opts(a, 1)
             var meta = 0
             if (o["ctrl"] == true) meta = meta or android.view.KeyEvent.META_CTRL_ON or android.view.KeyEvent.META_CTRL_LEFT_ON
@@ -1337,8 +1291,8 @@ object ScriptHost {
             b()?.scriptSendKey(keyCodeOf(fromJs(a.getOrNull(0))), meta)
             Unit
         }
-        def(kb, "editorAction") { _, a -> b()?.scriptEditorAction(str(a, 0, "done")); Unit }
-        def(kb, "commitImage") { _, a ->
+        def(kb, "editorAction") { a -> b()?.scriptEditorAction(str(a, 0, "done")); Unit }
+        def(kb, "commitImage") { a ->
             val src = str(a, 0)
             val data = if (src.startsWith("data:")) src else m.plugin.files[src]?.let { "data:image/${src.substringAfterLast('.')};base64,$it" }
                 ?: throw IllegalArgumentException("commitImage: data:image/… или файл из архива мода")
@@ -1348,12 +1302,12 @@ object ScriptHost {
             b()?.scriptCommitImage(bytes, if (mime == "image/jpg") "image/jpeg" else mime) ?: false
         }
         // подсказки со своим обработчиком: так моды делают свои способы ввода, меню и автодополнение
-        def(kb, "setSuggestions") { _, a ->
+        def(kb, "setSuggestions") { a ->
             val words = (fromJs(a.getOrNull(0)) as? List<*>)?.mapNotNull { it?.toString() } ?: emptyList()
-            val fn = a.getOrNull(1) as? JsFunction
+            val fn = a.getOrNull(1).scriptFunction()
             val pick: ((String, Int) -> Unit)? = fn?.let { f ->
                 { w: String, i: Int ->
-                    if (mods[id] === m) exec(m, CALL_BUDGET_MS) { c -> f.call(c, s, s, arrayOf(w, i.toDouble())) }
+                    if (mods[id] === m) exec(m, CALL_BUDGET_MS) { m.runtime.call(f, arrayOf(w, i.toDouble())) }
                 }
             }
             b()?.scriptSuggestions(words, pick)
@@ -1361,16 +1315,16 @@ object ScriptHost {
         }
 
         // --- поле ввода мода: клавиатура печатает в него вместо приложения
-        def(kb, "prompt") { _, a ->
+        def(kb, "prompt") { a ->
             val o = opts(a, 0)
-            val fn = a.getOrNull(1) as? JsFunction ?: (o["onSubmit"] as? JsFunction)
+            val fn = a.getOrNull(1).scriptFunction() ?: (o["onSubmit"].scriptFunction())
             openPrompt(
-                Prompt(m, fn, o["onChange"] as? JsFunction, null, null),
+                Prompt(m, fn, o["onChange"].scriptFunction(), null, null),
                 o["title"]?.toString().orEmpty(), o["hint"]?.toString().orEmpty(), o["value"]?.toString().orEmpty()
             )
             Unit
         }
-        def(kb, "closePrompt") { _, _ ->
+        def(kb, "closePrompt") { _ ->
             if (prompt?.m === m) {
                 promptClosed()
                 bridge?.scriptPrompt(false)
@@ -1379,52 +1333,52 @@ object ScriptHost {
         }
 
         // --- касания клавиатуры: игры и рисование поверх клавиш (пока включено, клавиши не нажимаются)
-        def(kb, "captureTouches") { _, a ->
+        def(kb, "captureTouches") { a ->
             m.touches = a.getOrNull(0).let { it == null || it is Undefined || Rhino.toBoolean(it) }
             publishTouches()
             Unit
         }
 
         // --- устройство и моды
-        def(kb, "device") { _, _ -> device() }
+        def(kb, "device") { _ -> device() }
         // свои настройки мода из блока "config": kb.config("id") или kb.config() — все сразу
-        def(kb, "config") { _, a ->
+        def(kb, "config") { a ->
             val key = str(a, 0)
             if (key.isEmpty()) ModConfig.all(ctx, m.plugin)
             else m.plugin.config.firstOrNull { it.id == key }?.let { ModConfig.get(ctx, m.plugin, it) }
         }
-        def(kb, "setConfig") { _, a ->
+        def(kb, "setConfig") { a ->
             val key = str(a, 0)
             require(m.plugin.config.any { it.id == key }) { "setConfig: нет настройки «$key» в блоке config" }
             ModConfig.set(ctx, m.plugin, key, fromJs(a.getOrNull(1)))
             Unit
         }
         // несколько настроек разом (свой пресет): карточка мода сразу покажет новые значения
-        def(kb, "setConfigs") { _, a ->
+        def(kb, "setConfigs") { a ->
             val v = fromJs(a.getOrNull(0)) as? Map<*, *> ?: throw IllegalArgumentException("setConfigs: нужен объект")
             ModConfig.setAll(ctx, m.plugin, v.entries.associate { it.key.toString() to it.value })
         }
-        def(kb, "mods") { _, _ -> mods.values.map { mapOf("id" to it.plugin.id, "name" to it.plugin.name, "version" to it.plugin.version) } }
-        def(kb, "broadcast") { _, a -> broadcast(m, str(a, 0), fromJs(a.getOrNull(1))); Unit }
+        def(kb, "mods") { _ -> mods.values.map { mapOf("id" to it.plugin.id, "name" to it.plugin.name, "version" to it.plugin.version) } }
+        def(kb, "broadcast") { a -> broadcast(m, str(a, 0), fromJs(a.getOrNull(1))); Unit }
 
         // --- звук, вибрация, голос
-        def(kb, "tone") { _, a ->
+        def(kb, "tone") { a ->
             val o = opts(a, 2)
             tone(num(a, 0, 440.0).coerceIn(20.0, 20_000.0), num(a, 1, 120.0).toInt().coerceIn(5, 5000),
                 (o["volume"] as? Double)?.toFloat()?.coerceIn(0f, 1f) ?: 0.5f, o["wave"]?.toString() ?: "sine")
             Unit
         }
-        def(kb, "playAudio") { _, a ->
+        def(kb, "playAudio") { a ->
             val o = opts(a, 1)
             playAudio(ctx, m, str(a, 0), (o["volume"] as? Double)?.toFloat()?.coerceIn(0f, 1f) ?: 1f, o["loop"] == true)
         }
-        def(kb, "stopAudio") { _, a ->
+        def(kb, "stopAudio") { a ->
             val pid = num(a, 0, -1.0).toInt()
             val list = if (pid < 0) m.players.keys.toList() else listOf(pid)
             list.forEach { k -> m.players.remove(k)?.let { runCatching { it.stop(); it.release() } } }
             Unit
         }
-        def(kb, "sound") { _, a ->
+        def(kb, "sound") { a ->
             val am = ctx.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
             val fx = when (str(a, 0)) {
                 "space" -> android.media.AudioManager.FX_KEYPRESS_SPACEBAR
@@ -1436,49 +1390,49 @@ object ScriptHost {
             am.playSoundEffect(fx, num(a, 1, 0.6).toFloat().coerceIn(0f, 1f))
             Unit
         }
-        def(kb, "haptic") { _, a ->
+        def(kb, "haptic") { a ->
             val v = fromJs(a.getOrNull(0))
             val pattern = (v as? List<*>)?.mapNotNull { (it as? Double)?.toLong()?.coerceIn(0L, 2000L) }?.take(40)?.toLongArray()
             if (pattern != null) require(pattern.sum() <= 6000L) { "haptic: узор не длиннее 6 секунд" }
             haptic(ctx, v?.toString() ?: "tick", pattern)
             Unit
         }
-        def(kb, "speak") { _, a ->
+        def(kb, "speak") { a ->
             val o = opts(a, 1)
             speak(ctx, str(a, 0).take(4000), o["lang"]?.toString() ?: (b()?.scriptLanguage() ?: ""),
                 (o["rate"] as? Double)?.toFloat()?.coerceIn(0.1f, 4f) ?: 1f, (o["pitch"] as? Double)?.toFloat()?.coerceIn(0.1f, 4f) ?: 1f)
             Unit
         }
-        def(kb, "stopSpeaking") { _, _ -> tts?.stop(); Unit }
+        def(kb, "stopSpeaking") { _ -> tts?.stop(); Unit }
 
         // --- ссылки, приложения, «Поделиться»
         fun start(i: android.content.Intent): Boolean = runCatching {
             ctx.startActivity(i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
         }.isSuccess
-        def(kb, "openUrl") { _, a ->
+        def(kb, "openUrl") { a ->
             need(m, "launch")
             val url = str(a, 0)
             val scheme = url.substringBefore(':').lowercase()
             require(scheme in setOf("https", "http", "mailto", "tel", "sms", "geo", "market", "tg", "whatsapp")) { "openUrl: такая ссылка не открывается" }
             start(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
         }
-        def(kb, "share") { _, a ->
+        def(kb, "share") { a ->
             need(m, "launch")
             val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
                 .putExtra(android.content.Intent.EXTRA_TEXT, str(a, 0).take(100_000))
             start(android.content.Intent.createChooser(send, null))
         }
-        def(kb, "launchApp") { _, a ->
+        def(kb, "launchApp") { a ->
             need(m, "launch")
             val i = ctx.packageManager.getLaunchIntentForPackage(str(a, 0)) ?: return@def false
             start(i)
         }
 
         // --- ИИ по ключу пользователя (Gemini, Claude, OpenAI, Groq — что настроено)
-        def(kb, "ai") { _, a ->
+        def(kb, "ai") { a ->
             need(m, "ai")
             val o = opts(a, 0)
-            val cb = a.getOrNull(1) as? JsFunction
+            val cb = a.getOrNull(1).scriptFunction()
             val promptText = o["prompt"]?.toString() ?: throw IllegalArgumentException("ai: нужно prompt")
             val now = SystemClock.uptimeMillis()
             while (m.aiTimes.isNotEmpty() && now - m.aiTimes.first() > 60_000L) m.aiTimes.removeFirst()
@@ -1491,90 +1445,90 @@ object ScriptHost {
                 val r = AiFix.run(ctx, o["text"]?.toString().orEmpty().take(8000), keys, lang, AiTask.CUSTOM, promptText.take(4000))
                 withContext(Dispatchers.Main) {
                     if (cb == null || mods[id] !== m) return@withContext
-                    exec(m, CALL_BUDGET_MS) { c -> cb.call(c, s, s, arrayOf(r.exceptionOrNull()?.message, r.getOrNull()?.first)) }
+                    exec(m, CALL_BUDGET_MS) { m.runtime.call(cb, arrayOf(r.exceptionOrNull()?.message, r.getOrNull()?.first)) }
                 }
             }
             Unit
         }
 
         // --- словарь и подсказки клавиатуры
-        val dict = cx.newObject(s)
+        val dict = linkedMapOf<String, Any?>()
         fun langOf(a: Array<Any?>, i: Int): KeyboardLanguage {
             val lid = str(a, i).ifEmpty { b()?.scriptLanguage().orEmpty() }
             return Languages.withUser(Languages.byId(lid) ?: Languages.byId(b()?.scriptLanguage().orEmpty()) ?: KeyboardLanguage.RU)
         }
-        def(dict, "predict") { _, a ->
+        def(dict, "predict") { a ->
             val lang = langOf(a, 2)
             WordPredictorEngine.predict(str(a, 0), str(a, 1), null, lang, false)
                 ?.chips?.filter { !it.isEmpty }?.map { it.commitWord }.orEmpty()
         }
-        def(dict, "correct") { _, a -> WordPredictorEngine.autoCorrectionFor(str(a, 0), langOf(a, 1), "SAFE") }
-        def(dict, "learn") { _, a -> if (!privateMode) WordPredictorEngine.learn(langOf(a, 1), "", str(a, 0).take(64)); Unit }
-        def(dict, "forget") { _, a -> WordPredictorEngine.forget(langOf(a, 1), str(a, 0)); Unit }
-        def(dict, "nextLetters") { _, a ->
+        def(dict, "correct") { a -> WordPredictorEngine.autoCorrectionFor(str(a, 0), langOf(a, 1), "SAFE") }
+        def(dict, "learn") { a -> if (!privateMode) WordPredictorEngine.learn(langOf(a, 1), "", str(a, 0).take(64)); Unit }
+        def(dict, "forget") { a -> WordPredictorEngine.forget(langOf(a, 1), str(a, 0)); Unit }
+        def(dict, "nextLetters") { a ->
             WordPredictorEngine.nextLetters(langOf(a, 1), str(a, 0)).entries.sortedByDescending { it.value }.take(30)
                 .associate { it.key.toString() to it.value.toDouble() }
         }
-        ScriptableObject.putProperty(kb, "dictionary", dict)
+        kb["dictionary"] = dict
 
         // --- эмодзи
-        val emoji = cx.newObject(s)
-        def(emoji, "search") { _, a ->
+        val emoji = linkedMapOf<String, Any?>()
+        def(emoji, "search") { a ->
             EmojiCatalog.search(str(a, 0), num(a, 1, 40.0).toInt().coerceIn(1, 500)).map { mapOf("emoji" to it.emoji, "name" to it.nameEn) }
         }
-        def(emoji, "recent") { _, _ -> EmojiRecents.items }
-        ScriptableObject.putProperty(kb, "emoji", emoji)
+        def(emoji, "recent") { _ -> EmojiRecents.items }
+        kb["emoji"] = emoji
 
         // --- файлы мода (своя папка, до 32 МБ)
-        val files = cx.newObject(s)
-        def(files, "write") { _, a ->
+        val files = linkedMapOf<String, Any?>()
+        def(files, "write") { a ->
             val f = modFile(ctx, m, str(a, 0))
             val bytes = str(a, 1).toByteArray()
             checkQuota(ctx, m, bytes.size, f)
             f.writeBytes(bytes)
             Unit
         }
-        def(files, "append") { _, a ->
+        def(files, "append") { a ->
             val f = modFile(ctx, m, str(a, 0))
             val bytes = str(a, 1).toByteArray()
             checkQuota(ctx, m, (f.length() + bytes.size).toInt(), f)
             f.appendBytes(bytes)
             Unit
         }
-        def(files, "read") { _, a -> modFile(ctx, m, str(a, 0)).takeIf { it.exists() }?.readText() }
-        def(files, "writeBase64") { _, a ->
+        def(files, "read") { a -> modFile(ctx, m, str(a, 0)).takeIf { it.exists() }?.readText() }
+        def(files, "writeBase64") { a ->
             val f = modFile(ctx, m, str(a, 0))
             val bytes = android.util.Base64.decode(str(a, 1).substringAfter("base64,"), android.util.Base64.DEFAULT)
             checkQuota(ctx, m, bytes.size, f)
             f.writeBytes(bytes)
             Unit
         }
-        def(files, "readBase64") { _, a ->
+        def(files, "readBase64") { a ->
             modFile(ctx, m, str(a, 0)).takeIf { it.exists() }?.let { android.util.Base64.encodeToString(it.readBytes(), android.util.Base64.NO_WRAP) }
         }
-        def(files, "exists") { _, a -> modFile(ctx, m, str(a, 0)).exists() }
-        def(files, "delete") { _, a -> modFile(ctx, m, str(a, 0)).delete() }
-        def(files, "list") { _, _ ->
+        def(files, "exists") { a -> modFile(ctx, m, str(a, 0)).exists() }
+        def(files, "delete") { a -> modFile(ctx, m, str(a, 0)).delete() }
+        def(files, "list") { _ ->
             modDir(ctx, m).listFiles()?.map { mapOf("name" to it.name, "size" to it.length(), "modified" to it.lastModified()) }.orEmpty()
         }
-        ScriptableObject.putProperty(kb, "files", files)
+        kb["files"] = files
 
         // --- полезное: хэши, base64, uuid, даты
-        val util = cx.newObject(s)
-        def(util, "sha256") { _, a -> digest("SHA-256", str(a, 0)) }
-        def(util, "sha1") { _, a -> digest("SHA-1", str(a, 0)) }
-        def(util, "md5") { _, a -> digest("MD5", str(a, 0)) }
-        def(util, "base64Encode") { _, a -> android.util.Base64.encodeToString(str(a, 0).toByteArray(), android.util.Base64.NO_WRAP) }
-        def(util, "base64Decode") { _, a -> String(android.util.Base64.decode(str(a, 0), android.util.Base64.DEFAULT)) }
-        def(util, "urlEncode") { _, a -> java.net.URLEncoder.encode(str(a, 0), "UTF-8") }
-        def(util, "urlDecode") { _, a -> java.net.URLDecoder.decode(str(a, 0), "UTF-8") }
-        def(util, "uuid") { _, _ -> java.util.UUID.randomUUID().toString() }
-        def(util, "now") { _, _ -> System.currentTimeMillis().toDouble() }
-        def(util, "formatDate") { _, a ->
+        val util = linkedMapOf<String, Any?>()
+        def(util, "sha256") { a -> digest("SHA-256", str(a, 0)) }
+        def(util, "sha1") { a -> digest("SHA-1", str(a, 0)) }
+        def(util, "md5") { a -> digest("MD5", str(a, 0)) }
+        def(util, "base64Encode") { a -> android.util.Base64.encodeToString(str(a, 0).toByteArray(), android.util.Base64.NO_WRAP) }
+        def(util, "base64Decode") { a -> String(android.util.Base64.decode(str(a, 0), android.util.Base64.DEFAULT)) }
+        def(util, "urlEncode") { a -> java.net.URLEncoder.encode(str(a, 0), "UTF-8") }
+        def(util, "urlDecode") { a -> java.net.URLDecoder.decode(str(a, 0), "UTF-8") }
+        def(util, "uuid") { _ -> java.util.UUID.randomUUID().toString() }
+        def(util, "now") { _ -> System.currentTimeMillis().toDouble() }
+        def(util, "formatDate") { a ->
             java.text.SimpleDateFormat(str(a, 1, "yyyy-MM-dd HH:mm"), java.util.Locale.getDefault()).format(java.util.Date(num(a, 0, System.currentTimeMillis().toDouble()).toLong()))
         }
         // все преобразования действий transform: upper, translit, layout_swap, calc, bold, …
-        def(util, "transform") { _, a ->
+        def(util, "transform") { a ->
             val o = opts(a, 2)
             val name = str(a, 0)
             require(name in PluginParser.TRANSFORMS) { "transform: неизвестное преобразование «$name»" }
@@ -1585,11 +1539,12 @@ object ScriptHost {
                 str(a, 1)
             )
         }
-        ScriptableObject.putProperty(kb, "util", util)
-        ScriptableObject.putProperty(s, "btoa", Fn(s, "btoa") { _, a -> android.util.Base64.encodeToString(str(a, 0).toByteArray(Charsets.ISO_8859_1), android.util.Base64.NO_WRAP) })
-        ScriptableObject.putProperty(s, "atob", Fn(s, "atob") { _, a -> String(android.util.Base64.decode(str(a, 0), android.util.Base64.DEFAULT), Charsets.ISO_8859_1) })
+        kb["util"] = util
+        def(globals, "btoa") { a -> android.util.Base64.encodeToString(str(a, 0).toByteArray(Charsets.ISO_8859_1), android.util.Base64.NO_WRAP) }
+        def(globals, "atob") { a -> String(android.util.Base64.decode(str(a, 0), android.util.Base64.DEFAULT), Charsets.ISO_8859_1) }
 
-        ScriptableObject.putProperty(s, "kb", kb)
+        globals["kb"] = kb
+        return globals
     }
 
     /** Роутер, сам телефон, локальная сеть: моды не должны сканировать домашнюю сеть. */
@@ -1663,7 +1618,7 @@ object ScriptHost {
         return list.mapNotNull { node(m, it) }
     }
 
-    private fun call(m: Mod, v: Any?) = (v as? JsFunction)?.let { ScriptCall(m.plugin.id, it) }
+    private fun call(m: Mod, v: Any?) = (v.scriptFunction())?.let { ScriptCall(m.plugin.id, it, m.runtime) }
 
     private fun node(m: Mod, v: Any?): UiNode? {
         if (v is String) return UiNode.Text(v, 14f, false, null, false)

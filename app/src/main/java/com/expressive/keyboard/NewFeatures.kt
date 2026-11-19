@@ -2,16 +2,11 @@ package com.expressive.keyboard
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
-import androidx.compose.material.icons.automirrored.rounded.Backspace
-import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import kotlin.math.roundToInt
 
 // Страницы «Новое» и «Энергосбережение».
-
-/** Версия, о которой рассказывает «Новое»: страницу обновляем к каждому выпуску. */
-private const val NEW_IN_VERSION = "11.2.4"
 
 /** Размер клавиатуры в альбомной: и в «Клавишах», и в «Новом». */
 @Composable
@@ -26,83 +21,33 @@ internal fun LandscapeScaleItem(settings: KeyboardSettings) {
 }
 
 @Composable
-internal fun WhatsNewPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> Unit) {
-    val context = LocalContext.current
-
-    InfoCard(Icons.Rounded.NewReleases, tr("В версии {0}", NEW_IN_VERSION))
-
-    SettingsSection("Умнее подсказки") {
-        InfoCard(Icons.Rounded.Psychology, "Новая языковая модель русского: разговорная речь из субтитров, веб, новости, Википедия и книги — и тройки слов («я не» → «знаю»)")
-        InfoCard(Icons.Rounded.FitScreen, "Длинные подсказки уменьшаются, а не обрезаются")
-        InfoCard(Icons.AutoMirrored.Rounded.Undo, "Стёрли кусок текста свайпом по ⌫ — в подсказках «↶», чтобы вернуть")
+internal fun WhatsNewPage(onNavigate: (SettingsPage) -> Unit) {
+    InfoCard(Icons.Rounded.NewReleases, tr("В версии {0}", BuildConfig.VERSION_NAME.substringBefore('-')))
+    SettingsSection("Ввод") {
+        ActionItem(Icons.Rounded.Calculate, "Ответ после знака «=»",
+            "Например, 199+123= показывает 322. Нажмите на ответ, чтобы вставить его.",
+            onClick = { onNavigate(SettingsPage.TYPING) })
+        ActionItem(Icons.Rounded.Send, "Отправка долгим нажатием Enter",
+            "Если приложение поддерживает IME-действие отправки",
+            onClick = { onNavigate(SettingsPage.GESTURES) })
+        InfoCard(Icons.Rounded.Keyboard, "Исправлены быстрый набор с Shift и устаревшие подсказки при повороте экрана")
     }
-    SettingsSection("Удержание и кнопки") {
-        ActionItem(
-            Icons.Rounded.TouchApp, "Символы при удержании",
-            "Свои символы на любой клавише: ғ на «г», $ на «d»",
-            onClick = { onNavigate(SettingsPage.LONG_PRESS) }
-        )
-        ActionItem(
-            Icons.Rounded.Interests, "Вид окна удержания и кнопка справа",
-            "Фигуры, круги, квадраты или одна панель; микрофон можно заменить на эмодзи, буфер, перевод…",
-            onClick = { onNavigate(SettingsPage.KEYS) }
-        )
-        InfoCard(Icons.Rounded.Pin, "Цифры удержанием на e, y, u, i, o; на странице «?123» — валюта вашего языка")
+    SettingsSection("Внешний вид") {
+        ActionItem(Icons.Rounded.Wallpaper, "Размещение фото",
+            "Масштаб, ширина, высота и положение фото под клавишами",
+            onClick = { onNavigate(SettingsPage.COLORS) })
+        ActionItem(Icons.Rounded.Palette, "Создать тему",
+            "Разделы редактора, предпросмотр и сохранение отдельной копии темы",
+            onClick = { onNavigate(SettingsPage.THEMES) })
     }
-    SettingsSection("Эмодзи и языки") {
-        InfoCard(Icons.Rounded.Swipe, "Категории эмодзи листаются свайпом и открываются с начала")
-        InfoCard(Icons.Rounded.Language, "Амхарский и тигринья (selam → ሰላም) и ещё 45 языков")
-    }
-    SettingsSection("Японский: кандзи") {
-        InfoCard(Icons.Rounded.Translate, "Хирагана превращается в кандзи: にほんご → 日本語. Слова и целые фразы, словарь встроен")
-    }
-    SettingsSection("Размер и закрытие") {
-        InfoCard(Icons.Rounded.SwipeDown, "Свайп вниз по строке подсказок закрывает клавиатуру (можно выключить в «Жестах»)")
-        InfoCard(Icons.Rounded.OpenInFull, "Плавающая клавиатура: уголок слева на ручке меняет ширину (влево-вправо) и высоту клавиш (вверх-вниз)")
-        InfoCard(Icons.Rounded.KeyboardReturn, "Ширина клавиши ввода и высота ряда цифр — в «Оформлении»")
-        InfoCard(Icons.Rounded.ContentCut, "Панель правки: добавлены «Вырезать» и «⌫»")
-    }
-    SettingsSection("Испанский интерфейс") {
-        InfoCard(Icons.Rounded.Language, "Язык интерфейса: Español")
-        InfoCard(Icons.Rounded.Public, "Бенгальский (Бангладеш)")
-    }
-    SettingsSection("Обновление без переустановки") {
-        InfoCard(Icons.Rounded.SystemUpdate, "Версия ставится поверх и 11.2.0, и 11.1.9 и старше — удалять клавиатуру больше не нужно")
-        ActionItem(
-            Icons.Rounded.Backup, "Словарь Т9 не пропадает",
-            "Автокопия в папку и системная копия Android: после переустановки слова возвращаются",
-            onClick = { onNavigate(SettingsPage.BACKUP) }
-        )
-    }
-
-    SettingsSection("Material 3 Expressive") {
-        ActionItem(
-            Icons.Rounded.Style, "Новые дизайны и формы",
-            "Material 3 Expressive, Material 3, Liquid Glass, Classic, Neon, Samsung, Nothing — в один тап",
-            onClick = { onNavigate(SettingsPage.THEMES) }
-        )
-        ActionItem(
-            Icons.Rounded.ColorLens, "Сколько выразительных форм",
-            "Много форм, только акценты или совсем без них",
-            onClick = { onNavigate(SettingsPage.COLORS) }
-        )
-    }
-    SettingsSection("Эмодзи") {
-        ToggleItem(
-            Icons.Rounded.Keyboard, "Возврат к буквам после эмодзи",
-            "Выключено: панель остаётся открытой, и можно выбрать несколько эмодзи подряд",
-            settings.emojiReturnToKeyboard
-        ) { on -> KeyboardPrefs.edit(context) { putBoolean("emoji_return_keyboard", on) } }
-    }
-    SettingsSection("Звуки нажатия") {
-        ActionItem(
-            Icons.Rounded.VolumeUp, "Новые звуки клавиш",
-            "Создаются прямо в приложении, отдельно для букв и для пробела, Enter и ⌫",
-            onClick = { onNavigate(SettingsPage.FEEDBACK) }
-        )
-    }
-    SettingsSection("Первый запуск") {
-        InfoCard(Icons.Rounded.AutoAwesome, "Новые пользователи выбирают тему, количество форм и нужные функции при первом запуске")
+    SettingsSection("Клавиатура") {
+        InfoCard(Icons.Rounded.EmojiEmotions, "Недавние эмодзи меняют порядок при следующем открытии меню")
+        ActionItem(Icons.Rounded.Language, "Арабский (Египет)",
+            "Новая раскладка и обновлённый редактор рядов",
+            onClick = { onNavigate(SettingsPage.LANGUAGES) })
+        ActionItem(Icons.Rounded.Straighten, "Размер и положение",
+            "Одинаковая высота букв и символов. Свои размеры плавающей клавиатуры.",
+            onClick = { onNavigate(SettingsPage.SIZE) })
     }
 }
 

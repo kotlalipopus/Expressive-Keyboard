@@ -532,11 +532,7 @@ internal fun StylePreview(settings: KeyboardSettings, spec: WavySpec) {
     val labelSize = (20f * settings.keyLabelScale).sp
     Box(Modifier.fillMaxWidth().padding(12.dp).clip(RoundedCornerShape(24.dp)).background(palette.background)) {
         if (image != null) {
-            Image(
-                image, null, contentScale = ContentScale.Crop,
-                modifier = Modifier.matchParentSize()
-                    .then(if (settings.bgBlurDp > 0f && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Modifier.blur(settings.bgBlurDp.dp) else Modifier)
-            )
+            KeyboardPhoto(image, settings, Modifier.matchParentSize())
             Box(Modifier.matchParentSize().background(palette.background.copy(alpha = settings.bgDim)))
         }
         Column(Modifier.fillMaxWidth().padding(8.dp), verticalArrangement = Arrangement.spacedBy(settings.rowSpacingDp.dp)) {

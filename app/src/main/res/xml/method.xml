@@ -14,4 +14,10 @@
         android:imeSubtypeMode="keyboard"
         android:label="@string/subtype_en" />
 
+    <subtype
+        android:imeSubtypeLocale="ar_EG"
+        android:languageTag="ar-EG"
+        android:imeSubtypeMode="keyboard"
+        android:label="@string/subtype_ar_eg" />
+
 </input-method>

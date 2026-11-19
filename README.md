@@ -67,6 +67,7 @@ cd Expressive-Keyboard
 ./gradlew assembleDebug
 ```
 
+Install Android NDK (Side by side) version `28.2.13676358` from the Android Studio SDK Manager to build QuickJS.
 The APK will be in `app/build/outputs/apk/debug/`.
 
 To enable GIF search, put your own Giphy key into `GIPHY_API_KEY` in

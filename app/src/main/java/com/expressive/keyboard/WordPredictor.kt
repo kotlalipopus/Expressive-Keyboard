@@ -166,7 +166,8 @@ data class SuggestionChipModel(
     val commitWord: String,
     val isPrimary: Boolean = false,
     val isKeepExact: Boolean = false,
-    val isUndo: Boolean = false
+    val isUndo: Boolean = false,
+    val isCalculation: Boolean = false
 ) {
     val isEmpty: Boolean get() = commitWord.isEmpty() && !isUndo
 

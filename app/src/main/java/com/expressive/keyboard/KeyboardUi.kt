@@ -180,7 +180,7 @@ fun KeyboardRoot(
         val s = if (landscape) s0.forLandscape(configuration.screenHeightDp) else s0
         // плавающая — компактнее: клавиши ниже, без режима одной руки и своей ширины (ширину задаёт окно)
         if (s.floating) s.copy(
-            keyHeightDp = (s.keyHeightDp * 0.86f).coerceAtLeast(28f), bottomOffsetDp = min(s.bottomOffsetDp, 4f),
+            bottomOffsetDp = min(s.bottomOffsetDp, 4f),
             oneHanded = "OFF", keyboardWidth = 1f
         ) else s
     }
@@ -217,7 +217,7 @@ fun KeyboardRoot(
             onWindowBlur(if (blurDp == null) 0 else with(density) { blurDp.dp.roundToPx() }, blurTint, corner)
         }
         // подложку для стекла считаем в фоне и только когда оформление стеклянное (при размытии окна она не нужна)
-        LaunchedEffect(skin, image, palette.background, settings.bgDim, rootSize, blurDp) {
+        LaunchedEffect(skin, image, palette.background, settings.bgDim, settings.photoFrame, rootSize, blurDp) {
             val needsBackdrop = skin != null && skin.usesGlass && (blurDp == null || (skin.usesLiquid && Build.VERSION.SDK_INT >= 33))
             backdrop.overWindowBlur = blurDp != null
             if (skin == null || !needsBackdrop || rootSize.width == 0 || rootSize.height == 0) {
@@ -227,13 +227,15 @@ fun KeyboardRoot(
             // окно раскладывается за несколько кадров: пауза не даёт перерисовывать подложку на каждый промежуточный размер
             delay(50L)
             val (bmp, s) = withContext(Dispatchers.Default) {
-                renderBackdrop(rootSize.width, rootSize.height, density, skin, palette.background, image, if (image != null) settings.bgDim else 0f)
+                renderBackdrop(rootSize.width, rootSize.height, density, skin, palette.background, image, settings.photoFrame, settings.bgDim)
             }
             backdrop.scale = s
             backdrop.bitmap = bmp
         }
+        val navigation = WindowInsets.navigationBars.union(WindowInsets.tappableElement).union(WindowInsets.captionBar)
+        val safeEdges = WindowInsets.displayCutout.union(navigation)
         CompositionLocalProvider(LocalSkin provides skin, LocalBackdrop provides backdrop) {
-          FloatingFrame(floating, settings, raw.keyHeightDp, palette, corner, onFloatBounds) {
+          FloatingFrame(floating, settings, safeEdges, palette, corner, onFloatBounds) { keyHeight ->
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = if (floating) RectangleShape else RoundedCornerShape(topStart = corner.dp, topEnd = corner.dp),
@@ -252,24 +254,15 @@ fun KeyboardRoot(
                         Canvas(Modifier.matchParentSize().graphicsLayer { alpha = bgAlpha }) { drawSkinBackground(skin, size) }
                     }
                     if (image != null && bgAlpha > 0.01f) {
-                        val blur = settings.bgBlurDp
-                        Image(
-                            bitmap = image,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            alpha = bgAlpha,
-                            modifier = Modifier.matchParentSize()
-                                .then(if (blur > 0f && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Modifier.blur(blur.dp) else Modifier)
-                        )
+                        KeyboardPhoto(image, settings, Modifier.matchParentSize(), bgAlpha)
                         if (settings.bgDim > 0f) Box(Modifier.matchParentSize().background(palette.background.copy(alpha = settings.bgDim * bgAlpha)))
                     }
                     // фон — до самых краёв экрана, клавиши — в стороне от выреза камеры, боковой панели навигации
                     // и скруглённых углов экрана; отступы одинаковые с обеих сторон, иначе в альбомной одна
                     // половина упиралась в край, а у другой был пустой вырез
-                    val cut = WindowInsets.displayCutout.union(WindowInsets.navigationBars)
                     val side = with(density) {
-                        val l = cut.getLeft(this, LayoutDirection.Ltr)
-                        val r = cut.getRight(this, LayoutDirection.Ltr)
+                        val l = safeEdges.getLeft(this, LayoutDirection.Ltr)
+                        val r = safeEdges.getRight(this, LayoutDirection.Ltr)
                         max(max(l, r).toDp(), if (settings.landscape) 20.dp else 0.dp)
                     }
                     Box(
@@ -277,11 +270,14 @@ fun KeyboardRoot(
                             // плавающая не стоит у края экрана: отступы под панель навигации и вырез ей не нужны
                             .then(
                                 if (floating) Modifier
-                                else Modifier.windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom)).padding(horizontal = side)
+                                else Modifier.windowInsetsPadding(safeEdges.only(WindowInsetsSides.Bottom)).padding(horizontal = side)
                             )
                             .padding(bottom = settings.bottomOffsetDp.dp)
                     ) {
-                        KeyboardScreen(state, actions, voice, settings, palette, font)
+                        val screenSettings = remember(settings, keyHeight) {
+                            if (settings.keyHeightDp == keyHeight) settings else settings.copy(keyHeightDp = keyHeight)
+                        }
+                        KeyboardScreen(state, actions, voice, screenSettings, palette, font)
                     }
                     // ободок стеклянного листа: светлая линия по верхнему краю, по скруглениям уходит в ничто
                     skin?.edge?.let { edge ->
@@ -305,27 +301,31 @@ fun KeyboardRoot(
 internal fun FloatingFrame(
     enabled: Boolean,
     settings: KeyboardSettings,
-    /** Высота клавиш из настроек: в плавающем режиме на экране она меньше (×0.86), а сохранять надо исходную. */
-    baseKeyHeightDp: Float,
+    safeEdges: WindowInsets,
     palette: KeyPalette,
     cornerDp: Float,
     onBounds: (android.graphics.Rect?) -> Unit,
-    content: @Composable () -> Unit
+    content: @Composable (Float) -> Unit
 ) {
     if (!enabled) {
         LaunchedEffect(Unit) { onBounds(null) }
-        content()
+        content(settings.keyHeightDp)
         return
     }
     val context = LocalContext.current
-    BoxWithConstraints(Modifier.fillMaxSize()) {
+    BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(safeEdges)) {
         val density = LocalDensity.current
         val conf = LocalConfiguration.current
         // на случай прошивки, где окно клавиатуры не ограничивает высоту: берём высоту экрана
         val maxW = if (constraints.hasBoundedWidth) constraints.maxWidth.toFloat() else with(density) { conf.screenWidthDp.dp.toPx() }
         val maxH = if (constraints.hasBoundedHeight) constraints.maxHeight.toFloat() else with(density) { conf.screenHeightDp.dp.toPx() }
         // ширину можно тянуть за уголок на ручке: во время жеста — живая, при отпускании сохраняется
-        val liveWidth = remember(settings.floatWidth) { mutableStateOf(settings.floatWidth) }
+        val liveWidth = remember { mutableStateOf(settings.floatWidth) }
+        val liveHeight = remember { mutableStateOf(settings.floatKeyHeightDp) }
+        LaunchedEffect(settings.floatWidth, settings.floatKeyHeightDp) {
+            liveWidth.value = settings.floatWidth
+            liveHeight.value = settings.floatKeyHeightDp
+        }
         val widthPx = maxW * liveWidth.value
         val kbH = remember { mutableIntStateOf(0) }
         val pos = remember(maxW, maxH) { mutableStateOf<Offset?>(null) }
@@ -335,15 +335,16 @@ internal fun FloatingFrame(
         val fx = settings.floatX
         val fy = settings.floatY
         fun place(): Offset {
-            val freeX = (maxW - widthPx).coerceAtLeast(0f)
+            val width = maxW * liveWidth.value
+            val freeX = (maxW - width).coerceAtLeast(0f)
             val freeY = (maxH - kbH.intValue).coerceAtLeast(0f)
             val base = pos.value ?: Offset(freeX * fx, freeY * (1f - fy))
-            val p = Offset(anchorRight.value?.let { it - widthPx } ?: base.x, anchorBottom.value?.let { it - kbH.intValue } ?: base.y)
+            val p = Offset(anchorRight.value?.let { it - width } ?: base.x, anchorBottom.value?.let { it - kbH.intValue } ?: base.y)
             return Offset(p.x.coerceIn(0f, freeX), p.y.coerceIn(0f, freeY))
         }
         fun save() {
             val p = place()
-            val freeX = (maxW - widthPx).coerceAtLeast(1f)
+            val freeX = (maxW * (1f - liveWidth.value)).coerceAtLeast(1f)
             val freeY = (maxH - kbH.intValue).coerceAtLeast(1f)
             KeyboardPrefs.edit(context) {
                 putFloat("float_x", (p.x / freeX).coerceIn(0f, 1f))
@@ -376,15 +377,11 @@ internal fun FloatingFrame(
             ) {
                 Box(Modifier.size(width = 44.dp, height = 5.dp).clip(CircleShape).background(palette.onFunc.copy(alpha = 0.45f)))
                 // уголок (левый верхний угол карточки): влево — шире, вверх — выше клавиши; размер меняется сразу.
-                // Ключ жеста — только ширина экрана: высота клавиш пишется в настройки по ходу жеста, и с ней в
-                // ключах жест обрывался бы на первом же шаге
-                val keyH by rememberUpdatedState(baseKeyHeightDp)
                 Box(
                     Modifier.align(Alignment.CenterStart).padding(start = 2.dp).size(width = 36.dp, height = 26.dp)
                         .pointerInput(maxW) {
                             var startW = 0f
                             var startH = 0f
-                            var lastH = 0f
                             var dxSum = 0f
                             var dySum = 0f
                             fun finish() {
@@ -394,7 +391,7 @@ internal fun FloatingFrame(
                                 pos.value = p
                                 KeyboardPrefs.edit(context) {
                                     putFloat("float_width", liveWidth.value)
-                                    if (lastH != startH) putFloat("key_height_dp", lastH)
+                                    putFloat("float_key_height_dp", liveHeight.value)
                                 }
                                 save()
                             }
@@ -402,8 +399,7 @@ internal fun FloatingFrame(
                                 onDragStart = {
                                     val p = place()
                                     startW = liveWidth.value
-                                    startH = keyH
-                                    lastH = keyH
+                                    startH = liveHeight.value
                                     dxSum = 0f
                                     dySum = 0f
                                     anchorRight.value = p.x + maxW * startW
@@ -418,11 +414,7 @@ internal fun FloatingFrame(
                                 liveWidth.value = (startW - dxSum / maxW).coerceIn(0.5f, 1f)
                                 // ~4 ряда клавиш: палец вверх на N dp — клавиатура выше примерно на столько же
                                 val h = ((startH - dySum / density.density / 4f) * 2f).roundToInt() / 2f
-                                val hc = h.coerceIn(32f, 68f)
-                                if (hc != lastH) {
-                                    lastH = hc
-                                    KeyboardPrefs.edit(context) { putFloat("key_height_dp", hc) }
-                                }
+                                liveHeight.value = h.coerceIn(28f, 68f)
                             }
                         },
                     contentAlignment = Alignment.Center
@@ -440,7 +432,7 @@ internal fun FloatingFrame(
                     Icon(Icons.Rounded.VerticalAlignBottom, tr("Закрепить внизу"), tint = palette.onFunc, modifier = Modifier.size(15.dp))
                 }
             }
-            content()
+            content(liveHeight.value)
         }
     }
 }
@@ -459,8 +451,16 @@ internal fun KeyboardScreen(
     val layer = remember { CoordsHolder() }
     val spec = remember(settings.shapePreset, settings.waveCount, settings.waveAmplitudePercent, settings.shapeAmount) { settings.accentSpec().accent(settings) }
     val panel = state.panel
-    val numbers = settings.showNumberRow && state.symbolsPage == 0 && !state.numberPad
-    val bodyHeight = (settings.keyHeightDp * (if (numbers) 4f + settings.numberRowScale else 4f) + settings.rowSpacingDp * (if (numbers) 4f else 3f)).dp
+    val lang = remember(state.language, settings.langLayouts, Languages.extra) {
+        Languages.applyUserLayouts(settings.langLayouts)
+        Languages.withUser(state.language)
+    }
+    // The letter layout sets the height; symbol rows share that space.
+    val letters = if (state.numberPad) 4 else lang.rows.size + 1
+    val numbers = settings.showNumberRow && !state.numberPad
+    val rowWeight = letters + if (numbers) settings.numberRowScale else 0f
+    val rowGaps = letters - if (numbers) 0 else 1
+    val bodyHeight = (settings.keyHeightDp * rowWeight + settings.rowSpacingDp * rowGaps).dp
     val trailColor = LocalSkin.current?.trail ?: palette.accent.copy(alpha = 0.85f)
     val density = LocalDensity.current
     SideEffect {
@@ -531,9 +531,9 @@ internal fun KeyboardScreen(
                             }
                         },
                         label = "body"
-                    ) { target -> PanelBody(target, state, actions, voice, settings, palette, font, spec, popup, layer, glide) }
+                    ) { target -> PanelBody(target, state, lang, actions, voice, settings, palette, font, spec, popup, layer, glide) }
                 } else {
-                    PanelBody(body, state, actions, voice, settings, palette, font, spec, popup, layer, glide)
+                    PanelBody(body, state, lang, actions, voice, settings, palette, font, spec, popup, layer, glide)
                 }
             }
         }
@@ -549,6 +549,7 @@ internal fun KeyboardScreen(
 internal fun PanelBody(
     target: ActivePanel,
     state: KeyboardState,
+    lang: KeyboardLanguage,
     actions: KeyboardActions,
     voice: VoiceInput,
     settings: KeyboardSettings,
@@ -560,12 +561,12 @@ internal fun PanelBody(
     glide: GlideController
 ) {
     when (target) {
-        ActivePanel.EMOJI -> EmojiPanel(actions, settings, palette, font)
+        ActivePanel.EMOJI -> EmojiPanel(state.emojiRecents, actions, settings, palette, font)
         ActivePanel.GIF -> GifPanel(state, actions, settings, palette, font)
         ActivePanel.CLIPBOARD -> ClipboardPanel(state, actions, palette, font)
         ActivePanel.VOICE -> VoicePanel(state, actions, voice, palette, font, spec)
         ActivePanel.PLUGINS -> PluginsPanel(state, actions, palette, font)
-        else -> KeyArea(state, actions, settings, palette, font, popup, layer, glide)
+        else -> KeyArea(state, lang, actions, settings, palette, font, popup, layer, glide)
     }
 }
 
@@ -573,6 +574,7 @@ internal fun PanelBody(
 @Composable
 internal fun KeyArea(
     state: KeyboardState,
+    lang: KeyboardLanguage,
     actions: KeyboardActions,
     settings: KeyboardSettings,
     palette: KeyPalette,
@@ -586,16 +588,16 @@ internal fun KeyArea(
         // своя ширина (на планшете клавиши во всю ширину слишком длинные) — клавиши по центру
         if (settings.keyboardWidth < 0.99f) {
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Box(Modifier.fillMaxWidth(settings.keyboardWidth)) { KeyGrid(state, actions, settings, palette, font, popup, layer, glide) }
+                Box(Modifier.fillMaxWidth(settings.keyboardWidth)) { KeyGrid(state, lang, actions, settings, palette, font, popup, layer, glide) }
             }
-        } else KeyGrid(state, actions, settings, palette, font, popup, layer, glide)
+        } else KeyGrid(state, lang, actions, settings, palette, font, popup, layer, glide)
         return
     }
     val context = LocalContext.current
     val w = settings.oneHandedWidth
     Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         if (mode == "RIGHT") OneHandRail(Modifier.weight(1f - w), palette, mode, context)
-        Box(Modifier.weight(w).fillMaxHeight()) { KeyGrid(state, actions, settings, palette, font, popup, layer, glide) }
+        Box(Modifier.weight(w).fillMaxHeight()) { KeyGrid(state, lang, actions, settings, palette, font, popup, layer, glide) }
         if (mode == "LEFT") OneHandRail(Modifier.weight(1f - w), palette, mode, context)
     }
 }
@@ -623,6 +625,7 @@ internal fun OneHandRail(modifier: Modifier, palette: KeyPalette, mode: String, 
 @Composable
 internal fun KeyGrid(
     state: KeyboardState,
+    lang: KeyboardLanguage,
     actions: KeyboardActions,
     settings: KeyboardSettings,
     palette: KeyPalette,
@@ -631,18 +634,13 @@ internal fun KeyGrid(
     layer: CoordsHolder,
     glide: GlideController
 ) {
-    // своя раскладка языка из настроек (тот же язык — другие ряды)
-    val lang = remember(state.language, settings.langLayouts) {
-        Languages.applyUserLayouts(settings.langLayouts)
-        Languages.withUser(state.language)
-    }
     val page = state.symbolsPage
     val shift = state.shift
     val enter = state.enterAction
     val pluginLayouts = PluginRepository.layouts
     val scriptLayouts = ScriptHost.layoutOverrides
     val langLabels = remember(settings.languages, Languages.extra) { Languages.enabled(settings).map { it.label } }
-    val split = settings.landscape && settings.landscapeSplit
+    val split = !settings.floating && settings.landscape && settings.landscapeSplit
     val letterRows = remember(
         lang, lang.rows, page, settings.showNumberRow, settings.showGlobeKey, settings.showEmojiKey, settings.punctuationKeys,
         settings.spaceLeftKey, settings.spaceRightKey, langLabels, pluginLayouts, scriptLayouts, settings.userLayouts
@@ -697,6 +695,9 @@ internal fun KeyGrid(
                         numberRow = isNumberRow,
                         modifier = Modifier.weight(if (key.type == KeyType.ENTER) key.weight * settings.enterWidth else key.weight).fillMaxHeight(),
                         holdSymbol = if (isChar) holdSymbols[key] else null,
+                        translatorSpace = state.panel == ActivePanel.TRANSLATE,
+                        editorEnter = state.panel == ActivePanel.KEYBOARD,
+                        liveUpper = { state.shift != ShiftState.OFF && state.symbolsPage == 0 },
                         gapX = hSpace,
                         gapY = settings.rowSpacingDp.dp
                     )

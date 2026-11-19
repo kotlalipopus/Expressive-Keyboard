@@ -228,6 +228,7 @@ internal val ES_STRINGS: Map<String, String> = hashMapOf(
     "Всплывающая буква при нажатии" to "Ventana emergente de letra al pulsar",
     "Контур клавиш" to "Contorno de teclas",
     "Кнопка смены языка" to "Tecla de idioma",
+    "Включите второй язык в настройках" to "Activa un segundo idioma en los ajustes",
     "Без неё язык меняется свайпом по пробелу. Удержание — список языков" to "Sin ella, el idioma se cambia deslizando la barra espaciadora. Mantener pulsado muestra la lista",
     "Запятая и точка на странице ?123" to "Coma y punto en la página ?123",
     "По бокам пробела. Удержание — другие знаки: ; : ' \" ? ! …" to "Junto a la barra espaciadora. Mantén pulsado para más: ; : ' \" ? ! …",

@@ -176,7 +176,8 @@ enum class SettingsPage(val title: String, val subtitle: String, val icon: Image
     THEMES("Темы", "Светлая или тёмная; Minecraft, Samsung, Nothing, стекло; настройки темы и свои темы", Icons.Rounded.Style, ExpressiveShapePreset.FLOWER_6),
     THEME_EDITOR("Редактор темы", "Всё оформление: фон, клавиши, форма, тени, шрифт", Icons.Rounded.Brush, ExpressiveShapePreset.SUNNY_8),
     COLORS("Цвета и фон", "Акцентный цвет, палитра Material You, цвета клавиш, картинка и размытие", Icons.Rounded.ColorLens, ExpressiveShapePreset.FLOWER_6),
-    KEYS("Клавиши и шрифт", "Размер, шрифт, кнопки у пробела, ряд цифр, одна рука, свои места клавиш", Icons.Rounded.Keyboard, ExpressiveShapePreset.CLOVER_4),
+    SIZE("Размер и положение", "Высота, ширина, плавающий режим и режим одной руки", Icons.Rounded.Straighten, ExpressiveShapePreset.CLOVER_4),
+    KEYS("Клавиши и шрифт", "Ряд цифр, кнопки у пробела, символы при удержании и шрифт", Icons.Rounded.Keyboard, ExpressiveShapePreset.CLOVER_4),
     LAYOUT("Свои места клавиш", "Поменяйте местами любые клавиши: буквы, цифры, пробел, запятую, эмодзи…", Icons.Rounded.SwapHoriz, ExpressiveShapePreset.SUNNY_8),
     LONG_PRESS("Символы при удержании", "Свои символы на любой клавише: ғ на «г», $ на «d»", Icons.Rounded.TouchApp, ExpressiveShapePreset.FLOWER_6),
     ANIMATIONS("Анимации", "Нажатие клавиш, свои анимации, скорость, подсказки и панели", Icons.Rounded.Animation, ExpressiveShapePreset.CLOVER_4),
@@ -196,7 +197,7 @@ enum class SettingsPage(val title: String, val subtitle: String, val icon: Image
     val parent: SettingsPage
         get() = when (this) {
             THEME_EDITOR -> THEMES
-            LAYOUT -> KEYS
+            LAYOUT -> LANGUAGES
             LONG_PRESS -> KEYS
             else -> HOME
         }
@@ -243,18 +244,38 @@ internal fun importCustomFont(context: Context, uri: Uri): String? = runCatching
 
 /** Картинка уменьшается до ~1600 px и пересжимается — клавиатура не держит в памяти 50-мегапиксельное фото. */
 internal fun importBackground(context: Context, uri: Uri): Boolean = runCatching {
-    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    context.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
-    val maxSide = max(bounds.outWidth, bounds.outHeight)
-    if (maxSide <= 0) return false
-    var sample = 1
-    while (maxSide / (sample * 2) >= 1600) sample *= 2
-    val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
-    val bmp = context.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, opts) } ?: return false
-    File(context.filesDir, KeyboardPrefs.BG_IMAGE_FILENAME).outputStream().use {
-        bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 88, it)
+    val bmp = if (Build.VERSION.SDK_INT >= 28) {
+        android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(context.contentResolver, uri)) { decoder, info, _ ->
+            decoder.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE
+            val edge = max(info.size.width, info.size.height)
+            if (edge > 1600) decoder.setTargetSize(
+                (info.size.width * (1600f / edge)).toInt().coerceAtLeast(1),
+                (info.size.height * (1600f / edge)).toInt().coerceAtLeast(1)
+            )
+        }
+    } else {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+        val maxSide = max(bounds.outWidth, bounds.outHeight)
+        if (maxSide <= 0) return false
+        var sample = 1
+        while (maxSide / (sample * 2) >= 1600) sample *= 2
+        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+        context.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, opts) } ?: return false
     }
-    bmp.recycle()
+    val file = android.util.AtomicFile(File(context.filesDir, KeyboardPrefs.BG_IMAGE_FILENAME))
+    try {
+        val stream = file.startWrite()
+        try {
+            check(bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 88, stream))
+            file.finishWrite(stream)
+        } catch (error: Exception) {
+            file.failWrite(stream)
+            throw error
+        }
+    } finally {
+        bmp.recycle()
+    }
     true
 }.getOrDefault(false)
 
@@ -315,8 +336,8 @@ internal fun SettingsPageScaffold(
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val cs = MaterialTheme.colorScheme
     var testText by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
-    // в двух панелях поле проверки — только в правой, чтобы не было двух одинаковых полей
-    val showTest = page != SettingsPage.ABOUT && page != SettingsPage.BACKUP && selected == null
+    val showTest = page in setOf(SettingsPage.SIZE, SettingsPage.KEYS, SettingsPage.LAYOUT, SettingsPage.LANGUAGES,
+        SettingsPage.GESTURES, SettingsPage.TYPING, SettingsPage.FEEDBACK)
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         containerColor = cs.surfaceContainer,
@@ -326,7 +347,7 @@ internal fun SettingsPageScaffold(
                 navigationIcon = {
                     if (showBack) {
                         FilledTonalIconButton(onClick = { onNavigate(page.parent) }, modifier = Modifier.padding(start = 8.dp)) {
-                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад")
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, tr("Назад"))
                         }
                     }
                 },
@@ -351,12 +372,13 @@ internal fun SettingsPageScaffold(
                 Spacer(Modifier.height(4.dp))
                 when (page) {
                     SettingsPage.HOME -> HomePage(settings, onNavigate, selected)
-                    SettingsPage.WHATS_NEW -> WhatsNewPage(settings, onNavigate)
+                    SettingsPage.WHATS_NEW -> WhatsNewPage(onNavigate)
                     SettingsPage.POWER -> PowerPage(settings)
                     SettingsPage.THEMES -> ThemesPage(settings, onNavigate)
                     SettingsPage.THEME_EDITOR -> ThemeEditorPage(settings, onNavigate)
                     SettingsPage.ANIMATIONS -> AnimationsPage(settings)
                     SettingsPage.COLORS -> ColorsPage(settings)
+                    SettingsPage.SIZE -> KeyboardSizePage(settings)
                     SettingsPage.KEYS -> KeysPage(settings, onNavigate)
                     SettingsPage.LAYOUT -> LayoutEditorPage(settings)
                     SettingsPage.LONG_PRESS -> LongPressPage(settings)
@@ -364,7 +386,7 @@ internal fun SettingsPageScaffold(
                         ToolbarPage(settings)
                         IconsPage(settings)
                     }
-                    SettingsPage.LANGUAGES -> LanguagesPage(settings)
+                    SettingsPage.LANGUAGES -> LanguagesPage(settings, onNavigate)
                     SettingsPage.MY_WORDS -> MyWordsPage(settings)
                     SettingsPage.TYPING -> TypingPage(settings, SettingsPage.TYPING)
                     SettingsPage.GESTURES -> TypingPage(settings, SettingsPage.GESTURES)
@@ -434,10 +456,7 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     var query by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
-    // автор и канал — сверху; поиск — сразу под ними; язык — внизу, в «Прочем»
-    AuthorLine()
     PillField(query, { query = it }, "Найти настройку: вибрация, шрифт, свайп…", Icons.Rounded.Search, tonal = true)
-    UpdateCard()
     if (query.isNotBlank()) {
         val found = SettingsSearch.find(query)
         SettingsSection(tr("Найдено: {0}", found.size)) {
@@ -449,7 +468,7 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         }
         return
     }
-    HeroCard(
+    if (!imeEnabled || !imeSelected) HeroCard(
         spec = rememberSpec(settings),
         imeEnabled = imeEnabled,
         imeSelected = imeSelected,
@@ -461,11 +480,11 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         onMic = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }
     )
     val groups = listOf(
-        "Обновление" to listOf(SettingsPage.WHATS_NEW),
-        "Внешний вид" to listOf(SettingsPage.THEMES, SettingsPage.COLORS, SettingsPage.KEYS, SettingsPage.LAYOUT, SettingsPage.ANIMATIONS, SettingsPage.TOOLBAR),
-        "Набор текста" to listOf(SettingsPage.LANGUAGES, SettingsPage.MY_WORDS, SettingsPage.TYPING, SettingsPage.GESTURES, SettingsPage.CLIPBOARD),
-        "Отклик и расширения" to listOf(SettingsPage.FEEDBACK, SettingsPage.POWER, SettingsPage.PLUGINS),
-        "Прочее" to listOf(SettingsPage.BACKUP, SettingsPage.ABOUT)
+        "Ввод" to listOf(SettingsPage.LANGUAGES, SettingsPage.GESTURES, SettingsPage.TYPING, SettingsPage.MY_WORDS),
+        "Клавиатура" to listOf(SettingsPage.SIZE, SettingsPage.KEYS, SettingsPage.FEEDBACK),
+        "Внешний вид" to listOf(SettingsPage.THEMES, SettingsPage.COLORS, SettingsPage.ANIMATIONS),
+        "Инструменты" to listOf(SettingsPage.TOOLBAR, SettingsPage.CLIPBOARD, SettingsPage.PLUGINS),
+        "Приложение" to listOf(SettingsPage.POWER, SettingsPage.BACKUP, SettingsPage.WHATS_NEW, SettingsPage.ABOUT)
     )
     var i = 0
     for ((title, pages) in groups) {
@@ -474,12 +493,17 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
                 val idx = i++
                 CategoryTile(p, idx, selected = p == selected || p == selected?.parent) { onNavigate(p) }
             }
+            if (SettingsPage.TOOLBAR in pages && imeSelected && !micGranted) {
+                ActionItem(Icons.Rounded.Mic, "Микрофон для голосового ввода", null,
+                    onClick = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) })
+            }
             if (SettingsPage.BACKUP in pages) ChoiceItem(
                 Icons.Rounded.Translate, "Язык приложения", null,
                 listOf("SYSTEM" to "Как в системе", "ru" to "Русский", "en" to "English", "es" to "Español"), settings.appLanguage
             ) { v -> KeyboardPrefs.edit(context) { putString("app_language", v) } }
         }
     }
+    UpdateCard()
 }
 
 // ----------------------------------------------------------------------- внешний вид

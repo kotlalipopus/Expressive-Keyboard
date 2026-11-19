@@ -241,6 +241,9 @@ internal fun KeyView(
     modifier: Modifier,
     /** Символ по удержанию в режиме «как в Gboard» (null — обычные варианты). */
     holdSymbol: String? = null,
+    translatorSpace: Boolean = false,
+    editorEnter: Boolean = false,
+    liveUpper: () -> Boolean = { upper },
     /** Промежутки между клавишами (по горизонтали и между рядами): касание в половине промежутка — тоже эта клавиша. */
     gapX: Dp = 0.dp,
     gapY: Dp = 0.dp
@@ -251,14 +254,16 @@ internal fun KeyView(
     val userSet = remember(key.label, settings.keyVariants) { UserVariants.has(key.label) }
     val noDigits = !userSet && settings.showNumberRow && !numberRow && key.type == KeyType.CHARACTER && key.label.firstOrNull()?.isLetter() == true
     val hold = holdSymbol?.takeUnless { userSet || (noDigits && it.length == 1 && it[0].isDigit()) }
-    val variants = remember(key, upper, pluginState, hold, noDigits, settings.keyVariants) {
-        if (hold == null) key.variants(upper).let { v -> if (noDigits) v.filterNot { it.length == 1 && it[0].isDigit() } else v }
+    fun variantsFor(keyUpper: Boolean): List<String> =
+        if (hold == null) key.variants(keyUpper).let { v -> if (noDigits) v.filterNot { it.length == 1 && it[0].isDigit() } else v }
         else {
             // символ — по умолчанию (в середине), рядом только варианты самой буквы (ё, ъ, буквы с ударением)
-            val letters = key.variants(upper).filter { v -> v.length == 1 && v[0].isLetter() && !v.equals(key.label, ignoreCase = true) }
+            val letters = key.variants(keyUpper).filter { v -> v.length == 1 && v[0].isLetter() && !v.equals(key.label, ignoreCase = true) }
             val mid = (letters.size + 1) / 2
             letters.take(mid) + hold + letters.drop(mid)
         }
+    val variants = remember(key, upper, pluginState, hold, noDigits, settings.keyVariants) {
+        variantsFor(upper)
     }
     val output = remember(key, upper) { key.text(upper) }
     val holder = remember { CoordsHolder() }
@@ -311,8 +316,12 @@ internal fun KeyView(
     val cSettings by rememberUpdatedState(settings)
     val cActions by rememberUpdatedState(actions)
     val cGlide by rememberUpdatedState(glideEnabled)
-    val cShift by rememberUpdatedState(shift)
+    val cLiveUpper by rememberUpdatedState(liveUpper)
+    val cVariantsFor by rememberUpdatedState<(Boolean) -> List<String>>(::variantsFor)
+    val cUpper by rememberUpdatedState(upper)
     val cUpHint by rememberUpdatedState(upHint)
+    val cTranslatorSpace by rememberUpdatedState(translatorSpace)
+    val cEditorEnter by rememberUpdatedState(editorEnter)
     val cGx by rememberUpdatedState(gx)
     val cGy by rememberUpdatedState(gy)
     val fr = shapeFractions(key.type)
@@ -389,6 +398,7 @@ internal fun KeyView(
                     val id = down.id
                     val k = cKey
                     val act = cActions
+                    Rollover.press(holder, null)
                     // сначала отклик (вибрация, звук), потом всё остальное
                     act.keyDown(k)
                     pressed = true
@@ -403,8 +413,6 @@ internal fun KeyView(
                         popup.clear(holder)
                         scope.launch { anim.animateTo(0f, spring(dampingRatio = 1f, stiffness = 1500f * cSpeed2)) }
                     }
-                    // Shift и ⌫ не «перекатываются», но нажатая до них буква срабатывает раньше них
-                    if (k.type == KeyType.SHIFT || k.type == KeyType.BACKSPACE) Rollover.press(holder, null)
                     // нажатие видно в ближайшем же кадре: без запуска корутины «на потом» и без разгона пружины с нуля
                     if (cSettings.pressAnimation <= 0f) scope.launch(start = CoroutineStart.UNDISPATCHED) { anim.snapTo(1f) }
                     else scope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -413,6 +421,16 @@ internal fun KeyView(
                     }
                     try {
                         when (k.type) {
+                            KeyType.ENTER -> {
+                                if (cEditorEnter && cSettings.enterHoldSend) {
+                                    val released = withTimeoutOrNull(cSettings.enterHoldMs.toLong()) { awaitPressEnd(id) }
+                                    if (released == true) act.commitKey(k, cOutput)
+                                    else if (released == null) {
+                                        act.holdEnter()
+                                        awaitPressEnd(id)
+                                    }
+                                } else if (awaitPressEnd(id)) act.commitKey(k, cOutput)
+                            }
                             KeyType.BACKSPACE -> {
                                 // со свайпом по ⌫ первый символ стирается по отпусканию (или когда удержание
                                 // переходит в автоповтор): иначе свайп сначала откусывал последнюю букву слова
@@ -421,16 +439,28 @@ internal fun KeyView(
                                 if (!deferFirst) act.commitKey(k, "")
                                 var deadline = SystemClock.uptimeMillis() + 420L
                                 var wordMode = false
+                                var rolled = false
                                 var lastX = down.position.x
                                 // свайп влево сначала выделяет слова (вправо — отпускает их обратно), а стирает
                                 // только по отпусканию: случайный мазок больше не съедает текст
                                 var words = 0
                                 var released = false
+                                if (deferFirst) Rollover.press(holder) {
+                                    if (!deleted) act.commitKey(k, "")
+                                    deleted = true
+                                    rolled = true
+                                    releaseEarly()
+                                }
                                 try {
                                     while (true) {
                                         val left = deadline - SystemClock.uptimeMillis()
-                                        val ev = if (left > 0) withTimeoutOrNull(left) { awaitPointerEvent() } else null
+                                        val ev = when {
+                                            rolled || wordMode -> awaitPointerEvent()
+                                            left > 0 -> withTimeoutOrNull(left) { awaitPointerEvent() }
+                                            else -> null
+                                        }
                                         if (ev == null) {
+                                            if (rolled) continue
                                             if (!wordMode) {
                                                 if (deleted) act.keyTick()
                                                 act.commitKey(k, "")
@@ -444,8 +474,10 @@ internal fun KeyView(
                                             released = true
                                             break
                                         }
+                                        if (rolled) continue
                                         if (!wordMode && cSettings.backspaceSwipe && down.position.x - ch.position.x > slop * 2) {
                                             wordMode = true
+                                            Rollover.done(holder)
                                             lastX = ch.position.x
                                             words = 1
                                             act.keyTick()
@@ -458,7 +490,6 @@ internal fun KeyView(
                                                 act.keyTick()
                                                 act.backspaceSelect(words)
                                             }
-                                            deadline = Long.MAX_VALUE
                                         }
                                     }
                                 } finally {
@@ -476,7 +507,8 @@ internal fun KeyView(
                                 }
                             }
                             KeyType.SPACE -> {
-                                val mode = cSettings.spaceSwipe
+                                val inTranslator = cTranslatorSpace
+                                val mode = if (inTranslator) "CURSOR" else cSettings.spaceSwipe
                                 var swiped = false
                                 var picker = false
                                 var rolled = false
@@ -491,19 +523,26 @@ internal fun KeyView(
                                     }
                                 }
                                 // удержание пробела без движения — выбор клавиатуры
-                                val lpAt = if (cSettings.spaceLongAction != "OFF") SystemClock.uptimeMillis() + 550L else Long.MAX_VALUE
+                                val lpAt = when {
+                                    inTranslator -> down.uptimeMillis + BOTH_HOLD_MS
+                                    cSettings.spaceLongAction != "OFF" -> down.uptimeMillis + 550L
+                                    else -> Long.MAX_VALUE
+                                }
                                 while (true) {
-                                    val waiting = !swiped && !picker && lpAt != Long.MAX_VALUE
+                                    val waiting = !swiped && !picker && !rolled && lpAt != Long.MAX_VALUE
                                     val ev = if (waiting) {
                                         val left = lpAt - SystemClock.uptimeMillis()
                                         if (left > 0) withTimeoutOrNull(left) { awaitPointerEvent() } else null
                                     } else awaitPointerEvent()
                                     if (ev == null) {
                                         if (rolled) continue
-                                        picker = true
                                         Rollover.done(holder)
                                         act.keyTick()
-                                        act.spaceHold()
+                                        if (inTranslator) swiped = true
+                                        else {
+                                            picker = true
+                                            act.spaceHold()
+                                        }
                                         continue
                                     }
                                     val ch = ev.changes.firstOrNull { it.id == id } ?: break
@@ -550,7 +589,6 @@ internal fun KeyView(
                                             if (!swiped && abs(dx) > slop) {
                                                 swiped = true
                                                 Rollover.done(holder)
-                                                lastX = ch.position.x
                                             }
                                             if (swiped) {
                                                 while (ch.position.x - lastX > cursorStep) {
@@ -567,14 +605,18 @@ internal fun KeyView(
                                 }
                             }
                             else -> {
-                                val vars = cVariants
-                                val lbl = cLabel
-                                val out = cOutput
                                 val letterKey = k.type == KeyType.CHARACTER
+                                val keyUpper = letterKey && cLiveUpper()
+                                val caseChanged = keyUpper != cUpper
+                                val vars = if (caseChanged) cVariantsFor(keyUpper) else cVariants
+                                val lbl = if (caseChanged) k.shownLabel(keyUpper) else cLabel
+                                val out = if (caseChanged) k.text(keyUpper) else cOutput
                                 val glideOn = letterKey && cGlide && lbl.length == 1 && lbl[0].isLetter()
                                 // мгновенный ввод: буква/цифра уходит в поле в момент касания
                                 val instant = letterKey && cSettings.instantInput && out.length in 1..2 && out.all { it.isLetterOrDigit() }
-                                val upSymbol = if (letterKey && cSettings.swipeUpHint) cUpHint else null
+                                val upSymbol = if (letterKey && cSettings.swipeUpHint) {
+                                    if (caseChanged) hintFor(lbl, vars) else cUpHint
+                                } else null
                                 val a0 = anchor()
                                 // точка касания внутри клавиши (-0.5…0.5) — автоисправление учитывает, куда попал палец
                                 var touchX = (down.position.x - inset.x) / iw - 0.5f
@@ -598,10 +640,6 @@ internal fun KeyView(
                                 if (letterKey && cSettings.keyPreview && shownAnchor != null) {
                                     popup.show(PopupState(holder, shownAnchor.x, shownAnchor.y, shownLabel, if (shownLabel == lbl) vars else listOf(shownLabel), 0, false))
                                 }
-                                if (instant) {
-                                    act.keyTouch(touchX, touchY)
-                                    act.commitKey(k, tapOut)
-                                }
                                 var rolled = false
                                 Rollover.press(holder) {
                                     if (!rolled) {
@@ -613,13 +651,19 @@ internal fun KeyView(
                                         releaseEarly()
                                     }
                                 }
+                                if (instant) {
+                                    act.keyTouch(touchX, touchY)
+                                    act.commitKey(k, tapOut)
+                                }
                                 val glideStart = max(slop * 1.5f, iw * 0.75f)
-                                val upDist = ih * 0.45f
+                                val sensitivity = cSettings.flickSensitivity
+                                val upDist = max(15.dp.toPx(), ih * (0.95f - 0.50f * sensitivity))
+                                val slideDist = max((28f - 12f * sensitivity).dp.toPx(), iw * 0.5f)
                                 // удержание кнопки языка может делать своё действие (настройка), а не открывать список языков
                                 val globeAction = k.type == KeyType.GLOBE && cSettings.globeLongPress != "LANGUAGES"
                                 val holdable = vars.size > 1 || (vars.size == 1 && vars[0] != out)
-                                val holdAt = if ((holdable && !globeAction) || (globeAction && cSettings.globeLongPress != "OFF")) {
-                                    SystemClock.uptimeMillis() + cSettings.longPressMs.toLong()
+                                var holdAt = if ((holdable && !globeAction) || (globeAction && cSettings.globeLongPress != "OFF")) {
+                                    down.uptimeMillis + cSettings.longPressMs.toLong()
                                 } else Long.MAX_VALUE
                                 var gesture = KeyGesture.CANCELED
                                 var last = down.position
@@ -660,20 +704,27 @@ internal fun KeyView(
                                     // клавишу уже «перекатили» — она сработала, ждём только отпускания
                                     if (rolled) {
                                         if (!ch.pressed) break
+                                        holdAt = Long.MAX_VALUE
                                         continue
                                     }
                                     if (!ch.pressed) {
-                                        gesture = if (upSymbol != null && d.y < -upDist && abs(d.x) < abs(d.y)) KeyGesture.SWIPE_UP else KeyGesture.RELEASED
+                                        gesture = if (upSymbol != null && d.y < -upDist && abs(d.x) < -d.y * 0.7f) {
+                                            KeyGesture.SWIPE_UP
+                                        } else KeyGesture.RELEASED
                                         break
                                     }
                                     if (glideOn && d.getDistance() > glideStart) {
                                         gesture = KeyGesture.GLIDE
                                         break
                                     }
-                                    if (!glideOn && !globeAction && vars.size > 1 && abs(d.x) > slop && abs(d.x) > -d.y) {
+                                    if (!glideOn && !globeAction && vars.size > 1 &&
+                                        ch.uptimeMillis - down.uptimeMillis >= 90L &&
+                                        abs(d.x) > slideDist && abs(d.x) > abs(d.y) * 1.35f
+                                    ) {
                                         gesture = KeyGesture.SLIDE
                                         break
                                     }
+                                    if (letterKey && d.getDistance() > max(slop, ih * 0.35f)) holdAt = Long.MAX_VALUE
                                 }
                                 Rollover.done(holder)
                                 if (rolled) {
@@ -697,7 +748,7 @@ internal fun KeyView(
                                             if (next != null) {
                                                 act.keyDown(next.key)
                                                 act.keyTouch(0f, 0f)
-                                                act.commitKey(next.key, next.key.text(cShift == ShiftState.CAPS_LOCK))
+                                                act.commitKey(next.key, next.key.text(cLiveUpper()))
                                                 next.pulse()
                                             }
                                             // второй палец ещё на экране — его движения и отпускание ничего не вводят

@@ -1,9 +1,23 @@
 package com.expressive.keyboard
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 class UserLayoutsTest {
+    @Test
+    fun letterEditsAreScopedToTheExactBaseRows() {
+        val lang = Languages.EN
+        val alternate = lang.withRows(listOf(listOf("sh", "a"), listOf("b")))
+        val other = lang.withRows(listOf(listOf("s", "h", "a"), listOf("b")))
+        val alternateId = KeyboardLayouts.userLayoutId(alternate, 0)
+
+        assertEquals(lang.id, KeyboardLayouts.userLayoutId(lang, 0))
+        assertNotEquals(lang.id, alternateId)
+        assertNotEquals(KeyboardLayouts.userLayoutId(other, 0), alternateId)
+        assertEquals(KeyboardLayouts.userLayoutId(lang, 1), KeyboardLayouts.userLayoutId(alternate, 1))
+    }
+
     private val rows = listOf(
         KeyRow(listOf(KeyModel("a"), KeyModel("b"), KeyModel("c"))),
         KeyRow(listOf(KeyModel("", KeyType.SPACER, 0.5f), KeyModel("d"), KeyModel("e"), KeyModel("", KeyType.SPACER, 0.5f))),

@@ -338,17 +338,17 @@ internal fun LayoutEditorPage(settings: KeyboardSettings) {
     val context = LocalContext.current
     val cs = MaterialTheme.colorScheme
     val haptic = LocalHapticFeedback.current
-    val languages = remember(settings.languages) { Languages.enabled(settings) }
+    val languages = remember(settings.languages, settings.langLayouts, Languages.extra) { Languages.enabled(settings) }
     var langId by remember { mutableStateOf(languages.first().id) }
     var page by remember { mutableStateOf(0) }
     var selected by remember { mutableStateOf<String?>(null) }
     var editing by remember { mutableStateOf<EditorSlot?>(null) }
     val lang = languages.firstOrNull { it.id == langId } ?: languages.first()
-    val id = KeyboardLayouts.layoutId(lang, page)
+    val id = KeyboardLayouts.userLayoutId(lang, page)
     val user = settings.userLayoutMap
     val langLabels = remember(languages) { languages.map { it.label } }
     // те же ряды, что на клавиатуре: с нижним рядом и рядом цифр
-    val rows = remember(lang, page, user, settings.showGlobeKey, settings.showEmojiKey, settings.punctuationKeys, settings.spaceLeftKey, settings.spaceRightKey, settings.showNumberRow, langLabels) {
+    val rows = remember(lang, lang.rows, page, user, settings.showGlobeKey, settings.showEmojiKey, settings.punctuationKeys, settings.spaceLeftKey, settings.spaceRightKey, settings.showNumberRow, langLabels, PluginRepository.layouts, ScriptHost.layoutOverrides) {
         KeyboardLayouts.rows(
             lang, page, settings.showNumberRow && page == 0, settings.showGlobeKey, settings.showEmojiKey, settings.punctuationKeys,
             langLabels, settings.spaceLeftKey, settings.spaceRightKey, user
@@ -356,7 +356,7 @@ internal fun LayoutEditorPage(settings: KeyboardSettings) {
     }
     val hasNumbers = settings.showNumberRow && page == 0
     // сколько клавиш в рядах обычной раскладки — меньше этого ряд сделать нельзя (убираются только добавленные)
-    val baseCounts = remember(lang, page, settings.showGlobeKey, settings.showEmojiKey, settings.punctuationKeys, settings.spaceLeftKey, settings.spaceRightKey, hasNumbers, langLabels) {
+    val baseCounts = remember(lang, lang.rows, page, settings.showGlobeKey, settings.showEmojiKey, settings.punctuationKeys, settings.spaceLeftKey, settings.spaceRightKey, hasNumbers, langLabels, PluginRepository.layouts, ScriptHost.layoutOverrides) {
         val base = KeyboardLayouts.rows(
             lang, page, hasNumbers, settings.showGlobeKey, settings.showEmojiKey, settings.punctuationKeys,
             langLabels, settings.spaceLeftKey, settings.spaceRightKey, emptyMap()
@@ -421,7 +421,7 @@ internal fun LayoutEditorPage(settings: KeyboardSettings) {
         if (languages.size > 1) {
             ChoiceItem(
                 Icons.Rounded.SwapHoriz, "Язык", null,
-                languages.map { it.id to it.label }, langId
+                languages.map { it.id to it.displayTitle() }, lang.id
             ) { langId = it; selected = null }
         }
         ChoiceItem(
@@ -564,7 +564,7 @@ internal fun LayoutEditorPage(settings: KeyboardSettings) {
                     )
                     Text(tr("Ряд"), style = MaterialTheme.typography.labelLarge, color = cs.primary)
                     ButtonGroup(choices.map { (k, label) -> "${k.first}|${k.second}" to label }, "${where.first}|${where.second}") { v ->
-                        where = v.substringBefore('|') to v.substringAfter('|').toInt()
+                        where = v.substringBeforeLast('|') to v.substringAfterLast('|').toInt()
                     }
                     if (full) Text(tr("В ряду уже {0} клавиш — больше не поместится", UserLayouts.MAX_ROW), color = cs.error, style = MaterialTheme.typography.bodySmall)
                 }

@@ -283,6 +283,7 @@ internal val EN_STRINGS: Map<String, String> = hashMapOf(
     "Всплывающая буква при нажатии" to "Letter popup on press",
     "Контур клавиш" to "Key outlines",
     "Кнопка смены языка" to "Language key",
+    "Включите второй язык в настройках" to "Turn on a second language in settings",
     "Без неё язык меняется свайпом по пробелу. Удержание — список языков" to "Without it, swipe the space bar to change language. Long press shows the list",
     "Запятая и точка на странице ?123" to "Comma and period on the ?123 page",
     "По бокам пробела. Удержание — другие знаки: ; : ' \" ? ! …" to "Next to the space bar. Long press for more: ; : ' \" ? ! …",

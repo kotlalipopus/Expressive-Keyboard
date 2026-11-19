@@ -493,7 +493,11 @@ class ComposeKeyboardService : InputMethodService(),
     }
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        invalidatePredictions()
+        pendingTouch = null
+        DynamicZones.disable()
         super.onConfigurationChanged(newConfig)
+        if (isInputViewShown) schedulePredictions()
         if (ScriptHost.has("device")) ScriptHost.emit("device", ScriptHost.device())
     }
 
@@ -685,6 +689,8 @@ class ComposeKeyboardService : InputMethodService(),
 
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
+        invalidatePredictions()
+        inputGeneration++
         kb.inlineSuggestions = emptyList()
         composing = ""
         composingStart = -1
@@ -904,6 +910,11 @@ class ComposeKeyboardService : InputMethodService(),
         (info?.packageName ?: "") + "/" + (info?.fieldId ?: -1)
 
     private fun resetForInput(info: EditorInfo?, restarting: Boolean) {
+        invalidatePredictions()
+        pendingTouch = null
+        wordTouches.clear()
+        touchesFor = ""
+        inputGeneration++
         flags = computeFlags(info)
         // в поле пароля и в инкогнито моды не видят ни набираемого текста, ни буфера
         ScriptHost.privateMode = flags.isPassword || settings.incognito
@@ -918,7 +929,6 @@ class ComposeKeyboardService : InputMethodService(),
         lastActionWasSpace = false
         lastCommittedWord = ""
         lastTypedChar = null
-        precomputed = null
         // язык могли выключить в настройках
         val enabled = Languages.enabled(settings)
         if (enabled.none { it == kb.language }) kb.language = enabled.first()
@@ -989,6 +999,7 @@ class ComposeKeyboardService : InputMethodService(),
     /** Поле в нашем же приложении: обработка сдвигов курсора отложена до конца текущей правки. */
     private val selectionHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var deferredSelection = false
+    private var inputGeneration = 0
 
     override fun onUpdateSelection(
         oldSelStart: Int, oldSelEnd: Int, newSelStart: Int, newSelEnd: Int,
@@ -998,7 +1009,9 @@ class ComposeKeyboardService : InputMethodService(),
         // setComposingText — раньше, чем клавиатура запомнила, что набрала. Сдвиг курсора выглядел чужим, слово
         // «отпускалось», и следующая буква вставляла его заново: «ПрПривПривет». Разбираем такие сдвиги после правки
         if (!deferredSelection && currentInputEditorInfo?.packageName == packageName) {
+            val generation = inputGeneration
             selectionHandler.post {
+                if (generation != inputGeneration) return@post
                 deferredSelection = true
                 try {
                     onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
@@ -1107,21 +1120,21 @@ class ComposeKeyboardService : InputMethodService(),
     private fun icSetComposing(ic: InputConnection, word: String) {
         tapWord = null
         if (composing.isEmpty() || composingStart < 0) composingStart = selectionStart()
-        ic.setComposingText(word, 1)
         composing = word
         lastTypedChar = word.lastOrNull()
         if (composingStart >= 0) expect(composingStart + word.length) else expectUnknown()
+        ic.setComposingText(word, 1)
     }
 
     private fun icCommit(ic: InputConnection, text: String) {
         tapWord = null
         val base = if (composing.isNotEmpty()) composingStart else selectionStart()
-        // очень длинный текст (из буфера) уходит в приложение частями: один вызов упирается в лимит системы
-        if (text.length > 50_000) text.chunked(50_000).forEach { ic.commitText(it, 1) } else ic.commitText(text, 1)
         composing = ""
         composingStart = -1
         if (text.isNotEmpty()) lastTypedChar = text.last()
         if (base >= 0) expect(base + text.length) else expectUnknown()
+        // очень длинный текст (из буфера) уходит в приложение частями: один вызов упирается в лимит системы
+        if (text.length > 50_000) text.chunked(50_000).forEach { ic.commitText(it, 1) } else ic.commitText(text, 1)
     }
 
     private fun icDeleteBefore(ic: InputConnection, count: Int) {
@@ -1181,7 +1194,29 @@ class ComposeKeyboardService : InputMethodService(),
         touchesFor = after
     }
 
+    private fun invalidatePredictions() {
+        predictionJob?.cancel()
+        precomputed = null
+        precomputedOwn = null
+        precomputedFor = ""
+        kb.suggestions = SuggestionChipModel.EMPTY_ROW
+        kb.candidates = emptyList()
+        cjk = emptyList()
+        cjkFor = ""
+        kb.calculation = null
+    }
+
+    private fun editorCalculation(): String? {
+        if (!settings.inlineCalculator || !flags.suggestions || kb.panel != ActivePanel.KEYBOARD) return null
+        if (expSelStart >= 0 && expSelStart != expSelEnd) return null
+        val before = runCatching { currentInputConnection?.getTextBeforeCursor(Calc.EDITOR_LOOKBACK, 0) }.getOrNull() ?: return null
+        return Calc.resultAfterEquals(before)
+    }
+
     private fun schedulePredictions() {
+        kb.calculation = if (lastTypedChar == '=') editorCalculation()?.let {
+            SuggestionChipModel(it, it, isPrimary = true, isKeepExact = true, isCalculation = true)
+        } else null
         if (kb.panel == ActivePanel.TRANSLATE) {
             schedulePanelPredictions()
             return
@@ -1245,10 +1280,11 @@ class ComposeKeyboardService : InputMethodService(),
             SystemSpell.request(this, lang, word, debounceMs = 90L)
             SystemSpell.cached(lang, word)
         } else null
-        // подсказки модов (событие "suggest") встают по бокам
-        val extra = if (ScriptHost.has("suggest")) ScriptHost.suggestions(word, prev) else emptyList()
-        val prev2 = if (flags.isPassword) "" else wordBeforePrevious(prev)
         predictionJob = serviceScope.launch {
+            // Запрос контекста к приложению и выполнение модов не нужны для промежуточных нажатий.
+            delay(24L)
+            val prev2 = if (flags.isPassword) "" else wordBeforePrevious(prev)
+            val extra = if (ScriptHost.has("suggest")) ScriptHost.suggestions(word, prev) else emptyList()
             val snap = withContext(Dispatchers.Default) {
                 val me = coroutineContext[Job]
                 WordPredictorEngine.predict(word, prev, u, lang, capNext, s.autoCorrectStrength, correct, touches, sys, previous2 = prev2, cancelled = { me?.isActive == false })
@@ -1276,8 +1312,10 @@ class ComposeKeyboardService : InputMethodService(),
     /** Динамические зоны клавиш — по набираемому слову; в паролях, почте и без словаря их нет. */
     private fun updateZones() {
         val lang = kb.language
+        val split = settings.landscapeSplit && !settings.floating &&
+            resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         val ok = settings.dynamicZones && flags.suggestions && !flags.isPassword && lang.composer == Composer.NONE &&
-            kb.symbolsPage == 0 && panelInput == null && (composing.isEmpty() || composing.all { isWordLetter(it) })
+            !split && kb.symbolsPage == 0 && panelInput == null && (composing.isEmpty() || composing.all { isWordLetter(it) })
         if (!ok || !WordPredictorEngine.hasDictionary(Languages.withUser(lang))) DynamicZones.disable()
         else DynamicZones.update(Languages.withUser(lang), composing)
     }
@@ -1377,23 +1415,25 @@ class ComposeKeyboardService : InputMethodService(),
 
     // ------------------------------------------------------------------ набор текста
 
-    private fun typeCharacter(text: String, touch: KeyTouch? = null) {
+    private fun typeCharacter(text: String, touch: KeyTouch? = null, typingShift: ShiftState = kb.shift) {
         val ic = currentInputConnection ?: return
         // может понадобиться стереть поставленный сам пробел — тогда стирание и ввод одним действием,
         // иначе пробел в поле на кадр пропадал и появлялся
         val batch = punctSpace
         if (batch) ic.beginBatchEdit()
         try {
-            typeCharacterIn(ic, text, touch)
+            typeCharacterIn(ic, text, touch, typingShift)
         } finally {
             if (batch) ic.endBatchEdit()
         }
     }
 
-    private fun typeCharacterIn(ic: InputConnection, text: String, touch: KeyTouch?) {
+    private fun typeCharacterIn(ic: InputConnection, text: String, touch: KeyTouch?, typingShift: ShiftState) {
         val afterSpace = lastActionWasSpace
         lastActionWasSpace = false
         val ch = text.singleOrNull()
+        val comp = kb.language.composer
+        val compoundLetter = ch == null && text.isNotEmpty() && comp == Composer.NONE && text.all(::isWordLetter)
         // «http:» + «/» или «слово,» + «@»: поставленный сам пробел здесь лишний
         if (punctSpace) {
             punctSpace = false
@@ -1402,10 +1442,10 @@ class ComposeKeyboardService : InputMethodService(),
                 autoSpace = false
             }
         }
-        if (ch == null || (!isWordLetter(ch) && !ch.isWhitespace())) tokenHasSymbol = true
+        if (!compoundLetter && (ch == null || (!isWordLetter(ch) && !ch.isWhitespace()))) tokenHasSymbol = true
         if (ch != null && ch.isWhitespace()) tokenHasSymbol = false
         // буква сразу после слова из свайпа начинает новое слово
-        if (glideWord && composing.isNotEmpty() && ch != null && ch.isLetter()) {
+        if (glideWord && composing.isNotEmpty() && (compoundLetter || ch?.isLetter() == true)) {
             learn(lastCommittedWord, composing)
             lastCommittedWord = composing
             icCommit(ic, "$composing ")
@@ -1414,7 +1454,6 @@ class ComposeKeyboardService : InputMethodService(),
         if (ch != null && settings.autoPair && tryAutoPair(ic, ch)) return
         // «--» → «—» (не в паролях, адресах и почте: там два дефиса — это два дефиса)
         if (ch == '-' && flags.suggestions && settings.dashMerge && mergeDash(ic)) return
-        val comp = kb.language.composer
         if (!flags.suggestions && (comp == Composer.NONE || Cjk.isCjk(comp))) {
             icCommit(ic, composing + text)
             undo = null
@@ -1425,7 +1464,7 @@ class ComposeKeyboardService : InputMethodService(),
             typeCjk(ic, comp, text, ch)
             return
         }
-        if (ch != null && (isWordLetter(ch) || ((ch == '\'' || ch == '-') && composing.isNotEmpty()))) {
+        if (compoundLetter || (ch != null && (isWordLetter(ch) || ((ch == '\'' || ch == '-') && composing.isNotEmpty())))) {
             undo = null
             autoSpace = false
             if (comp != Composer.NONE) {
@@ -1436,7 +1475,7 @@ class ComposeKeyboardService : InputMethodService(),
             } else {
                 val before = composing
                 if (before.isEmpty()) {
-                    noCorrectWord = kb.shift == ShiftState.CAPS_LOCK || (kb.shift == ShiftState.SINGLE && !autoShift) ||
+                    noCorrectWord = typingShift == ShiftState.CAPS_LOCK || (typingShift == ShiftState.SINGLE && !autoShift) ||
                         lastTypedChar?.let { it in "@#/_\\" } == true
                 }
                 icSetComposing(ic, before + text)
@@ -1909,13 +1948,35 @@ class ComposeKeyboardService : InputMethodService(),
         val info = currentInputEditorInfo
         val action = (info?.imeOptions ?: 0) and EditorInfo.IME_MASK_ACTION
         val noEnterAction = info != null && (info.imeOptions and EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0
-        val actionable = !noEnterAction && action != EditorInfo.IME_ACTION_NONE && action != EditorInfo.IME_ACTION_UNSPECIFIED
-        if (actionable) ic.performEditorAction(action) else sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
-        expectUnknown()
+        val customAction = info?.takeIf { it.actionLabel != null }?.actionId
+        val actionable = !noEnterAction && (customAction != null ||
+            (action != EditorInfo.IME_ACTION_NONE && action != EditorInfo.IME_ACTION_UNSPECIFIED))
+        val multiline = ((info?.inputType ?: 0) and InputType.TYPE_TEXT_FLAG_MULTI_LINE) != 0
+        when {
+            actionable -> {
+                ic.performEditorAction(customAction ?: action)
+                expectUnknown()
+            }
+            multiline -> icCommit(ic, "\n")
+            else -> {
+                sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
+                expectUnknown()
+            }
+        }
         lastTypedChar = '\n'
         tokenHasSymbol = false
         requestAutoCap()
         schedulePredictions()
+    }
+
+    override fun holdEnter() {
+        if (kb.panel != ActivePanel.KEYBOARD || !settings.enterHoldSend) return
+        val info = currentInputEditorInfo ?: return
+        if ((info.imeOptions and EditorInfo.IME_MASK_ACTION) != EditorInfo.IME_ACTION_SEND) return
+        val connection = currentInputConnection ?: return
+        if (ScriptHost.has("enter") && ScriptHost.cancelled("enter")) return
+        // A multiline editor can advertise Send while reserving a short Enter for a newline.
+        connection.performEditorAction(EditorInfo.IME_ACTION_SEND)
     }
 
     private fun toggleShift() {
@@ -2043,9 +2104,13 @@ class ComposeKeyboardService : InputMethodService(),
             KeyType.CHARACTER -> {
                 // клавиша-команда из раскладки плагина
                 key.action?.let { if (ScriptHost.runCommand(it)) return }
-                shiftBeforeKey = kb.shift
-                val wasSingle = kb.shift == ShiftState.SINGLE
+                val typingShift = kb.shift
+                shiftBeforeKey = typingShift
                 val pi = panelInput
+                val typed = if (pi == null && ScriptHost.has("key") && !flags.isPassword) {
+                    ScriptHost.filterKey(text) ?: return
+                } else text
+                if (typingShift == ShiftState.SINGLE && typed.any { isWordLetter(it) || it.isDigit() }) kb.shift = ShiftState.OFF
                 if (pi != null) {
                     if (kb.panel == ActivePanel.TRANSLATE) {
                         val c = translatorCursor()
@@ -2064,11 +2129,10 @@ class ComposeKeyboardService : InputMethodService(),
                         pi.dropLast(e.delete) + e.insert
                     } else if (text == "-" && pi.endsWith('-') && settings.dashMerge) pi.dropLast(1) + "—" else pi + text
                 } else {
-                    val t = if (ScriptHost.has("key") && !flags.isPassword) ScriptHost.filterKey(text) ?: return else text
-                    if (t.isNotEmpty() && (kb.language.id != "my" || !typeMyanmar(t))) typeCharacter(t, pendingTouch)
+                    if (typed.isNotEmpty() && (kb.language.id != "my" || !typeMyanmar(typed))) typeCharacter(typed, pendingTouch, typingShift)
                 }
                 pendingTouch = null
-                if (wasSingle && kb.shift == ShiftState.SINGLE && text.any { isWordLetter(it) || it.isDigit() }) kb.shift = ShiftState.OFF
+                if (kb.symbolsPage != 0 && (text == "'" || text == "’")) kb.symbolsPage = 0
             }
             KeyType.SHIFT -> toggleShift()
             KeyType.BACKSPACE -> if (text == DELETE_WORD) deleteWord() else deleteBackward()
@@ -2121,6 +2185,10 @@ class ComposeKeyboardService : InputMethodService(),
     }
 
     override fun swipeSpace(direction: Int) {
+        if (kb.panel == ActivePanel.TRANSLATE) {
+            spaceCursor(direction)
+            return
+        }
         // язык меняет только свайп, который для этого выбран в настройках; остальные жесты — курсор
         when (settings.spaceSwipe) {
             "LANGUAGE", "BOTH" -> toggleLanguage(direction)
@@ -2129,7 +2197,16 @@ class ComposeKeyboardService : InputMethodService(),
     }
 
     override fun spaceCursor(direction: Int) {
-        if (panelInput == null) moveCursor(direction)
+        if (kb.panel == ActivePanel.TRANSLATE) {
+            val text = kb.translatorInput
+            val cursor = translatorCursor()
+            val boundaries = android.icu.text.BreakIterator.getCharacterInstance().apply { setText(text) }
+            val next = if (direction > 0) boundaries.following(cursor) else boundaries.preceding(cursor)
+            if (next != android.icu.text.BreakIterator.DONE) {
+                setTranslatorCursor(next)
+                keyTick()
+            }
+        } else if (panelInput == null) moveCursor(direction)
     }
 
     private fun finishComposing(ic: InputConnection) {
@@ -2286,6 +2363,14 @@ class ComposeKeyboardService : InputMethodService(),
 
     override fun pickSuggestion(chip: SuggestionChipModel) {
         if (chip.isEmpty) return
+        if (chip.isCalculation) {
+            val result = editorCalculation()
+            if (result == chip.commitWord) {
+                HapticsEngine.keyPress(this, inputView, settings, false)
+                commitText(result)
+            }
+            return
+        }
         if (chip.commitWord == RESTORE_DELETED) {
             val d = deletedText
             deletedText = null
@@ -2649,6 +2734,7 @@ class ComposeKeyboardService : InputMethodService(),
     }
 
     override fun spaceHold() {
+        if (kb.panel == ActivePanel.TRANSLATE) return
         when (settings.spaceLongAction) {
             "AI_FIX" -> aiFix()
             "LANGUAGE" -> toggleLanguage()
@@ -2858,6 +2944,17 @@ class ComposeKeyboardService : InputMethodService(),
             "SETTINGS" -> openSettings()
             "ONE_HANDED" -> KeyboardPrefs.edit(this) { putString("one_handed", if (settings.oneHanded == "OFF") "RIGHT" else "OFF") }
         }
+    }
+
+    /** Кнопка «смена языка» справа вверху: листает включённые языки по кругу. */
+    override fun switchLanguage() {
+        if (Languages.enabled(settings).size < 2) {
+            Toast.makeText(this, tr("Включите второй язык в настройках"), Toast.LENGTH_SHORT).show()
+            return
+        }
+        // на странице символов смена языка возвращает к буквам нового языка, как кнопка глобуса
+        if (kb.symbolsPage != 0) kb.symbolsPage = 0
+        toggleLanguage()
     }
 
     override fun dismissClipOffer() {

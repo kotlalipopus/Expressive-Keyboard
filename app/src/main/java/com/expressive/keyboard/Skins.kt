@@ -563,6 +563,7 @@ internal fun renderBackdrop(
     skin: KeyboardSkin,
     bg: Color,
     image: ImageBitmap?,
+    photoFrame: PhotoFrame,
     dim: Float
 ): Pair<ImageBitmap, Float> {
     val blurPx = with(density) { skin.glassBlur.dp.toPx() }
@@ -576,13 +577,7 @@ internal fun renderBackdrop(
             val area = Size(width.toFloat(), height.toFloat())
             drawSkinBackground(skin, area)
             if (image != null) {
-                val k = max(width / image.width.toFloat(), height / image.height.toFloat())
-                val sw = (width / k).roundToInt().coerceIn(1, image.width)
-                val sh = (height / k).roundToInt().coerceIn(1, image.height)
-                drawImage(
-                    image, IntOffset((image.width - sw) / 2, (image.height - sh) / 2), IntSize(sw, sh),
-                    IntOffset.Zero, IntSize(width, height), filterQuality = FilterQuality.Low
-                )
+                drawKeyboardPhoto(image, area, photoFrame)
                 if (dim > 0f) drawRect(bg.copy(alpha = dim), size = area)
             }
         }

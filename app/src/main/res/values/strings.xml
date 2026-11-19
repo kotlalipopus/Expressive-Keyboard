@@ -4,4 +4,5 @@
     <string name="ime_name">Expressive Keyboard</string>
     <string name="subtype_en">English (US)</string>
     <string name="subtype_ru">Русский</string>
+    <string name="subtype_ar_eg">العربية (مصر)</string>
 </resources>

@@ -18,7 +18,7 @@ import android.view.inputmethod.InputMethodSubtype
 object Subtypes {
     private const val EXTRA = "lang="
     /** Подтипы, объявленные в method.xml: для этих языков дополнительные не нужны. */
-    private val DECLARED = setOf("ru_RU", "en_US")
+    private val DECLARED = setOf("ru_RU", "en_US", "ar_EG")
 
     @Volatile private var registeredFor: String? = null
     @Volatile private var info: InputMethodInfo? = null

@@ -12,13 +12,19 @@ plugins {
 android {
     namespace = "com.expressive.keyboard"
     compileSdk = 35
+    ndkVersion = "28.2.13676358"
+    externalNativeBuild {
+        ndkBuild {
+            path = file("src/main/jni/Android.mk")
+        }
+    }
 
     defaultConfig {
         applicationId = "com.expressive.keyboard"
         minSdk = 26
         targetSdk = 35
-        versionCode = 28
-        versionName = "11.2.4"
+        versionCode = 29
+        versionName = "11.2.5"
         vectorDrawables {
             useSupportLibrary = true
         }

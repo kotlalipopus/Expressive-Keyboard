@@ -395,10 +395,9 @@ internal fun TranslatorBar(state: KeyboardState, actions: KeyboardActions, setti
 
 /** Вкладки внизу между ABC и ⌫, как в Gboard; удержание эмодзи с тонами кожи — выбор тона. */
 @Composable
-internal fun EmojiPanel(actions: KeyboardActions, settings: KeyboardSettings, palette: KeyPalette, font: FontFamily) {
+internal fun EmojiPanel(recents: List<String>, actions: KeyboardActions, settings: KeyboardSettings, palette: KeyPalette, font: FontFamily) {
     val context = LocalContext.current
     val cats = EmojiCatalog.categories
-    val recents = EmojiRecents.items
     var tab by remember { mutableIntStateOf(if (recents.isEmpty()) 1 else 0) }
     var variantsOf by remember { mutableStateOf<EmojiItem?>(null) }
     val style = settings.emojiStyle
@@ -537,12 +536,13 @@ internal fun EmojiSearchBar(state: KeyboardState, actions: KeyboardActions, sett
     val emojiFont = remember(settings.emojiFontVersion) { FontRepository.emoji(context, settings.emojiFontVersion) }
     // Поиск по всему каталогу — не работа для главного потока: пока он идёт, клавиатура должна успевать набирать.
     // Небольшая пауза склеивает быстрый набор: следующая буква отменяет предыдущий запрос.
+    val recents = state.emojiRecents
     val results by produceState(
-        initialValue = if (query.isBlank()) EmojiRecents.items.mapNotNull { EmojiCatalog.item(it) }.distinct() else emptyList(),
+        initialValue = if (query.isBlank()) recents.mapNotNull { EmojiCatalog.item(it) }.distinct() else emptyList(),
         query, cats
     ) {
         if (query.isBlank()) {
-            value = EmojiRecents.items.mapNotNull { EmojiCatalog.item(it) }.distinct()
+            value = recents.mapNotNull { EmojiCatalog.item(it) }.distinct()
         } else {
             delay(40L)
             value = withContext(Dispatchers.Default) { EmojiCatalog.search(query) }
