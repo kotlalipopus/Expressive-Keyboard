@@ -266,7 +266,6 @@ private fun StepTitle(title: String, subtitle: String) {
 
 @Composable
 private fun WelcomeStep(settings: KeyboardSettings) {
-    val context = LocalContext.current
     Spacer(Modifier.height(32.dp))
     StepBadge(Icons.Rounded.Keyboard, ExpressiveShapePreset.COOKIE_12, settings)
     StepTitle(
@@ -274,10 +273,7 @@ private fun WelcomeStep(settings: KeyboardSettings) {
         "Пять коротких шагов: включить клавиатуру, выбрать тему, сколько будет форм и какие функции нужны. Всё это потом можно поменять в настройках."
     )
     SettingsSection(null) {
-        ChoiceItem(
-            Icons.Rounded.Translate, "Язык приложения", null,
-            listOf("SYSTEM" to "Как в системе", "ru" to "Русский", "en" to "English", "es" to "Español"), settings.appLanguage
-        ) { v -> KeyboardPrefs.edit(context) { putString("app_language", v) } }
+        AppLanguageItem(settings)
     }
     // после переустановки: вернуть словарь Т9 и настройки из копии
     T9BackupSection(title = "Переустанавливаете?", compact = true)

@@ -3,6 +3,9 @@ package com.expressive.keyboard
 // Дополнительные английские и испанские строки. tr() смотрит сюда раньше основных таблиц.
 
 internal val EN_EXTRA: Map<String, String> = hashMapOf(
+    "«Язык приложения» и «Новое» теперь сразу под поиском настроек" to "App language and What’s new are now directly below Settings search",
+    "Уменьшите «Отступ снизу» ниже нуля, чтобы опустить клавиши ближе к системной навигации." to "Set Bottom offset below zero to move the keys closer to system navigation.",
+    "После вставки обычного текста клавиатура добавляет пробел, если его ещё нет." to "When you paste plain text, the keyboard adds a trailing space if needed.",
     "Размещение фото" to "Photo placement",
     "Заполнить" to "Fill",
     "Вписать" to "Fit",
@@ -65,6 +68,9 @@ internal val EN_EXTRA: Map<String, String> = hashMapOf(
 )
 
 internal val ES_EXTRA: Map<String, String> = hashMapOf(
+    "«Язык приложения» и «Новое» теперь сразу под поиском настроек" to "Idioma de la app y Novedades ahora aparecen justo debajo de la búsqueda de ajustes",
+    "Уменьшите «Отступ снизу» ниже нуля, чтобы опустить клавиши ближе к системной навигации." to "Ajusta el margen inferior por debajo de cero para acercar las teclas a la navegación del sistema.",
+    "После вставки обычного текста клавиатура добавляет пробел, если его ещё нет." to "Al pegar texto sin formato, el teclado añade un espacio al final si hace falta.",
     "Размещение фото" to "Ajuste de la foto",
     "Заполнить" to "Rellenar",
     "Вписать" to "Encajar",

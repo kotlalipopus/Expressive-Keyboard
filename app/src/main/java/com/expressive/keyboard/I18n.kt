@@ -24,7 +24,7 @@ object I18n {
     /** setting: SYSTEM, ru или en. */
     fun apply(setting: String) {
         val next = when (setting) {
-            "ru", "en", "es" -> setting
+            "ru", "en" -> setting
             else -> systemLang()
         }
         if (next != lang) lang = next

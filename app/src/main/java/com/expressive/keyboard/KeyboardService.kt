@@ -2704,7 +2704,7 @@ class ComposeKeyboardService : InputMethodService(),
     override fun commitClip(entry: String) {
         bumpClip(entry)
         if (!ClipImages.isImage(entry)) {
-            commitText(entry)
+            commitPastedText(entry)
             return
         }
         HapticsEngine.keyPress(this, inputView, settings, false)
@@ -2731,6 +2731,31 @@ class ComposeKeyboardService : InputMethodService(),
         kb.clipOfferSecret = false
         // пароль вставляется как есть: ни в историю, ни в «недавние»
         if (secret) commitText(entry) else commitClip(entry)
+    }
+
+    private fun commitPastedText(text: String) {
+        if (text.isEmpty()) return
+        val suffix = if (flags.suggestions && !text.last().isWhitespace()) " " else ""
+        commitText(text + suffix)
+    }
+
+    private fun pasteFromEditorToolbar(ic: InputConnection) {
+        val text = runCatching {
+            val clip = clipboardManager?.primaryClip ?: return@runCatching null
+            if (clip.itemCount != 1 || clip.description.extras?.getBoolean("android.content.extra.IS_SENSITIVE") == true) {
+                return@runCatching null
+            }
+            val item = clip.getItemAt(0)
+            if (item.htmlText != null || item.uri != null || item.intent != null || item.text is android.text.Spanned) {
+                return@runCatching null
+            }
+            item.text?.toString()?.takeIf { it.isNotEmpty() }
+        }.getOrNull()
+        if (text == null || !flags.suggestions) {
+            ic.performContextMenuAction(android.R.id.paste)
+        } else {
+            commitPastedText(text)
+        }
     }
 
     override fun spaceHold() {
@@ -3306,7 +3331,7 @@ class ComposeKeyboardService : InputMethodService(),
             "select_all" -> ic.performContextMenuAction(android.R.id.selectAll)
             "copy" -> ic.performContextMenuAction(android.R.id.copy)
             "cut" -> ic.performContextMenuAction(android.R.id.cut)
-            "paste" -> ic.performContextMenuAction(android.R.id.paste)
+            "paste" -> pasteFromEditorToolbar(ic)
             "undo" -> sendChord(ic, KeyEvent.KEYCODE_Z, ctrl)
             "redo" -> sendChord(ic, KeyEvent.KEYCODE_Z, ctrl or KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON)
         }

@@ -154,7 +154,7 @@ internal fun MyanmarOrderSection(settings: KeyboardSettings) {
 }
 
 @Composable
-internal fun LanguagesPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> Unit) {
+internal fun LanguagesPage(settings: KeyboardSettings) {
     val context = LocalContext.current
     val cs = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
@@ -212,10 +212,6 @@ internal fun LanguagesPage(settings: KeyboardSettings, onNavigate: (SettingsPage
                 )
             }
         }
-    }
-    SettingsSection("Раскладка") {
-        ActionItem(Icons.Rounded.SwapHoriz, "Свои места клавиш", "Поменяйте местами буквы, цифры и знаки или поставьте свои",
-            onClick = { onNavigate(SettingsPage.LAYOUT) })
     }
     if (enabled.any { it.id == "my" }) MyanmarOrderSection(settings)
     SettingsSection("Добавить язык") {

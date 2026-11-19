@@ -149,6 +149,9 @@ enum class HapticMode(val id: String, val title: String) {
     }
 }
 
+internal val BOTTOM_OFFSET_RANGE = -16f..64f
+private const val DEFAULT_BOTTOM_OFFSET_DP = -12f
+
 @Immutable
 data class KeyboardSettings(
     val themeMode: String = "SYSTEM",
@@ -157,7 +160,7 @@ data class KeyboardSettings(
     val cornerRadiusDp: Float = 16f,
     val keySpacingDp: Float = 5f,
     val rowSpacingDp: Float = 8f,
-    val bottomOffsetDp: Float = 8f,
+    val bottomOffsetDp: Float = DEFAULT_BOTTOM_OFFSET_DP,
     val shapePreset: String = ExpressiveShapePreset.COOKIE_12.id,
     val waveCount: Int = 12,
     val waveAmplitudePercent: Float = 6f,
@@ -371,7 +374,7 @@ data class KeyboardSettings(
     /** После вставки эмодзи клавиатура сразу возвращается к буквам, как в Gboard. */
     val emojiReturnToKeyboard: Boolean = false,
     // --- интерфейс ---
-    val appLanguage: String = "SYSTEM",           // SYSTEM | ru | en | es
+    val appLanguage: String = "SYSTEM",           // SYSTEM | ru | en
     val designStyle: String = "EXPRESSIVE",
     /** Сколько выразительных форм: FULL, ACCENTS или NONE (см. ShapeAmount). */
     val shapeAmount: String = ShapeAmount.FULL,
@@ -517,7 +520,7 @@ object KeyboardPrefs {
             cornerRadiusDp = p.getFloat("corner_radius_dp", 16f).coerceIn(6f, 30f),
             keySpacingDp = p.getFloat("key_spacing_dp", 5f).coerceIn(2f, 8f),
             rowSpacingDp = p.getFloat("row_spacing_dp", 8f).coerceIn(2f, 12f),
-            bottomOffsetDp = p.getFloat("bottom_offset_dp", 8f).coerceIn(0f, 64f),
+            bottomOffsetDp = p.getFloat("bottom_offset_dp", DEFAULT_BOTTOM_OFFSET_DP).coerceIn(BOTTOM_OFFSET_RANGE),
             shapePreset = p.getString("accent_shape_preset", ExpressiveShapePreset.COOKIE_12.id)
                 ?: ExpressiveShapePreset.COOKIE_12.id,
             waveCount = p.getInt("wave_count", 12).coerceIn(4, 18),
@@ -677,7 +680,7 @@ object KeyboardPrefs {
             emojiFontVersion = p.getLong("emoji_font_version", 0L),
             emojiStyle = p.getString("emoji_style", null) ?: if (p.getLong("emoji_font_version", 0L) != 0L) "CUSTOM" else "SYSTEM",
             emojiReturnToKeyboard = p.getBoolean("emoji_return_keyboard", false),
-            appLanguage = p.getString("app_language", "SYSTEM") ?: "SYSTEM",
+            appLanguage = p.getString("app_language", null).let { if (it == "ru" || it == "en") it else "SYSTEM" },
             designStyle = p.getString("design_style", "EXPRESSIVE") ?: "EXPRESSIVE",
             shapeAmount = p.getString("shape_amount", ShapeAmount.FULL) ?: ShapeAmount.FULL
         )

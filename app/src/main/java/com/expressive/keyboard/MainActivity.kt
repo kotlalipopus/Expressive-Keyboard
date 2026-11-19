@@ -197,7 +197,6 @@ enum class SettingsPage(val title: String, val subtitle: String, val icon: Image
     val parent: SettingsPage
         get() = when (this) {
             THEME_EDITOR -> THEMES
-            LAYOUT -> LANGUAGES
             LONG_PRESS -> KEYS
             else -> HOME
         }
@@ -386,7 +385,7 @@ internal fun SettingsPageScaffold(
                         ToolbarPage(settings)
                         IconsPage(settings)
                     }
-                    SettingsPage.LANGUAGES -> LanguagesPage(settings, onNavigate)
+                    SettingsPage.LANGUAGES -> LanguagesPage(settings)
                     SettingsPage.MY_WORDS -> MyWordsPage(settings)
                     SettingsPage.TYPING -> TypingPage(settings, SettingsPage.TYPING)
                     SettingsPage.GESTURES -> TypingPage(settings, SettingsPage.GESTURES)
@@ -468,6 +467,12 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         }
         return
     }
+    var i = 0
+    SettingsSection(null) {
+        AppLanguageItem(settings)
+        val p = SettingsPage.WHATS_NEW
+        CategoryTile(p, i++, selected = p == selected) { onNavigate(p) }
+    }
     if (!imeEnabled || !imeSelected) HeroCard(
         spec = rememberSpec(settings),
         imeEnabled = imeEnabled,
@@ -479,14 +484,16 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         onSelect = { (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker() },
         onMic = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }
     )
+    SettingsSection("Внешний вид") {
+        for (p in listOf(SettingsPage.SIZE, SettingsPage.KEYS, SettingsPage.THEMES, SettingsPage.COLORS, SettingsPage.ANIMATIONS)) {
+            CategoryTile(p, i++, selected = p == selected || p == selected?.parent) { onNavigate(p) }
+        }
+    }
     val groups = listOf(
-        "Ввод" to listOf(SettingsPage.LANGUAGES, SettingsPage.GESTURES, SettingsPage.TYPING, SettingsPage.MY_WORDS),
-        "Клавиатура" to listOf(SettingsPage.SIZE, SettingsPage.KEYS, SettingsPage.FEEDBACK),
-        "Внешний вид" to listOf(SettingsPage.THEMES, SettingsPage.COLORS, SettingsPage.ANIMATIONS),
-        "Инструменты" to listOf(SettingsPage.TOOLBAR, SettingsPage.CLIPBOARD, SettingsPage.PLUGINS),
-        "Приложение" to listOf(SettingsPage.POWER, SettingsPage.BACKUP, SettingsPage.WHATS_NEW, SettingsPage.ABOUT)
+        "Ввод" to listOf(SettingsPage.LANGUAGES, SettingsPage.GESTURES, SettingsPage.TYPING, SettingsPage.MY_WORDS, SettingsPage.FEEDBACK),
+        "Инструменты" to listOf(SettingsPage.LAYOUT, SettingsPage.TOOLBAR, SettingsPage.CLIPBOARD, SettingsPage.PLUGINS),
+        "Приложение" to listOf(SettingsPage.POWER, SettingsPage.BACKUP, SettingsPage.ABOUT)
     )
-    var i = 0
     for ((title, pages) in groups) {
         SettingsSection(title) {
             for (p in pages) {
@@ -497,13 +504,18 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
                 ActionItem(Icons.Rounded.Mic, "Микрофон для голосового ввода", null,
                     onClick = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) })
             }
-            if (SettingsPage.BACKUP in pages) ChoiceItem(
-                Icons.Rounded.Translate, "Язык приложения", null,
-                listOf("SYSTEM" to "Как в системе", "ru" to "Русский", "en" to "English", "es" to "Español"), settings.appLanguage
-            ) { v -> KeyboardPrefs.edit(context) { putString("app_language", v) } }
         }
     }
     UpdateCard()
+}
+
+@Composable
+internal fun AppLanguageItem(settings: KeyboardSettings) {
+    val context = LocalContext.current
+    ChoiceItem(
+        Icons.Rounded.Translate, "Язык приложения", null,
+        listOf("SYSTEM" to "Как в системе", "ru" to "Русский", "en" to "English"), settings.appLanguage
+    ) { v -> KeyboardPrefs.edit(context) { putString("app_language", v) } }
 }
 
 // ----------------------------------------------------------------------- внешний вид

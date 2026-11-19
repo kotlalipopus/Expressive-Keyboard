@@ -23,31 +23,24 @@ internal fun LandscapeScaleItem(settings: KeyboardSettings) {
 @Composable
 internal fun WhatsNewPage(onNavigate: (SettingsPage) -> Unit) {
     InfoCard(Icons.Rounded.NewReleases, tr("В версии {0}", BuildConfig.VERSION_NAME.substringBefore('-')))
-    SettingsSection("Ввод") {
-        ActionItem(Icons.Rounded.Calculate, "Ответ после знака «=»",
-            "Например, 199+123= показывает 322. Нажмите на ответ, чтобы вставить его.",
-            onClick = { onNavigate(SettingsPage.TYPING) })
-        ActionItem(Icons.Rounded.Send, "Отправка долгим нажатием Enter",
-            "Если приложение поддерживает IME-действие отправки",
-            onClick = { onNavigate(SettingsPage.GESTURES) })
-        InfoCard(Icons.Rounded.Keyboard, "Исправлены быстрый набор с Shift и устаревшие подсказки при повороте экрана")
+    SettingsSection("Настройки") {
+        InfoCard(Icons.Rounded.Translate, "«Язык приложения» и «Новое» теперь сразу под поиском настроек")
     }
     SettingsSection("Внешний вид") {
-        ActionItem(Icons.Rounded.Wallpaper, "Размещение фото",
-            "Масштаб, ширина, высота и положение фото под клавишами",
-            onClick = { onNavigate(SettingsPage.COLORS) })
-        ActionItem(Icons.Rounded.Palette, "Создать тему",
-            "Разделы редактора, предпросмотр и сохранение отдельной копии темы",
-            onClick = { onNavigate(SettingsPage.THEMES) })
-    }
-    SettingsSection("Клавиатура") {
-        InfoCard(Icons.Rounded.EmojiEmotions, "Недавние эмодзи меняют порядок при следующем открытии меню")
-        ActionItem(Icons.Rounded.Language, "Арабский (Египет)",
-            "Новая раскладка и обновлённый редактор рядов",
-            onClick = { onNavigate(SettingsPage.LANGUAGES) })
         ActionItem(Icons.Rounded.Straighten, "Размер и положение",
-            "Одинаковая высота букв и символов. Свои размеры плавающей клавиатуры.",
+            "Уменьшите «Отступ снизу» ниже нуля, чтобы опустить клавиши ближе к системной навигации.",
             onClick = { onNavigate(SettingsPage.SIZE) })
+        ActionItem(Icons.Rounded.Keyboard, "Клавиши и шрифт", null,
+            onClick = { onNavigate(SettingsPage.KEYS) })
+    }
+    SettingsSection("Ввод") {
+        InfoCard(Icons.Rounded.ContentPaste, "После вставки обычного текста клавиатура добавляет пробел, если его ещё нет.")
+        ActionItem(Icons.Rounded.Vibration, "Вибрация и звук", null,
+            onClick = { onNavigate(SettingsPage.FEEDBACK) })
+    }
+    SettingsSection("Инструменты") {
+        ActionItem(Icons.Rounded.SwapHoriz, "Свои места клавиш", null,
+            onClick = { onNavigate(SettingsPage.LAYOUT) })
     }
 }
 

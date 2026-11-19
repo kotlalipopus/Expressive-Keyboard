@@ -498,7 +498,7 @@ internal fun KeyboardSizePage(settings: KeyboardSettings) {
         )
         SliderItem(
             icon = Icons.Rounded.VerticalAlignBottom, title = "Отступ снизу",
-            value = settings.bottomOffsetDp, range = 0f..64f,
+            value = settings.bottomOffsetDp, range = BOTTOM_OFFSET_RANGE,
             format = { "${it.roundToInt()} dp" },
             onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("bottom_offset_dp", v) } }
         )

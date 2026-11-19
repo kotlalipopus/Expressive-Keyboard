@@ -180,7 +180,7 @@ fun KeyboardRoot(
         val s = if (landscape) s0.forLandscape(configuration.screenHeightDp) else s0
         // плавающая — компактнее: клавиши ниже, без режима одной руки и своей ширины (ширину задаёт окно)
         if (s.floating) s.copy(
-            bottomOffsetDp = min(s.bottomOffsetDp, 4f),
+            bottomOffsetDp = s.bottomOffsetDp.coerceIn(0f, 4f),
             oneHanded = "OFF", keyboardWidth = 1f
         ) else s
     }
@@ -234,6 +234,16 @@ fun KeyboardRoot(
         }
         val navigation = WindowInsets.navigationBars.union(WindowInsets.tappableElement).union(WindowInsets.captionBar)
         val safeEdges = WindowInsets.displayCutout.union(navigation)
+        val bottom = with(density) {
+            val usedByButtons = WindowInsets.tappableElement.getBottom(this).toDp()
+            val nav = WindowInsets.navigationBars.getBottom(this).toDp()
+            val cutout = WindowInsets.displayCutout.getBottom(this).toDp()
+            val systemMinimum = maxOf(cutout, usedByButtons, min(nav, 12.dp))
+            // Сдвигаем клавиши внутри регулируемого зазора, сохраняя место под системную навигацию.
+            val adjustableGap = (settings.bottomOffsetDp - BOTTOM_OFFSET_RANGE.start).dp
+            if (floating) settings.bottomOffsetDp.dp
+            else systemMinimum + adjustableGap
+        }
         CompositionLocalProvider(LocalSkin provides skin, LocalBackdrop provides backdrop) {
           FloatingFrame(floating, settings, safeEdges, palette, corner, onFloatBounds) { keyHeight ->
             Surface(
@@ -270,9 +280,9 @@ fun KeyboardRoot(
                             // плавающая не стоит у края экрана: отступы под панель навигации и вырез ей не нужны
                             .then(
                                 if (floating) Modifier
-                                else Modifier.windowInsetsPadding(safeEdges.only(WindowInsetsSides.Bottom)).padding(horizontal = side)
+                                else Modifier.padding(horizontal = side)
                             )
-                            .padding(bottom = settings.bottomOffsetDp.dp)
+                            .padding(bottom = bottom)
                     ) {
                         val screenSettings = remember(settings, keyHeight) {
                             if (settings.keyHeightDp == keyHeight) settings else settings.copy(keyHeightDp = keyHeight)
