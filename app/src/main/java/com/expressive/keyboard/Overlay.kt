@@ -16,6 +16,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -31,6 +35,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -42,6 +48,9 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -179,8 +188,23 @@ sealed interface OverlayItem {
         override val alpha: Float, override val rotation: Float
     ) : OverlayItem
 
+    @ConsistentCopyVisibility
+    data class Gl internal constructor(
+        val x: Float, val y: Float, val w: Float, val h: Float, val source: String,
+        val uniforms: Map<String, List<Float>>, internal val mesh: PluginMesh?,
+        override val alpha: Float, override val rotation: Float
+    ) : OverlayItem {
+        internal val animated = shaderTime.containsMatchIn(source)
+
+        internal fun pixelSize(density: Float, bounds: IntSize) = IntSize(
+            if (w > 0f) (w * density).roundToInt() else bounds.width,
+            if (h > 0f) (h * density).roundToInt() else bounds.height
+        )
+    }
+
     companion object {
-        private fun f(o: Map<*, *>, k: String, def: Float) = (o[k] as? Number)?.toFloat()?.takeIf { !it.isNaN() } ?: def
+        private val shaderTime = Regex("""\biTime\b""")
+        private fun f(o: Map<*, *>, k: String, def: Float) = (o[k] as? Number)?.toFloat()?.takeIf { it.isFinite() } ?: def
         private fun color(o: Map<*, *>, k: String, def: Color) =
             PluginParser.parseColor(o[k]?.toString())?.let { Color(it) } ?: def
 
@@ -228,6 +252,7 @@ sealed interface OverlayItem {
                     val uniforms = (o["uniforms"] as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value } ?: emptyMap()
                     Shader(x, y, f(o, "w", 0f), f(o, "h", 0f), prog, uniforms, alpha, rot)
                 }
+                "glsl", "mesh3d" -> PluginGl.parse(o, x, y, f(o, "w", 0f), f(o, "h", 0f), alpha, rot)
                 else -> null
             }
         }
@@ -244,8 +269,6 @@ internal fun BoxScope.ScriptOverlayLayer() {
     val capture = ScriptHost.touchCapture
     ModParticleLayer(overlay = true)
     if (items.isEmpty() && !capture) return
-    val measurer = rememberTextMeasurer()
-    val path = remember { Path() }
     // мод попросил касания (kb.captureTouches): слой ловит их вместо клавиш — для игр и рисования
     val touch = if (capture) Modifier.pointerInput(Unit) {
         awaitPointerEventScope {
@@ -265,7 +288,7 @@ internal fun BoxScope.ScriptOverlayLayer() {
             }
         }
     } else Modifier
-    Canvas(Modifier.matchParentSize().then(touch)) { drawOverlayItems(items, measurer, path) }
+    ScriptCanvas(items, Modifier.matchParentSize().then(touch))
     // выход всегда есть: клавиши под слоем мода не нажимаются, а мод может и не убрать перехват сам
     if (capture) {
         Box(
@@ -282,15 +305,68 @@ internal fun BoxScope.ScriptBackgroundLayer() {
     val items = ScriptHost.backgroundItems
     ModParticleLayer(overlay = false)
     if (items.isEmpty()) return
+    ScriptCanvas(items, Modifier.matchParentSize())
+}
+
+private data class GlFrame(val source: String, val mesh: Boolean, val image: ImageBitmap)
+
+@Composable
+internal fun ScriptCanvas(items: List<OverlayItem>, modifier: Modifier) {
     val measurer = rememberTextMeasurer()
     val path = remember { Path() }
-    Canvas(Modifier.matchParentSize()) { drawOverlayItems(items, measurer, path) }
+    if (items.none { it is OverlayItem.Gl }) {
+        Canvas(modifier) { drawOverlayItems(items, measurer, path, emptyMap()) }
+        return
+    }
+    var bounds by remember { mutableStateOf(IntSize.Zero) }
+    var frames by remember { mutableStateOf<Map<Int, GlFrame>>(emptyMap()) }
+    val currentItems by rememberUpdatedState(items)
+    val density = LocalDensity.current.density
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle, density) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            var start = -1L
+            var lastFrame = -50L
+            var previous = emptyMap<Int, GlFrameRequest>()
+            while (true) {
+                val now = withFrameMillis { it }
+                if (now - lastFrame < 50L || bounds == IntSize.Zero) continue
+                lastFrame = now
+                if (start < 0L) start = now
+                val requests = buildMap {
+                    for ((index, item) in currentItems.withIndex()) {
+                        if (item !is OverlayItem.Gl || item.alpha <= 0f) continue
+                        val size = item.pixelSize(density, bounds)
+                        if (size.width == 0 || size.height == 0) continue
+                        put(index, GlFrameRequest(item, size, if (item.animated) (now - start) / 1000f else 0f))
+                        if (this.size == 4) break
+                    }
+                }
+                if (requests != previous) {
+                    val changed = requests.filter { (index, request) -> previous[index] != request }
+                    val rendered = PluginGl.render(changed)
+                    frames = buildMap {
+                        for ((index, request) in requests) {
+                            val old = frames[index]
+                            val frame = rendered[index]?.let { GlFrame(request.item.source, request.item.mesh != null, it) }
+                                ?: old?.takeIf { index !in changed }
+                            if (frame != null) put(index, frame)
+                        }
+                    }
+                    previous = requests
+                }
+            }
+        }
+    }
+    Canvas(modifier.onSizeChanged { bounds = it }) { drawOverlayItems(items, measurer, path, frames) }
 }
 
 /** Элементы kb.overlay (и холста на панели мода): координаты — в dp от угла области рисования. */
-internal fun DrawScope.drawOverlayItems(items: List<OverlayItem>, measurer: TextMeasurer, path: Path) {
+private fun DrawScope.drawOverlayItems(
+    items: List<OverlayItem>, measurer: TextMeasurer, path: Path, frames: Map<Int, GlFrame>
+) {
         val d = density
-        for (it in items) {
+        for ((index, it) in items.withIndex()) {
             when (it) {
                 is OverlayItem.Shape -> {
                     val tl = Offset(it.x * d, it.y * d)
@@ -344,6 +420,17 @@ internal fun DrawScope.drawOverlayItems(items: List<OverlayItem>, measurer: Text
                     }
                 }
                 is OverlayItem.Shader -> withItem(it, Offset((it.x + it.w / 2f) * d, (it.y + it.h / 2f) * d)) { drawShaderItem(it) }
+                is OverlayItem.Gl -> {
+                    val frame = frames[index] ?: continue
+                    if (frame.source != it.source || frame.mesh != (it.mesh != null)) continue
+                    val px = it.pixelSize(d, IntSize(size.width.roundToInt(), size.height.roundToInt()))
+                    if (px.width == 0 || px.height == 0) continue
+                    val tl = Offset(it.x * d, it.y * d)
+                    withItem(it, tl + Offset(px.width / 2f, px.height / 2f)) {
+                        drawImage(frame.image, dstOffset = IntOffset(tl.x.roundToInt(), tl.y.roundToInt()),
+                            dstSize = px, alpha = it.alpha)
+                    }
+                }
                 is OverlayItem.Picture -> {
                     val tl = Offset(it.x * d, it.y * d)
                     val w = (it.w * d).roundToInt()

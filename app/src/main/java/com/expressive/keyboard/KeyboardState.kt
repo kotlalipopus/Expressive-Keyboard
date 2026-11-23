@@ -205,6 +205,7 @@ class KeyboardState {
     var clipOffer by mutableStateOf<String?>(null)
     /** Предложенная вставка — пароль (IS_SENSITIVE): показывается точками, не сохраняется. */
     var clipOfferSecret by mutableStateOf(false)
+    var passwordField by mutableStateOf(false)
     /** Закреплённые записи буфера: хранятся на диске и не стираются кнопкой «Очистить». */
     val pinnedClips = mutableStateListOf<String>()
     /** Окно клавиатуры только что появилось: панели и строка подсказок встают на место без анимаций. */

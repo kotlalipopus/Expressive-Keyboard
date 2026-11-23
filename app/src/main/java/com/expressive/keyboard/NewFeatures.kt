@@ -23,24 +23,11 @@ internal fun LandscapeScaleItem(settings: KeyboardSettings) {
 @Composable
 internal fun WhatsNewPage(onNavigate: (SettingsPage) -> Unit) {
     InfoCard(Icons.Rounded.NewReleases, tr("В версии {0}", BuildConfig.VERSION_NAME.substringBefore('-')))
-    SettingsSection("Настройки") {
-        InfoCard(Icons.Rounded.Translate, "«Язык приложения» и «Новое» теперь сразу под поиском настроек")
-    }
     SettingsSection("Внешний вид") {
-        ActionItem(Icons.Rounded.Straighten, "Размер и положение",
-            "Уменьшите «Отступ снизу» ниже нуля, чтобы опустить клавиши ближе к системной навигации.",
+        ActionItem(Icons.Rounded.Videocam, "Видео на фоне клавиатуры", "Выберите видео из галереи в разделе «Цвета и фон».",
+            onClick = { onNavigate(SettingsPage.COLORS) })
+        ActionItem(Icons.Rounded.EmojiEmotions, "Размер эмодзи", "Чем крупнее эмодзи, тем меньше их помещается в ряду.",
             onClick = { onNavigate(SettingsPage.SIZE) })
-        ActionItem(Icons.Rounded.Keyboard, "Клавиши и шрифт", null,
-            onClick = { onNavigate(SettingsPage.KEYS) })
-    }
-    SettingsSection("Ввод") {
-        InfoCard(Icons.Rounded.ContentPaste, "После вставки обычного текста клавиатура добавляет пробел, если его ещё нет.")
-        ActionItem(Icons.Rounded.Vibration, "Вибрация и звук", null,
-            onClick = { onNavigate(SettingsPage.FEEDBACK) })
-    }
-    SettingsSection("Инструменты") {
-        ActionItem(Icons.Rounded.SwapHoriz, "Свои места клавиш", null,
-            onClick = { onNavigate(SettingsPage.LAYOUT) })
     }
 }
 

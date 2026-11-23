@@ -1021,9 +1021,11 @@ object ScriptHost {
             true
         }
         def(kb, "shaderError") { a -> ModShaders.error(str(a, 0)) }
+        def(kb, "glslError") { a -> PluginGl.error(str(a, 0)) }
         def(kb, "supports") { a ->
             when (str(a, 0)) {
                 "shader", "postEffect" -> ModShaders.supported
+                "glsl", "mesh3d" -> true
                 "labelBlur" -> android.os.Build.VERSION.SDK_INT >= 31
                 "particles", "keyEffects", "pointer" -> true
                 "sensors" -> ModSensors.available(ctx)

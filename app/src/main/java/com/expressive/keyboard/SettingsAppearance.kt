@@ -241,11 +241,29 @@ internal fun ColorsPage(settings: KeyboardSettings) {
     val scope = rememberCoroutineScope()
     var picker by remember { mutableStateOf<ColorTarget?>(null) }
     val auto = remember(cs) { buildKeyPalette(cs, KeyboardSettings()) }
-    val bgLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+    var importing by remember { mutableStateOf(false) }
+    val bgLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) scope.launch {
-            val ok = withContext(Dispatchers.IO) { importBackground(context, uri) }
-            if (ok) KeyboardPrefs.setBackgroundImage(context)
-            else Toast.makeText(context, tr("Не удалось открыть картинку"), Toast.LENGTH_LONG).show()
+            importing = true
+            try {
+                val ok = withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+                    val type = runCatching { context.contentResolver.getType(uri) }.getOrNull()
+                    when {
+                        type?.startsWith("video/") != true && importBackground(context, uri) -> {
+                            KeyboardPrefs.setBackgroundImage(context, video = false)
+                            true
+                        }
+                        type?.startsWith("image/") != true && importBackgroundVideo(context, uri) -> {
+                            KeyboardPrefs.setBackgroundImage(context, video = true)
+                            true
+                        }
+                        else -> false
+                    }
+                }
+                if (!ok) Toast.makeText(context, tr("Не удалось открыть фото или видео"), Toast.LENGTH_LONG).show()
+            } finally {
+                importing = false
+            }
         }
     }
     val monet = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
@@ -365,16 +383,16 @@ internal fun ColorsPage(settings: KeyboardSettings) {
             )
         }
     }
-    SettingsSection("Фоновая картинка") {
+    SettingsSection("Фон клавиатуры") {
         ActionItem(
             icon = Icons.Rounded.Wallpaper,
-            title = if (settings.hasBackgroundImage) "Сменить картинку" else "Выбрать картинку",
-            subtitle = "Фото из галереи под клавишами",
-            onClick = { bgLauncher.launch("image/*") },
+            title = if (settings.hasBackgroundImage) "Сменить фон" else "Выбрать фон",
+            subtitle = if (importing) "Загрузка…" else "Фото или видео из галереи",
+            onClick = { if (!importing) bgLauncher.launch(arrayOf("image/*", "video/*")) },
             trailing = if (settings.hasBackgroundImage) {
                 {
-                    IconButton(onClick = { KeyboardPrefs.clearBackgroundImage(context) }) {
-                        Icon(Icons.Rounded.DeleteOutline, "Убрать картинку", tint = cs.error)
+                    IconButton(enabled = !importing, onClick = { KeyboardPrefs.clearBackgroundImage(context) }) {
+                        Icon(Icons.Rounded.DeleteOutline, tr("Убрать фон"), tint = cs.error)
                     }
                 }
             } else null
@@ -382,23 +400,26 @@ internal fun ColorsPage(settings: KeyboardSettings) {
         AnimatedVisibility(settings.hasBackgroundImage) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 val frame = settings.photoFrame
-                val image = rememberBackgroundBitmap(settings.bgImageVersion)
-                if (image != null) {
+                val video = settings.hasBackgroundVideo
+                val image = if (video) null else rememberBackgroundBitmap(settings.bgImageVersion)
+                if (video || image != null) {
                     val palette = rememberKeyPalette(settings)
                     Box(Modifier.fillMaxWidth().height(128.dp).clip(RoundedCornerShape(20.dp)).background(palette.background)) {
-                        KeyboardPhoto(image, settings, Modifier.matchParentSize(), 1f - settings.bgTransparency)
+                        val alpha = 1f - settings.bgTransparency
+                        if (video) KeyboardVideo(settings, Modifier.matchParentSize(), alpha)
+                        else if (image != null) KeyboardPhoto(image, settings, Modifier.matchParentSize(), alpha)
                         Box(Modifier.matchParentSize().background(palette.background.copy(alpha = settings.bgDim)))
                     }
                 }
-                ChoiceItem(Icons.Rounded.Crop, "Размещение фото", null,
+                ChoiceItem(Icons.Rounded.Crop, "Размещение фона", null,
                     listOf("COVER" to "Заполнить", "FIT" to "Вписать", "STRETCH" to "Растянуть"), frame.mode.name
                 ) { mode -> KeyboardPrefs.edit(context) { putString("photo_fit", mode) } }
                 val sliders = listOf(
-                    Triple("Масштаб фото", "photo_zoom", frame.zoom to (0.5f..3f)),
-                    Triple("Ширина фото", "photo_width", frame.width to (0.5f..2f)),
-                    Triple("Высота фото", "photo_height", frame.height to (0.5f..2f)),
-                    Triple("Сдвиг фото по горизонтали", "photo_x", frame.x to (-1f..1f)),
-                    Triple("Сдвиг фото по вертикали", "photo_y", frame.y to (-1f..1f))
+                    Triple("Масштаб фона", "photo_zoom", frame.zoom to (0.5f..3f)),
+                    Triple("Ширина фона", "photo_width", frame.width to (0.5f..2f)),
+                    Triple("Высота фона", "photo_height", frame.height to (0.5f..2f)),
+                    Triple("Сдвиг фона по горизонтали", "photo_x", frame.x to (-1f..1f)),
+                    Triple("Сдвиг фона по вертикали", "photo_y", frame.y to (-1f..1f))
                 )
                 for ((title, pref, control) in sliders) {
                     SliderItem(
@@ -407,7 +428,7 @@ internal fun ColorsPage(settings: KeyboardSettings) {
                         onCommit = { v -> KeyboardPrefs.edit(context) { putFloat(pref, v) } }
                     )
                 }
-                ActionItem(Icons.Rounded.RestartAlt, "Сбросить положение фото", null, onClick = {
+                ActionItem(Icons.Rounded.RestartAlt, "Сбросить положение фона", null, onClick = {
                     KeyboardPrefs.edit(context) {
                         remove("photo_fit")
                         sliders.forEach { remove(it.second) }
@@ -472,6 +493,12 @@ internal fun KeyboardSizePage(settings: KeyboardSettings) {
             onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("keyboard_width", if (v > 0.98f) 1f else v) } }
         )
         LandscapeScaleItem(settings)
+        SliderItem(
+            icon = Icons.Rounded.EmojiEmotions, title = "Размер эмодзи",
+            value = settings.emojiSizeDp, range = 24f..56f,
+            format = { "${it.roundToInt()} dp" },
+            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("emoji_size_dp", v) } }
+        )
         SliderItem(
             icon = Icons.Rounded.RoundedCorner, title = "Скругление клавиш",
             value = settings.cornerRadiusDp, range = 6f..30f,

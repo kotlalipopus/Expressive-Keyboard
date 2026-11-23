@@ -2,9 +2,34 @@ package com.expressive.keyboard
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UserLayoutsTest {
+    @Test
+    fun numericAndPhonePadsAlignZeroUnderEight() {
+        for (phone in listOf(false, true)) {
+            val rows = KeyboardLayouts.numberPad(phone)
+            assertEquals(4, rows.size)
+            assertTrue(rows.all { row -> row.keys.size == 4 && row.keys.all { it.weight == 1f } })
+            assertEquals("8", rows[2].keys[1].label)
+            assertEquals("0", rows[3].keys[1].label)
+            assertEquals(KeyType.SPACE, rows[3].keys[3].type)
+            assertTrue(rows.flatMap { it.keys }.none { it.label in setOf(".", ",") || it.customVariants.orEmpty().any { v -> v == "." || v == "," } })
+        }
+    }
+
+    @Test
+    fun persianHalfSpaceReplacesShiftAndInsertsZwnj() {
+        val persian = requireNotNull(Languages.byId("fa"))
+        val keys = Languages.buildRows(persian).flatMap { it.keys }
+        val halfSpace = keys.single { it.label == "نیم‌فاصله" }
+        assertEquals("\u200C", halfSpace.text(false))
+        assertEquals("\u200C", halfSpace.text(true))
+        assertTrue(keys.none { it.type == KeyType.SHIFT })
+        assertTrue("می\u200Cروم".all(WordPredictorEngine::isWordChar))
+    }
+
     @Test
     fun letterEditsAreScopedToTheExactBaseRows() {
         val lang = Languages.EN

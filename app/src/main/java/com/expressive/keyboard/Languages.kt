@@ -632,7 +632,10 @@ object Languages {
         return list
     }
 
-    /** Ширина shift/⌫ в последнем ряду и отступы по краям коротких рядов — как в Gboard. */
+    internal const val ZERO_WIDTH_NON_JOINER = '\u200C'
+    internal const val PERSIAN_HALF_SPACE_LABEL = "نیم‌فاصله"
+
+    /** Служебная клавиша в последнем ряду и отступы по краям коротких рядов. */
     fun buildRows(lang: KeyboardLanguage): List<KeyRow> {
         val widest = max(10, lang.rows.maxOf { it.size })
         val last = lang.rows.lastIndex
@@ -650,7 +653,10 @@ object Languages {
             }
             if (ri == last) {
                 val side = max(1.2f, (widest - row.size) / 2f)
-                keys += KeyModel("⇧", KeyType.SHIFT, side)
+                keys += if (lang.id == "fa") {
+                    KeyModel(PERSIAN_HALF_SPACE_LABEL, weight = side, output = ZERO_WIDTH_NON_JOINER.toString(),
+                        customVariants = emptyList())
+                } else KeyModel("⇧", KeyType.SHIFT, side)
                 keys += models
                 keys += KeyModel("⌫", KeyType.BACKSPACE, side + 0.1f)
             } else {

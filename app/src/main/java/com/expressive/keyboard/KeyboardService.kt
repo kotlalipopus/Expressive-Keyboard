@@ -424,6 +424,7 @@ class ComposeKeyboardService : InputMethodService(),
 
     override fun onCreate() {
         super.onCreate()
+        window?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED)
         CrashLog.install(this)
         savedStateController.performRestore(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
@@ -709,7 +710,9 @@ class ComposeKeyboardService : InputMethodService(),
         moveLifecycle(Lifecycle.State.RESUMED)
         voice.refreshPermission()
         syncClipboard()
-        if (kb.clipOffer != null && System.currentTimeMillis() - clipOfferAt > CLIP_OFFER_MS) kb.clipOffer = null
+        if (kb.clipOffer?.let { isTemporaryClipOffer(it) } == true &&
+            System.currentTimeMillis() - clipOfferAt > CLIP_OFFER_MS
+        ) clearClipOffer()
         expireClips()
         applyWindowColors()
         // система иногда молча сбрасывает размытие окна (после чужого окна поверх, мастера настройки, смены темы):
@@ -916,6 +919,7 @@ class ComposeKeyboardService : InputMethodService(),
         touchesFor = ""
         inputGeneration++
         flags = computeFlags(info)
+        kb.passwordField = flags.isPassword
         // в поле пароля и в инкогнито моды не видят ни набираемого текста, ни буфера
         ScriptHost.privateMode = flags.isPassword || settings.incognito
         kb.glideAllowed = flags.suggestions
@@ -1126,7 +1130,7 @@ class ComposeKeyboardService : InputMethodService(),
         ic.setComposingText(word, 1)
     }
 
-    private fun icCommit(ic: InputConnection, text: String) {
+    private fun icCommit(ic: InputConnection, text: String): Boolean {
         tapWord = null
         val base = if (composing.isNotEmpty()) composingStart else selectionStart()
         composing = ""
@@ -1134,7 +1138,9 @@ class ComposeKeyboardService : InputMethodService(),
         if (text.isNotEmpty()) lastTypedChar = text.last()
         if (base >= 0) expect(base + text.length) else expectUnknown()
         // очень длинный текст (из буфера) уходит в приложение частями: один вызов упирается в лимит системы
-        if (text.length > 50_000) text.chunked(50_000).forEach { ic.commitText(it, 1) } else ic.commitText(text, 1)
+        if (text.length <= 50_000) return ic.commitText(text, 1)
+        for (chunk in text.chunked(50_000)) if (!ic.commitText(chunk, 1)) return false
+        return true
     }
 
     private fun icDeleteBefore(ic: InputConnection, count: Int) {
@@ -1406,9 +1412,9 @@ class ComposeKeyboardService : InputMethodService(),
         Composer.PINYIN, Composer.NONE -> raw
     }
 
-    /** Буква или знак огласовки (хинди, тайский) — продолжают слово. */
+    /** Буквы, огласовки и персидский полупробел продолжают слово. */
     private fun isWordLetter(ch: Char): Boolean {
-        if (ch.isLetter()) return true
+        if (ch.isLetter() || (ch == Languages.ZERO_WIDTH_NON_JOINER && kb.language.id == "fa")) return true
         val t = Character.getType(ch)
         return t == Character.NON_SPACING_MARK.toInt() || t == Character.COMBINING_SPACING_MARK.toInt()
     }
@@ -1768,6 +1774,10 @@ class ComposeKeyboardService : InputMethodService(),
         val ic = currentInputConnection ?: return
         glideWord = false
         if (ScriptHost.has("space") && ScriptHost.cancelled("space")) return
+        if (kb.numberPad) {
+            icCommit(ic, " ")
+            return
+        }
         if (Cjk.isCjk(kb.language.composer) && composing.isNotEmpty() && rawComposing.isNotEmpty()) {
             commitCjk(ic, 0)
             schedulePredictions()
@@ -2099,7 +2109,9 @@ class ComposeKeyboardService : InputMethodService(),
         // любое нажатие меняет текст — слово под курсором и его границы больше не верны
         tapWord = null
         if (kb.fieldEmpty && panelInput == null && (key.type == KeyType.CHARACTER || key.type == KeyType.SPACE)) kb.fieldEmpty = false
-        if (kb.clipOffer != null && key.type in OFFER_BREAKERS && panelInput == null) kb.clipOffer = null
+        if (key.type in OFFER_BREAKERS && panelInput == null &&
+            kb.clipOffer?.let { isTemporaryClipOffer(it) } == true
+        ) clearClipOffer()
         when (key.type) {
             KeyType.CHARACTER -> {
                 // клавиша-команда из раскладки плагина
@@ -2460,8 +2472,12 @@ class ComposeKeyboardService : InputMethodService(),
     }
 
     override fun commitText(text: String) {
+        commitEditorText(text)
+    }
+
+    private fun commitEditorText(text: String): Boolean {
         deletedText = null
-        val ic = currentInputConnection ?: return
+        val ic = currentInputConnection ?: return false
         // набор пиньинем/ромадзи сначала превращается в иероглифы/кану, а не уходит латиницей
         if (Cjk.isCjk(kb.language.composer) && composing.isNotEmpty() && rawComposing.isNotEmpty()) commitCjk(ic, 0, all = true)
         val word = composing
@@ -2469,12 +2485,13 @@ class ComposeKeyboardService : InputMethodService(),
             learn(lastCommittedWord, word)
             lastCommittedWord = word
         }
-        icCommit(ic, word + text)
+        val committed = icCommit(ic, word + text)
         tokenHasSymbol = true
         undo = null
         autoSpace = false
         lastActionWasSpace = false
         schedulePredictions()
+        return committed
     }
 
     override fun commitEmoji(emoji: String) {
@@ -2704,7 +2721,7 @@ class ComposeKeyboardService : InputMethodService(),
     override fun commitClip(entry: String) {
         bumpClip(entry)
         if (!ClipImages.isImage(entry)) {
-            commitPastedText(entry)
+            if (commitPastedText(entry) && kb.clipOffer == entry) clearClipOffer()
             return
         }
         HapticsEngine.keyPress(this, inputView, settings, false)
@@ -2721,22 +2738,23 @@ class ComposeKeyboardService : InputMethodService(),
             val content = InputContentInfoCompat(uri, ClipDescription("image", arrayOf(mime)), null)
             InputConnectionCompat.commitContent(ic, info, content, InputConnectionCompat.INPUT_CONTENT_GRANT_READ_URI_PERMISSION, null)
         }.getOrDefault(false)
-        if (!ok) Toast.makeText(this, tr("Не удалось вставить картинку"), Toast.LENGTH_SHORT).show()
+        if (ok) {
+            if (kb.clipOffer == entry) clearClipOffer()
+        } else Toast.makeText(this, tr("Не удалось вставить картинку"), Toast.LENGTH_SHORT).show()
     }
 
     override fun pasteClipOffer() {
         val entry = kb.clipOffer ?: return
-        val secret = kb.clipOfferSecret
-        kb.clipOffer = null
-        kb.clipOfferSecret = false
         // пароль вставляется как есть: ни в историю, ни в «недавние»
-        if (secret) commitText(entry) else commitClip(entry)
+        if (kb.clipOfferSecret) {
+            if (commitEditorText(entry)) clearClipOffer()
+        } else if (settings.clipboardHistory && !flags.isPassword && !settings.incognito) commitClip(entry)
     }
 
-    private fun commitPastedText(text: String) {
-        if (text.isEmpty()) return
+    private fun commitPastedText(text: String): Boolean {
+        if (text.isEmpty()) return false
         val suffix = if (flags.suggestions && !text.last().isWhitespace()) " " else ""
-        commitText(text + suffix)
+        return commitEditorText(text + suffix)
     }
 
     private fun pasteFromEditorToolbar(ic: InputConnection) {
@@ -2751,11 +2769,12 @@ class ComposeKeyboardService : InputMethodService(),
             }
             item.text?.toString()?.takeIf { it.isNotEmpty() }
         }.getOrNull()
-        if (text == null || !flags.suggestions) {
+        val pasted = if (text == null || !flags.suggestions) {
             ic.performContextMenuAction(android.R.id.paste)
         } else {
             commitPastedText(text)
         }
+        if (pasted && text != null && text.trim() == kb.clipOffer) clearClipOffer()
     }
 
     override fun spaceHold() {
@@ -2984,7 +3003,14 @@ class ComposeKeyboardService : InputMethodService(),
 
     override fun dismissClipOffer() {
         HapticsEngine.tick(this, inputView, settings)
+        clearClipOffer()
+    }
+
+    private fun isTemporaryClipOffer(entry: String): Boolean = kb.clipOfferSecret || ClipImages.isImage(entry)
+
+    private fun clearClipOffer() {
         kb.clipOffer = null
+        kb.clipOfferSecret = false
     }
 
     /** Первая текстовая запись буфера — для шаблонов {clipboard}. */
@@ -3005,7 +3031,7 @@ class ComposeKeyboardService : InputMethodService(),
         ClipStore.save(this, kb.clipboard)
         // скопировали только что — предложить вставить (как в Gboard)
         val now = System.currentTimeMillis()
-        if (stamp > 0 && now - stamp in 0..CLIP_OFFER_MS && !flags.isPassword) {
+        if (!flags.isPassword && (!ClipImages.isImage(entry) || stamp > 0 && now - stamp in 0..CLIP_OFFER_MS)) {
             kb.clipOffer = entry
             kb.clipOfferSecret = false
             clipOfferAt = stamp

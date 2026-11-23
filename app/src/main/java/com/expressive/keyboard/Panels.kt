@@ -401,6 +401,8 @@ internal fun EmojiPanel(recents: List<String>, actions: KeyboardActions, setting
     var tab by remember { mutableIntStateOf(if (recents.isEmpty()) 1 else 0) }
     var variantsOf by remember { mutableStateOf<EmojiItem?>(null) }
     val style = settings.emojiStyle
+    val glyphSize = settings.emojiSizeDp.dp
+    val cellHeight = (settings.emojiSizeDp + 14f).dp
     val emojiFont = remember(settings.emojiFontVersion) { FontRepository.emoji(context, settings.emojiFontVersion) }
     val imageStyle = EmojiStyles.isImageStyle(style)
     val list: List<String> = remember(tab, cats, recents, style) {
@@ -429,12 +431,12 @@ internal fun EmojiPanel(recents: List<String>, actions: KeyboardActions, setting
             ) {
                 (listOf(v.emoji) + v.variants).forEach { e ->
                     Box(
-                        Modifier.size(46.dp).clip(RoundedCornerShape(14.dp)).clickable {
+                        Modifier.size(cellHeight).clip(RoundedCornerShape(14.dp)).clickable {
                             actions.commitEmoji(e)
                             variantsOf = null
                         },
                         contentAlignment = Alignment.Center
-                    ) { EmojiGlyph(e, 32.dp, style, emojiFont) }
+                    ) { EmojiGlyph(e, glyphSize, style, emojiFont) }
                 }
                 Box(Modifier.size(40.dp).clip(CircleShape).clickable { variantsOf = null }, contentAlignment = Alignment.Center) {
                     Icon(Icons.Rounded.Close, tr("Закрыть"), tint = palette.onAccentSoft, modifier = Modifier.size(20.dp))
@@ -460,7 +462,7 @@ internal fun EmojiPanel(recents: List<String>, actions: KeyboardActions, setting
                 }
             } else {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(44.dp),
+                    columns = GridCells.Adaptive((settings.emojiSizeDp + 12f).dp),
                     state = grid,
                     modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp),
                     contentPadding = PaddingValues(top = 6.dp, bottom = 6.dp)
@@ -468,12 +470,12 @@ internal fun EmojiPanel(recents: List<String>, actions: KeyboardActions, setting
                     gridItems(list, key = { it }) { e ->
                         val item = remember(e) { EmojiCatalog.item(e) }
                         Box(
-                            Modifier.height(46.dp).clip(RoundedCornerShape(14.dp)).combinedClickable(
+                            Modifier.height(cellHeight).clip(RoundedCornerShape(14.dp)).combinedClickable(
                                 onLongClick = { if (item != null && item.variants.isNotEmpty()) variantsOf = item }
                             ) { actions.commitEmoji(e) },
                             contentAlignment = Alignment.Center
                         ) {
-                            EmojiGlyph(e, 32.dp, style, emojiFont)
+                            EmojiGlyph(e, glyphSize, style, emojiFont)
                             if (item != null && item.variants.isNotEmpty() && item.emoji == e) {
                                 // точка в углу: у эмодзи есть тона кожи
                                 Box(
@@ -533,6 +535,8 @@ internal fun EmojiSearchBar(state: KeyboardState, actions: KeyboardActions, sett
     val query = state.emojiQuery
     val cats = EmojiCatalog.categories
     val style = settings.emojiStyle
+    val glyphSize = settings.emojiSizeDp.dp
+    val cellSize = (settings.emojiSizeDp + 14f).dp
     val emojiFont = remember(settings.emojiFontVersion) { FontRepository.emoji(context, settings.emojiFontVersion) }
     // Поиск по всему каталогу — не работа для главного потока: пока он идёт, клавиатура должна успевать набирать.
     // Небольшая пауза склеивает быстрый набор: следующая буква отменяет предыдущий запрос.
@@ -564,18 +568,18 @@ internal fun EmojiSearchBar(state: KeyboardState, actions: KeyboardActions, sett
                 contentAlignment = Alignment.Center
             ) { Icon(Icons.Rounded.Close, tr("Закрыть"), tint = palette.muted, modifier = Modifier.size(20.dp)) }
         }
-        LazyRow(Modifier.fillMaxWidth().height(46.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        LazyRow(Modifier.fillMaxWidth().height(cellSize), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             if (results.isEmpty()) item {
-                Box(Modifier.height(46.dp).padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
+                Box(Modifier.fillMaxHeight().padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
                     Text(tr("Ничего не найдено"), color = palette.muted, fontFamily = font, fontSize = 14.sp)
                 }
             }
             items(results.size) { i ->
                 val item = results[i]
                 Box(
-                    Modifier.size(46.dp).clip(RoundedCornerShape(14.dp)).clickable { actions.commitEmoji(item.emoji) },
+                    Modifier.size(cellSize).clip(RoundedCornerShape(14.dp)).clickable { actions.commitEmoji(item.emoji) },
                     contentAlignment = Alignment.Center
-                ) { EmojiGlyph(item.emoji, 32.dp, style, emojiFont) }
+                ) { EmojiGlyph(item.emoji, glyphSize, style, emojiFont) }
             }
         }
     }
@@ -1152,17 +1156,14 @@ internal fun ScriptNode(n: UiNode, palette: KeyPalette, font: FontFamily, onClic
             }
         }
         is UiNode.Canvas -> {
-            val measurer = rememberTextMeasurer()
-            val path = remember { Path() }
             val dens = LocalDensity.current.density
-            Box(
+            ScriptCanvas(n.items,
                 Modifier.fillMaxWidth().height(n.height.dp).clip(RoundedCornerShape(16.dp))
                     .then(
                         if (n.action != null) Modifier.pointerInput(n.action) {
                             detectTapGestures { p -> onClick(n.action, mapOf("x" to (p.x / dens).toDouble(), "y" to (p.y / dens).toDouble())) }
                         } else Modifier
                     )
-                    .drawBehind { drawOverlayItems(n.items, measurer, path) }
             )
         }
         is UiNode.Scroll -> {

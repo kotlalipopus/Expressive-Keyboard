@@ -265,7 +265,7 @@ kb.particles.set("вода", { max: 1500, liquid: true, size: 7, color: "#664FC3
 kb.particles.emit("вода", { count: 1500, x: 0, y: 0, w: 360, h: 60 });
 ```
 
-### Шейдеры (Android 13+)
+### Шейдеры AGSL (Android 13+)
 
 Язык — AGSL: почти GLSL, но вход — `half4 main(float2 fragCoord)`, типы `float2`, `half4`. На старых Android шейдер не
 рисуется. Ошибка сборки попадает в журнал мода, текст можно получить из `kb.shaderError(src)`.
@@ -286,6 +286,49 @@ kb.postEffect({ src: `
     p.x += sin(p.y * 0.04 + iTime * 3.0) * 4.0;
     return content.eval(p);
   }` });
+```
+
+### GLSL ES и 3D
+
+В `kb.overlay`, `kb.background` и элементе панели `canvas` можно рисовать через OpenGL ES 2.0.
+`kb.supports("glsl")` и `kb.supports("mesh3d")` проверяют наличие API. В обоих случаях `x`, `y`, `w`, `h` задаются в dp,
+а нулевые `w` и `h` берут размер холста. Поля `alpha` и `rotation` управляют прозрачностью и поворотом результата в плоскости холста.
+
+- `{ type: "glsl", src, x, y, w, h, uniforms, alpha, rotation }` рисует прямоугольник с фрагментным шейдером GLSL ES 1.00.
+  Вход — `void main()`, вывод — `gl_FragColor`. У `gl_FragCoord` начало координат снизу слева.
+- `{ type: "mesh3d", vertices, indices, colors, color, rotateX, rotateY, rotateZ, scale, distance, src, uniforms, x, y, w, h }`
+  рисует треугольники с перспективой и проверкой глубины. `vertices` — плоский массив координат `[x, y, z, …]`.
+  `indices` — тройки индексов, начиная с нуля. Без индексов каждые три вершины образуют треугольник.
+  `colors` задаёт цвета вершин, `color` — общий цвет по умолчанию. Повороты в градусах, масштаб по умолчанию 1,
+  расстояние до камеры — 4. Свой фрагментный шейдер `src` может читать `varying mediump vec4 vColor`.
+
+Объявите `uniform float iTime` для автоматической анимации и `uniform vec2 iResolution` для размера области в пикселях рендера.
+`uniforms` принимает числа, логические значения и массивы из 2–4 чисел для `vec2`–`vec4`.
+`kb.glslError(src)` возвращает ошибку после первой попытки отрисовки или `null`.
+Одновременно рисуются до четырёх таких элементов на холст. Рендер ограничен 20 кадрами в секунду и 384 пикселями по длинной стороне.
+
+```js
+const glow = `
+  precision mediump float;
+  uniform vec2 iResolution;
+  uniform float iTime;
+  void main() {
+    vec2 p = gl_FragCoord.xy / iResolution;
+    gl_FragColor = vec4(p.x, 0.4 + 0.25 * sin(iTime), p.y, 0.5);
+  }`;
+kb.background([{ type: "glsl", src: glow }]);
+
+const tetrahedron = {
+  type: "mesh3d", x: 8, y: 40, w: 96, h: 96,
+  vertices: [0, 1, 0, -1, -1, 0.7, 1, -1, 0.7, 0, -1, -1],
+  indices: [0, 1, 2, 0, 2, 3, 0, 3, 1, 1, 3, 2],
+  colors: ["#FFE082", "#EC407A", "#42A5F5", "#66BB6A"]
+};
+kb.overlay([tetrahedron]);
+kb.on("frame", function (ms) {
+  tetrahedron.rotateY = ((tetrahedron.rotateY || 0) + ms * 0.06) % 360;
+  kb.overlay([tetrahedron]);
+});
 ```
 
 ### Наклон клавиш и подписи
@@ -775,7 +818,7 @@ Shift и ⌫ добавляются в последний ряд сами. Не�
 "settings": { "key_height_dp": 58, "show_number_row": true, "theme_mode": "DARK", "color_accent": "#FF7A3D", "glide_typing": true }
 ```
 
-Числа с плавающей точкой: `key_height_dp`, `corner_radius_dp`, `key_spacing_dp`, `row_spacing_dp`, `bottom_offset_dp`,
+Числа с плавающей точкой: `key_height_dp`, `emoji_size_dp` (24–56 dp), `corner_radius_dp`, `key_spacing_dp`, `row_spacing_dp`, `bottom_offset_dp`,
 `side_padding_dp`, `key_label_scale`, `key_opacity`, `press_animation`, `long_press_ms`, `vibration_ms`,
 `vibration_amplitude`, `bg_dim`, `bg_blur_dp`, `one_handed_width`, `wave_amplitude_percent`, `sound_volume`.
 Целые и цвета (`"#hex"`): `color_background`, `color_key`, `color_key_text`, `color_func`, `color_func_text`,

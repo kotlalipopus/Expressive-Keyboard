@@ -924,9 +924,9 @@ object WordPredictorEngine {
 
     private fun uKey(lang: KeyboardLanguage, w: String) = "${lang.id}:$w"
 
-    /** Буква, знак огласовки (хинди, тайский) или апостроф/дефис внутри слова. */
+    /** Буква, огласовка, полупробел или апостроф/дефис внутри слова. */
     fun isWordChar(c: Char): Boolean {
-        if (c.isLetter() || c == '\'' || c == '-') return true
+        if (c.isLetter() || c == '\'' || c == '-' || c == Languages.ZERO_WIDTH_NON_JOINER) return true
         val t = Character.getType(c)
         return t == Character.NON_SPACING_MARK.toInt() || t == Character.COMBINING_SPACING_MARK.toInt()
     }

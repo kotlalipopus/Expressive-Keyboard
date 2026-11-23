@@ -942,6 +942,13 @@ internal fun KeyView(
                 ENTER_NEWLINE -> SlotIcon("enter", fg, (24f * scale).dp) { GlyphIcon(Glyph.RETURN, fg, (24f * scale).dp) }
                 else -> SlotIcon("go", fg, (24f * scale).dp) { GlyphIcon(Glyph.ARROW, fg, (24f * scale).dp) }
             }
+            key.label == Languages.PERSIAN_HALF_SPACE_LABEL && key.output == Languages.ZERO_WIDTH_NON_JOINER.toString() -> Text(
+                "نیم\nفاصله", color = fg, fontSize = (12f * scale).sp, lineHeight = (13f * scale).sp,
+                fontWeight = w, fontFamily = font, textAlign = TextAlign.Center, maxLines = 2, modifier = labelFx
+            )
+            key.type == KeyType.SPACE && key.label == KeyboardLayouts.NUMBER_PAD_SPACE_LABEL -> Icon(
+                Icons.Rounded.SpaceBar, tr("Пробел"), tint = fg, modifier = Modifier.size((26f * scale).dp)
+            )
             key.type == KeyType.SPACE -> Text(
                 label, color = fg.copy(alpha = 0.72f), fontSize = (13f * scale).sp, fontWeight = w,
                 fontFamily = font, maxLines = 1, style = textStyle, modifier = labelFx

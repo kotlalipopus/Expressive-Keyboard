@@ -525,7 +525,7 @@ internal fun StylePreview(settings: KeyboardSettings, spec: WavySpec) {
     val palette = rememberKeyPalette(settings)
     val font = LocalKeyFont.current
     val weight = LocalKeyWeight.current
-    val image = if (settings.hasBackgroundImage) rememberBackgroundBitmap(settings.bgImageVersion) else null
+    val image = if (settings.hasBackgroundImage) rememberBackgroundBitmap(settings.bgImageVersion, settings.hasBackgroundVideo) else null
     val keyH = (settings.keyHeightDp * 0.9f).dp
     val gap = settings.keySpacingDp.dp
     val corner = settings.cornerRadiusDp.dp

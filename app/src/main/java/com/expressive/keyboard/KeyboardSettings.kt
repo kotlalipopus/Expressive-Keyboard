@@ -204,6 +204,7 @@ data class KeyboardSettings(
     val bgTransparency: Float = 0f,
     // --- фон ---
     val bgImageVersion: Long = 0L,
+    val bgIsVideo: Boolean = false,
     val bgDim: Float = 0.35f,
     val photoFrame: PhotoFrame = PhotoFrame(),
     val bgBlurDp: Float = 0f,
@@ -371,6 +372,7 @@ data class KeyboardSettings(
     val emojiFontVersion: Long = 0L,
     /** SYSTEM, CUSTOM (свой шрифт) или встроенный набор: twemoji, noto, blob, openmoji. */
     val emojiStyle: String = "SYSTEM",
+    val emojiSizeDp: Float = 32f,
     /** После вставки эмодзи клавиатура сразу возвращается к буквам, как в Gboard. */
     val emojiReturnToKeyboard: Boolean = false,
     // --- интерфейс ---
@@ -386,6 +388,7 @@ data class KeyboardSettings(
     val userLayoutMap: Map<String, List<String>> by lazy { UserLayouts.parse(userLayouts) }
 
     val hasBackgroundImage: Boolean get() = bgImageVersion != 0L
+    val hasBackgroundVideo: Boolean get() = hasBackgroundImage && bgIsVideo
 
     /**
      * Акцент, который выбрал сам пользователь: «Акцент» в цветах или «Свой цвет» палитры.
@@ -558,6 +561,7 @@ object KeyboardPrefs {
             keyBackground = p.getBoolean("key_background", true),
             bgTransparency = p.getFloat("bg_transparency", 0f).coerceIn(0f, 1f),
             bgImageVersion = p.getLong("bg_image_version", 0L),
+            bgIsVideo = p.getBoolean("bg_is_video", false),
             bgDim = p.getFloat("bg_dim", 0.35f).coerceIn(0f, 0.9f),
             photoFrame = PhotoFrame(
                 mode = PhotoFit.entries.firstOrNull { it.name == p.getString("photo_fit", "COVER") } ?: PhotoFit.COVER,
@@ -679,6 +683,7 @@ object KeyboardPrefs {
             userLayouts = p.getString("user_layouts", "") ?: "",
             emojiFontVersion = p.getLong("emoji_font_version", 0L),
             emojiStyle = p.getString("emoji_style", null) ?: if (p.getLong("emoji_font_version", 0L) != 0L) "CUSTOM" else "SYSTEM",
+            emojiSizeDp = p.getFloat("emoji_size_dp", 32f).takeIf { it.isFinite() }?.coerceIn(24f, 56f) ?: 32f,
             emojiReturnToKeyboard = p.getBoolean("emoji_return_keyboard", false),
             appLanguage = p.getString("app_language", null).let { if (it == "ru" || it == "en") it else "SYSTEM" },
             designStyle = p.getString("design_style", "EXPRESSIVE") ?: "EXPRESSIVE",
@@ -704,7 +709,7 @@ object KeyboardPrefs {
     /** Типы ключей настроек — плагин может менять любой из них блоком "settings". */
     val KEY_TYPES: Map<String, Char> = buildMap {
         listOf(
-            "key_height_dp", "header_height_dp", "landscape_scale", "corner_radius_dp", "key_spacing_dp", "row_spacing_dp", "bottom_offset_dp",
+            "key_height_dp", "header_height_dp", "landscape_scale", "corner_radius_dp", "key_spacing_dp", "row_spacing_dp", "bottom_offset_dp", "emoji_size_dp",
             "wave_amplitude_percent", "vibration_ms", "vibration_amplitude", "long_press_ms", "enter_hold_ms", "key_opacity", "bg_transparency", "bg_dim",
             "photo_zoom", "photo_width", "photo_height", "photo_x", "photo_y",
             "bg_blur_dp", "window_blur_dp", "key_label_scale", "side_padding_dp", "one_handed_w", "float_width", "float_key_height_dp", "flick_sensitivity", "enter_width", "number_row_scale", "press_animation", "sound_volume", "anim_speed"
@@ -751,12 +756,23 @@ object KeyboardPrefs {
     }
 
     const val BG_IMAGE_FILENAME = "keyboard_background.jpg"
+    const val BG_VIDEO_FILENAME = "keyboard_background.video"
 
-    fun setBackgroundImage(context: Context) = edit(context) { putLong("bg_image_version", System.currentTimeMillis()) }
+    fun setBackgroundImage(context: Context, video: Boolean) {
+        edit(context) {
+            putLong("bg_image_version", System.currentTimeMillis())
+            putBoolean("bg_is_video", video)
+        }
+        File(context.filesDir, if (video) BG_IMAGE_FILENAME else BG_VIDEO_FILENAME).delete()
+    }
 
     fun clearBackgroundImage(context: Context) {
         File(context.filesDir, BG_IMAGE_FILENAME).delete()
-        edit(context) { putLong("bg_image_version", 0L) }
+        File(context.filesDir, BG_VIDEO_FILENAME).delete()
+        edit(context) {
+            putLong("bg_image_version", 0L)
+            remove("bg_is_video")
+        }
     }
 
     fun resetColors(context: Context) = edit(context) {
@@ -800,7 +816,7 @@ object KeyboardPrefs {
             val keys = values.keys()
             while (keys.hasNext()) {
                 val k = keys.next()
-                if (k == "bg_image_version" || k == "custom_font_version" || k == "custom_font_name" || k == "emoji_font_version") continue
+                if (k == "bg_image_version" || k == "bg_is_video" || k == "custom_font_version" || k == "custom_font_name" || k == "emoji_font_version") continue
                 if (k in SecretBox.SECRET_PREFS) continue
                 val item = values.optJSONObject(k) ?: continue
                 // тип берём из приложения, а не из файла: копия от другой версии могла хранить число иначе

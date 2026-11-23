@@ -167,8 +167,19 @@ internal fun HeaderBar(
         it.isNotEmpty() && panel == ActivePanel.KEYBOARD && !state.toolbarOpen && !showCandidates &&
             state.suggestions.none { c -> !c.isEmpty && !c.isUndo && c.isKeepExact && c.isPrimary }
     }
-    // только что скопированное — предложить вставить, даже если подсказки выключены
-    val offer = state.clipOffer.takeIf { inline == null && panel == ActivePanel.KEYBOARD && !state.toolbarOpen && !showCandidates }
+    val visibleOffer = state.clipOffer.takeIf {
+        panel == ActivePanel.KEYBOARD && !settings.incognito &&
+            (state.clipOfferSecret || settings.clipboardHistory && !state.passwordField)
+    }
+    val showCalculation = panel == ActivePanel.KEYBOARD && !state.toolbarOpen &&
+        settings.inlineCalculator && state.calculation != null
+    val offer = visibleOffer.takeIf {
+        (state.clipOfferSecret || it?.let(ClipImages::isImage) == true) &&
+            inline == null && !state.toolbarOpen && !showCandidates && !showCalculation
+    }
+    if (visibleOffer != null && offer == null) {
+        ClipOfferStrip(visibleOffer, actions, palette, font, secret = state.clipOfferSecret)
+    }
     // пустое поле — меню функций вместо подсказок
     // в переводчике — подсказки для набираемого там слова
     val translating = panel == ActivePanel.TRANSLATE && settings.showSuggestions
@@ -233,7 +244,7 @@ internal fun HeaderBar(
             contentAlignment = Alignment.Center
         ) {
             val mode = when {
-                panel == ActivePanel.KEYBOARD && !state.toolbarOpen && settings.inlineCalculator && state.calculation != null -> HeaderMode.CALCULATION
+                showCalculation -> HeaderMode.CALCULATION
                 tools -> HeaderMode.TOOLS
                 showCandidates -> HeaderMode.CANDIDATES
                 inline != null -> HeaderMode.INLINE
@@ -247,7 +258,7 @@ internal fun HeaderBar(
                     HeaderMode.TOOLS -> ToolbarPill(state, actions, settings, palette)
                     HeaderMode.CANDIDATES -> CandidateStrip(candidates, actions, palette, font)
                     HeaderMode.INLINE -> inline?.let { InlineSuggestionStrip(it) }
-                    HeaderMode.OFFER -> state.clipOffer?.let { ClipOfferStrip(it, actions, palette, font, secret = state.clipOfferSecret) }
+                    HeaderMode.OFFER -> offer?.let { ClipOfferStrip(it, actions, palette, font, secret = state.clipOfferSecret) }
                     HeaderMode.CALCULATION -> state.calculation?.let {
                         SuggestionStrip(listOf(SuggestionChipModel.EMPTY, it, SuggestionChipModel.EMPTY), actions, palette, font)
                     }

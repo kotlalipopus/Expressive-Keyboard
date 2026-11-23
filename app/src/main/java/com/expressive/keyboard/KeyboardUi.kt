@@ -180,7 +180,7 @@ fun KeyboardRoot(
         val s = if (landscape) s0.forLandscape(configuration.screenHeightDp) else s0
         // плавающая — компактнее: клавиши ниже, без режима одной руки и своей ширины (ширину задаёт окно)
         if (s.floating) s.copy(
-            bottomOffsetDp = s.bottomOffsetDp.coerceIn(0f, 4f),
+            bottomOffsetDp = min(s.bottomOffsetDp, 4f),
             oneHanded = "OFF", keyboardWidth = 1f
         ) else s
     }
@@ -188,7 +188,11 @@ fun KeyboardRoot(
         val palette = rememberKeyPalette(settings)
         val baseFont = LocalKeyFont.current
         val font = remember(baseFont, skin) { skin?.fontFamily(baseFont) ?: baseFont }
-        val image = if (settings.hasBackgroundImage) rememberBackgroundBitmap(settings.bgImageVersion) else null
+        val video = settings.hasBackgroundVideo
+        val image = if (settings.hasBackgroundImage && (!video || skin?.usesGlass == true)) {
+            rememberBackgroundBitmap(settings.bgImageVersion, video)
+        } else null
+        val hasMedia = video || image != null
         val density = LocalDensity.current
         SideEffect { PatternTiles.density = density.density }
         val backdrop = remember { Backdrop() }
@@ -202,13 +206,13 @@ fun KeyboardRoot(
             else -> skin?.windowBlur?.let { if (raw.windowBlurDp != 32f) raw.windowBlurDp else it }
         }
         // размытие окна плавающей клавиатуре не подходит: окно во весь экран, размылось бы всё приложение
-        val blurDp = wantBlur?.takeIf { it > 0f && blurSupported && image == null && !floating }
+        val blurDp = wantBlur?.takeIf { it > 0f && blurSupported && !hasMedia && !floating }
         // дымка поверх размытия: у темы своя, иначе — полупрозрачный фон клавиатуры
         val blurTint0 = skin?.blurTint ?: palette.background.copy(alpha = if (palette.background.luminance() < 0.5f) 0.62f else 0.55f)
         // прозрачный фон: сквозь клавиатуру видно приложение, остаются только клавиши
         val bgAlpha = 1f - settings.bgTransparency
         val blurTint = blurTint0.copy(alpha = blurTint0.alpha * bgAlpha)
-        val decorated = image != null || skin?.hasBackground == true || blurDp != null || bgAlpha < 0.99f || floating
+        val decorated = hasMedia || skin?.hasBackground == true || blurDp != null || bgAlpha < 0.99f || floating
         LaunchedEffect(palette.background, decorated) { onBackground(palette.background, decorated) }
         // без верхней панели скруглять верх фона нечем: первый ряд клавиш стоял бы впритык
         // к вырезу, и углы выглядели обрезанными — делаем верх листа прямым
@@ -238,11 +242,10 @@ fun KeyboardRoot(
             val usedByButtons = WindowInsets.tappableElement.getBottom(this).toDp()
             val nav = WindowInsets.navigationBars.getBottom(this).toDp()
             val cutout = WindowInsets.displayCutout.getBottom(this).toDp()
-            val systemMinimum = maxOf(cutout, usedByButtons, min(nav, 12.dp))
+            val systemMinimum = if (floating) 0.dp else maxOf(cutout, usedByButtons, nav + BOTTOM_OFFSET_RANGE.start.dp)
             // Сдвигаем клавиши внутри регулируемого зазора, сохраняя место под системную навигацию.
             val adjustableGap = (settings.bottomOffsetDp - BOTTOM_OFFSET_RANGE.start).dp
-            if (floating) settings.bottomOffsetDp.dp
-            else systemMinimum + adjustableGap
+            systemMinimum + adjustableGap
         }
         CompositionLocalProvider(LocalSkin provides skin, LocalBackdrop provides backdrop) {
           FloatingFrame(floating, settings, safeEdges, palette, corner, onFloatBounds) { keyHeight ->
@@ -252,7 +255,7 @@ fun KeyboardRoot(
                 // при размытии окна фон рисует само окно (дымка поверх размытия)
                 // размытие просили, но система его не даёт — фон «матовый»: почти непрозрачный, а не прозрачный
                 color = if (blurDp != null) Color.Transparent
-                else palette.background.copy(alpha = palette.background.alpha * if (wantBlur != null && wantBlur > 0f && image == null) max(bgAlpha, 0.92f) else bgAlpha)
+                else palette.background.copy(alpha = palette.background.alpha * if (wantBlur != null && wantBlur > 0f && !hasMedia) max(bgAlpha, 0.92f) else bgAlpha)
             ) {
                 Box(
                     Modifier.fillMaxWidth().onGloballyPositioned {
@@ -263,8 +266,9 @@ fun KeyboardRoot(
                     if (skin != null && skin.hasBackground && blurDp == null && bgAlpha > 0.01f) {
                         Canvas(Modifier.matchParentSize().graphicsLayer { alpha = bgAlpha }) { drawSkinBackground(skin, size) }
                     }
-                    if (image != null && bgAlpha > 0.01f) {
-                        KeyboardPhoto(image, settings, Modifier.matchParentSize(), bgAlpha)
+                    if (hasMedia && bgAlpha > 0.01f) {
+                        if (video) KeyboardVideo(settings, Modifier.matchParentSize(), bgAlpha)
+                        else if (image != null) KeyboardPhoto(image, settings, Modifier.matchParentSize(), bgAlpha)
                         if (settings.bgDim > 0f) Box(Modifier.matchParentSize().background(palette.background.copy(alpha = settings.bgDim * bgAlpha)))
                     }
                     // фон — до самых краёв экрана, клавиши — в стороне от выреза камеры, боковой панели навигации
@@ -650,7 +654,7 @@ internal fun KeyGrid(
     val pluginLayouts = PluginRepository.layouts
     val scriptLayouts = ScriptHost.layoutOverrides
     val langLabels = remember(settings.languages, Languages.extra) { Languages.enabled(settings).map { it.label } }
-    val split = !settings.floating && settings.landscape && settings.landscapeSplit
+    val split = !state.numberPad && !settings.floating && settings.landscape && settings.landscapeSplit
     val letterRows = remember(
         lang, lang.rows, page, settings.showNumberRow, settings.showGlobeKey, settings.showEmojiKey, settings.punctuationKeys,
         settings.spaceLeftKey, settings.spaceRightKey, langLabels, pluginLayouts, scriptLayouts, settings.userLayouts
@@ -664,8 +668,8 @@ internal fun KeyGrid(
     val baseRows = if (state.numberPad) padRows else letterRows
     val rows = remember(baseRows, split) { if (split) KeyboardLayouts.split(baseRows) else baseRows }
     // удержание как в Gboard: символ с того же места на странице «?123»
-    val holdSymbols = remember(lang, page, settings.holdMode, baseRows, pluginLayouts, settings.userLayouts) {
-        if (settings.holdMode != "SYMBOLS" || page != 0) emptyMap()
+    val holdSymbols = remember(lang, page, settings.holdMode, baseRows, pluginLayouts, settings.userLayouts, state.numberPad) {
+        if (state.numberPad || settings.holdMode != "SYMBOLS" || page != 0) emptyMap()
         else KeyboardLayouts.holdSymbols(baseRows, KeyboardLayouts.rows(lang, 1, false, user = settings.userLayoutMap))
     }
     val upper = shift != ShiftState.OFF && page == 0
@@ -703,7 +707,7 @@ internal fun KeyGrid(
                         actions = actions,
                         glideEnabled = glideEnabled,
                         numberRow = isNumberRow,
-                        modifier = Modifier.weight(if (key.type == KeyType.ENTER) key.weight * settings.enterWidth else key.weight).fillMaxHeight(),
+                        modifier = Modifier.weight(if (key.type == KeyType.ENTER && !state.numberPad) key.weight * settings.enterWidth else key.weight).fillMaxHeight(),
                         holdSymbol = if (isChar) holdSymbols[key] else null,
                         translatorSpace = state.panel == ActivePanel.TRANSLATE,
                         editorEnter = state.panel == ActivePanel.KEYBOARD,

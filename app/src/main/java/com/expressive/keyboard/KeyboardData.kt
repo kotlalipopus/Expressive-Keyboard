@@ -244,18 +244,21 @@ object KeyVariantsCatalog {
 }
 
 object KeyboardLayouts {
-    /** Цифровая клавиатура 4×4 для полей чисел и телефонов: 1-2-3-⌫ / 4-5-6-Enter / 7-8-9-«.» / знаки-0-знаки. */
+    internal const val NUMBER_PAD_SPACE_LABEL = "␣"
+
+    /** Четыре ряда для полей чисел и телефонов. */
     fun numberPad(phone: Boolean): List<KeyRow> {
         fun c(l: String, vararg more: String) = KeyModel(l, customVariants = more.toList().ifEmpty { null })
         val back = KeyModel("⌫", KeyType.BACKSPACE)
         val enter = KeyModel("↵", KeyType.ENTER)
+        val space = KeyModel(NUMBER_PAD_SPACE_LABEL, KeyType.SPACE)
         return listOf(
             KeyRow(listOf(c("1"), c("2"), c("3"), back)),
             KeyRow(listOf(c("4"), c("5"), c("6"), enter)),
-            KeyRow(listOf(c("7"), c("8"), c("9"), if (phone) c("*") else c(".", "-", ","))),
+            KeyRow(listOf(c("7"), c("8"), c("9"), if (phone) c("*") else gap(1f))),
             KeyRow(
-                if (phone) listOf(c("+"), c("0"), c("#"), c("-"))
-                else listOf(c("-"), c("0"), c("+"), c(","))
+                if (phone) listOf(c("+", "-", "+", "±"), c("0"), c("#"), space)
+                else listOf(c("-"), c("0"), c("+"), space)
             )
         )
     }
@@ -453,7 +456,12 @@ object KeyboardLayouts {
             }
         }
         // свои места клавиш (настройки → «Свои места клавиш»)
-        val order = user[userLayoutId(lang, page)]
+        val order = user[userLayoutId(lang, page)]?.let { saved ->
+            if (page == 0 && lang.id == "fa" && custom == null) {
+                val oldShift = UserLayouts.token(shift(1f))
+                saved.map { if (it == oldShift) Languages.PERSIAN_HALF_SPACE_LABEL else it }
+            } else saved
+        }
         return when (page) {
             1 -> UserLayouts.apply(custom ?: symbols1For(lang), order, bottom("ABC", lang.spaceLabel, false, globe, emoji, punct, languages))
             2 -> UserLayouts.apply(custom ?: symbols2, order, bottom("ABC", lang.spaceLabel, false, globe, emoji, punct, languages))
