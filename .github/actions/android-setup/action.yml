@@ -13,12 +13,15 @@ runs:
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v4
 
-    - name: Set up Android SDK (cmdline-tools, licenses)
-      uses: android-actions/setup-android@v3
-
     - name: Set up Android NDK
       shell: bash
-      run: sdkmanager "ndk;28.2.13676358"
+      run: |
+        SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+        SM="$SDK/cmdline-tools/latest/bin/sdkmanager"
+        echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+        echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+        yes | "$SM" --sdk_root="$SDK" --licenses > /dev/null || true
+        "$SM" --sdk_root="$SDK" "ndk;28.2.13676358"
 
     - name: Make gradlew executable
       shell: bash
