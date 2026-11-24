@@ -12,7 +12,7 @@ import kotlin.math.sin
  * Звуки нажатия, синтезированные прямо в приложении: файлов в APK нет, лицензий тоже. Каждый звук — два варианта:
  * для букв и пониже, «тяжелее» — для пробела, Enter и ⌫. Готовые WAV кладутся в cache и грузятся в SoundPool.
  */
-enum class KeySoundStyle(val id: String, val title: String) {
+enum class KeySoundStyle(val id: String, val title: String, val pack: String? = null) {
     SYSTEM("SYSTEM", "Системный"),
     SOFT("SOFT", "Мягкий"),
     BUBBLE("BUBBLE", "Пузырёк"),
@@ -24,7 +24,14 @@ enum class KeySoundStyle(val id: String, val title: String) {
     TYPEWRITER("TYPEWRITER", "Печатная машинка"),
     MEMBRANE("MEMBRANE", "Мембрана"),
     POP("POP", "Лёгкий тик"),
-    CUSTOM("CUSTOM", "Свой файл");
+    CUSTOM("CUSTOM", "Свой файл"),
+    /** Записанные наборы из assets/sounds/<pack>: у каждой клавиши свой звук, у части наборов есть и звук отпускания (*_up). */
+    PACK_0("PACK_0", "Клавиатура 1", "p0"),
+    PACK_1("PACK_1", "Клавиатура 2", "p1"),
+    PACK_2("PACK_2", "Клавиатура 3", "p2"),
+    PACK_3("PACK_3", "Клавиатура 4", "p3"),
+    PACK_4("PACK_4", "Клавиатура 5", "p4"),
+    PACK_5("PACK_5", "Клавиатура 6", "p5");
 
     companion object {
         fun fromId(id: String?) = entries.firstOrNull { it.id == id } ?: SYSTEM
@@ -37,6 +44,44 @@ object KeySounds {
     private const val RATE = 44_100
     /** Меняется, если поменялись формулы звуков: старые файлы в cache перезаписываются. */
     private const val VERSION = 1
+
+    private val LETTERS = ('a'..'z').toList()
+
+    /**
+     * Имя файла в наборе для клавиши: a…z, comma, period, num (цифры), space, shift, back, enter,
+     * sym (переключатели и прочие служебные клавиши). Знаки и буквы не-латиницы берут звук буквы по коду символа.
+     */
+    fun packName(key: KeyModel): String = when (key.type) {
+        KeyType.SPACE -> "space"
+        KeyType.ENTER -> "enter"
+        KeyType.BACKSPACE -> "back"
+        KeyType.SHIFT -> "shift"
+        KeyType.CHARACTER -> {
+            val c = key.label.firstOrNull()?.lowercaseChar()
+            when {
+                c == null -> "a"
+                c in 'a'..'z' -> c.toString()
+                c == ',' -> "comma"
+                c == '.' -> "period"
+                c.isDigit() -> "num"
+                else -> LETTERS[c.code % LETTERS.size].toString()
+            }
+        }
+        else -> "sym"
+    }
+
+    /** Загружает все *.ogg набора из assets в SoundPool: имя файла без расширения → id звука. */
+    fun loadPack(context: Context, sp: android.media.SoundPool, pack: String): Map<String, Int> {
+        val am = context.applicationContext.assets
+        val names = runCatching { am.list("sounds/$pack") }.getOrNull().orEmpty()
+        val out = HashMap<String, Int>()
+        for (n in names) {
+            if (!n.endsWith(".ogg")) continue
+            val id = runCatching { am.openFd("sounds/$pack/$n").use { sp.load(it, 1) } }.getOrDefault(0)
+            if (id != 0) out[n.removeSuffix(".ogg")] = id
+        }
+        return out
+    }
 
     /** Файлы звука: [0] — буквы, [1] — пробел, Enter, ⌫. Создаются при первом обращении. */
     fun files(context: Context, style: KeySoundStyle): List<File>? {

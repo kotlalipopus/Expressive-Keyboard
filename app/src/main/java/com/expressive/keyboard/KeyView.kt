@@ -863,7 +863,7 @@ internal fun KeyView(
                         pressed = false
                         popup.clear(holder)
                         if (k.type == KeyType.CHARACTER) glide.trail.clear()
-                        act.keyUp()
+                        act.keyUp(k)
                         val pa = cPressAnim
                         if (cSettings.pressAnimation <= 0f) scope.launch { anim.snapTo(0f) }
                         else scope.launch { anim.animateTo(0f, spring(dampingRatio = pa.damping, stiffness = pa.stiffness * cSpeed2)) }

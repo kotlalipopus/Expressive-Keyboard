@@ -180,6 +180,9 @@ object HapticsEngine {
     /** Звуки в пуле: [0] — буквы, [1] — пробел, Enter, ⌫ (у своего файла — один и тот же). */
     private var poolSounds = IntArray(0)
     private var poolKey = ""
+    /** Выбран записанный набор: звуки ищутся по имени клавиши (см. KeySounds.packName), а не по двум слотам. */
+    private var packMode = false
+    private var packIds: Map<String, Int> = emptyMap()
     private val loaded = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
     private val jitter = java.util.Random()
     /** Звук, который попросили сыграть до окончания загрузки: (id, громкость, когда). */
@@ -210,16 +213,19 @@ object HapticsEngine {
             else -> style.id
         }
         if (quickKey == poolKey) return pool != null
-        val want = soundFiles(context, s)
+        val pack = style.pack
+        val want = if (pack == null) soundFiles(context, s) else null
         poolKey = quickKey
         loaded.clear()
         runCatching { pool?.release() }
         pool = null
         poolSounds = IntArray(0)
-        if (want == null) return false
+        packIds = emptyMap()
+        packMode = pack != null
+        if (pack == null && want == null) return false
         pool = runCatching {
             android.media.SoundPool.Builder()
-                .setMaxStreams(6)
+                .setMaxStreams(if (pack != null) 10 else 6)
                 .setAudioAttributes(
                     android.media.AudioAttributes.Builder()
                         .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
@@ -237,8 +243,12 @@ object HapticsEngine {
                             runCatching { pool.play(id, p.second, p.second, 1, 0, 1f) }
                         }
                     }
-                    val ids = want.second.map { it.absolutePath }.distinct().associateWith { sp.load(it, 1) }
-                    poolSounds = IntArray(want.second.size) { ids[want.second[it].absolutePath] ?: 0 }
+                    if (pack != null) {
+                        packIds = KeySounds.loadPack(context, sp, pack)
+                    } else if (want != null) {
+                        val ids = want.second.map { it.absolutePath }.distinct().associateWith { sp.load(it, 1) }
+                        poolSounds = IntArray(want.second.size) { ids[want.second[it].absolutePath] ?: 0 }
+                    }
                 }
         }.getOrNull()
         return pool != null
@@ -249,10 +259,23 @@ object HapticsEngine {
         playSound(context, s.copy(soundEnabled = true), special)
     }
 
-    private fun playSound(context: Context, s: KeyboardSettings, special: Boolean) {
+    /** Звук отпускания клавиши: только у записанных наборов, где есть файл <клавиша>_up. */
+    private fun playRelease(context: Context, s: KeyboardSettings, key: KeyModel?) {
+        if (!s.soundEnabled || key == null) return
+        if (KeySoundStyle.fromId(s.soundStyle).pack == null) return
+        if (!ensurePool(context, s) || !packMode) return
+        val id = packIds[KeySounds.packName(key) + "_up"] ?: return
+        if (id in loaded) runCatching { pool?.play(id, s.soundVolume, s.soundVolume, 1, 0, 1f) }
+    }
+
+    private fun playSound(context: Context, s: KeyboardSettings, special: Boolean, key: KeyModel? = null) {
         if (!s.soundEnabled) return
         if (ensurePool(context, s)) {
-            val id = poolSounds.getOrElse(if (special) 1 else 0) { 0 }
+            val id = if (packMode) {
+                // клавиша неизвестна (подсказка, микрофон…) — служебный звук или «a»
+                val name = key?.let(KeySounds::packName) ?: if (special) "sym" else "a"
+                packIds[name] ?: packIds["a"] ?: 0
+            } else poolSounds.getOrElse(if (special) 1 else 0) { 0 }
             if (id != 0 && id in loaded) {
                 // чуть разная высота у соседних нажатий — звук не «пулемётный»
                 val custom = poolKey.startsWith("custom:")
@@ -272,8 +295,8 @@ object HapticsEngine {
         worker.post { runCatching { audio?.playSoundEffect(fx, vol) } }
     }
 
-    fun keyPress(context: Context, view: View?, s: KeyboardSettings, special: Boolean) {
-        playSound(context, s, special)
+    fun keyPress(context: Context, view: View?, s: KeyboardSettings, special: Boolean, key: KeyModel? = null) {
+        playSound(context, s, special, key)
         if (!s.hapticsEnabled) return
         runCatching {
             val v = motor(context)
@@ -314,7 +337,8 @@ object HapticsEngine {
         }
     }
 
-    fun release(context: Context, s: KeyboardSettings) {
+    fun release(context: Context, s: KeyboardSettings, key: KeyModel? = null) {
+        playRelease(context, s, key)
         if (!s.hapticsEnabled || !s.vibrateOnRelease) return
         runCatching {
             val v = motor(context) ?: return

@@ -215,7 +215,7 @@ class KeyboardState {
 @Stable
 interface KeyboardActions {
     fun keyDown(key: KeyModel)
-    fun keyUp()
+    fun keyUp(key: KeyModel? = null)
     fun keyTick()
     fun commitKey(key: KeyModel, text: String)
     fun holdEnter() {}
@@ -298,7 +298,7 @@ internal class SafeActions(private val a: KeyboardActions, private val onError: 
     }
 
     override fun keyDown(key: KeyModel) = guard { a.keyDown(key) }
-    override fun keyUp() = guard { a.keyUp() }
+    override fun keyUp(key: KeyModel?) = guard { a.keyUp(key) }
     override fun keyTick() = guard { a.keyTick() }
     override fun commitKey(key: KeyModel, text: String) = guard { a.commitKey(key, text) }
     override fun holdEnter() = guard { a.holdEnter() }

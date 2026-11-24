@@ -2086,13 +2086,13 @@ class ComposeKeyboardService : InputMethodService(),
     override fun keyDown(key: KeyModel) {
         val special = key.type == KeyType.SPACE || key.type == KeyType.ENTER ||
             key.type == KeyType.BACKSPACE || key.type == KeyType.SHIFT
-        HapticsEngine.keyPress(this, inputView, settings, special)
+        HapticsEngine.keyPress(this, inputView, settings, special, key)
         if (ScriptHost.has("press") && !flags.isPassword) {
             ScriptHost.emit("press", mapOf("label" to KeyboardGeometry.nameOf(key), "type" to key.type.name.lowercase()))
         }
     }
 
-    override fun keyUp() = HapticsEngine.release(this, settings)
+    override fun keyUp(key: KeyModel?) = HapticsEngine.release(this, settings, key)
 
     override fun keyTick() = HapticsEngine.tick(this, inputView, settings)
 
