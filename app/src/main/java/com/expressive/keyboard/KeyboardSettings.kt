@@ -342,6 +342,8 @@ data class KeyboardSettings(
     val smartPunctuation: Boolean = true,         // «слово ,» → «слово,»
     /** Пробел сам ставится после запятой, «!», «?», «;» и «:» за словом. */
     val autoSpacePunct: Boolean = true,
+    /** Telex: dấu thanh theo kiểu mới (hoà, thuý) thay vì kiểu cũ (hòa, thúy). */
+    val telexModernTone: Boolean = false,
     /** Два дефиса подряд превращаются в длинное тире: «--» → «—». */
     val dashMerge: Boolean = true,
     /** Исправлять и там, где приложение просит клавиатуру не исправлять (кроме паролей, почты и адресов). */
@@ -667,6 +669,7 @@ object KeyboardPrefs {
             systemSpellcheck = p.getBoolean("system_spellcheck", true),
             smartPunctuation = p.getBoolean("smart_punctuation", true),
             autoSpacePunct = p.getBoolean("auto_space_punct", true),
+            telexModernTone = p.getBoolean("telex_modern_tone", false),
             dashMerge = p.getBoolean("dash_merge", true),
             correctEverywhere = p.getBoolean("correct_everywhere", true),
             dynamicZones = p.getBoolean("dynamic_zones", true),
@@ -724,7 +727,7 @@ object KeyboardPrefs {
             "show_hints", "show_header", "number_pad", "floating_keyboard", "liquid_glass", "glass_merge", "myanmar_visual", "show_suggestions", "inline_calculator", "enter_hold_send", "show_mic_button", "suggestions_full_width", "show_emoji_key", "show_globe_key", "panel_animations",
             "backspace_swipe", "swipe_down_hide", "clipboard_history", "instant_input", "glide_typing", "glide_trail", "swipe_up_hint",
             "space_long_press", "auto_pair", "incognito", "dict_auto_download", "punctuation_keys", "smart_punctuation",
-            "system_spellcheck", "edit_bar", "auto_space_punct", "eco_mode", "eco_press", "eco_panels", "eco_blur", "eco_trail", "eco_preview", "eco_haptics", "eco_sound", "eco_suggestions", "dash_merge", "clip_screenshots", "correct_everywhere", "dynamic_zones", "ai_voice_cleanup", "tools_button", "pinned_tools", "landscape_split"
+            "system_spellcheck", "edit_bar", "auto_space_punct", "telex_modern_tone", "eco_mode", "eco_press", "eco_panels", "eco_blur", "eco_trail", "eco_preview", "eco_haptics", "eco_sound", "eco_suggestions", "dash_merge", "clip_screenshots", "correct_everywhere", "dynamic_zones", "ai_voice_cleanup", "tools_button", "pinned_tools", "landscape_split"
         ).forEach { put(it, 'b') }
         listOf(
             "theme_mode", "accent_shape_preset", "haptic_mode", "font_style", "color_source", "one_handed", "space_swipe", "photo_fit",

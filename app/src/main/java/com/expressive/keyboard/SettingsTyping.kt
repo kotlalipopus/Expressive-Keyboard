@@ -420,6 +420,12 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
         ToggleItem(Icons.Rounded.SpaceBar, "Пробел после запятой", "После «,» «!» «?» «;» «:» за словом пробел ставится сам — следующий пробел не удвоится", settings.autoSpacePunct) {
             KeyboardPrefs.edit(context) { putBoolean("auto_space_punct", it) }
         }
+        ToggleItem(
+            Icons.Rounded.SpaceBar, "Telex: тон по новым правилам",
+            "Вьетнамский: «hoà», «thuý» вместо «hòa», «thúy». Выключено — классическая расстановка, как в Gboard", settings.telexModernTone
+        ) {
+            KeyboardPrefs.edit(context) { putBoolean("telex_modern_tone", it) }
+        }
         ToggleItem(Icons.Rounded.KeyboardCapslock, "Заглавная в начале предложения", null, settings.autoCapitalize) {
             KeyboardPrefs.edit(context) { putBoolean("auto_capitalize", it) }
         }

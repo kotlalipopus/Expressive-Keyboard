@@ -753,9 +753,22 @@ object Hangul {
 
 // ----------------------------------------------------------------------------- Telex
 
-/** Упрощённый Telex: aa→â, aw→ă, ee→ê, oo→ô, ow→ơ, uw/w→ư, dd→đ; s f r x j — тоны, z — убрать тон. */
+/**
+ * Telex kiểu Gboard. Từ đang gõ được tính lại từ chuỗi phím thô mỗi lần bấm, nên:
+ *  - aa→â, aw→ă, ee→ê, oo→ô, ow→ơ, uw→ư, dd→đ; w đứng một mình sau phụ âm → ư;
+ *  - s f r x j là dấu sắc/huyền/hỏi/ngã/nặng, z xóa dấu;
+ *  - bỏ dấu/mũ muộn: toanf → toàn, nguoiwf → người, duocw → dược, tiene → tiên;
+ *  - dấu tự dời đúng chỗ khi gõ thêm chữ: toas → tóa, toasn → toán;
+ *  - gõ đúp để hoàn tác: aaa → aa, ass → as, ww → w, ddd → dd;
+ *  - kiểu bỏ dấu cũ (hòa, thúy) hoặc mới (hoà, thuý) — xem [modernTone];
+ *  - khi chốt từ, nếu không phải âm tiết tiếng Việt (windows, fix, next) thì trả lại đúng phím đã gõ ([finalize]).
+ */
 object Telex {
-    private const val BASE = "aăâeêioôơuưy"
+    /** false — kiểu cũ (hòa, thúy); true — kiểu mới (hoà, thuý). */
+    @Volatile var modernTone = false
+
+    private const val VOW = "aăâeêioôơuưy"
+    private const val TONE_KEYS = "sfrxj"
     private val TONES = listOf(
         "aăâeêioôơuưy",
         "áắấéếíóốớúứý", // s
@@ -764,91 +777,310 @@ object Telex {
         "ãẵẫẽễĩõỗỡũữỹ", // x
         "ạặậẹệịọộợụựỵ"  // j
     )
-    private val TONE_KEYS = "sfrxj"
+    private val CODAS = setOf("", "c", "ch", "m", "n", "ng", "nh", "p", "t")
+    private val ONSETS = setOf(
+        "", "b", "c", "ch", "d", "đ", "g", "gh", "gi", "h", "k", "kh", "l", "m", "n", "ng", "ngh",
+        "nh", "p", "ph", "qu", "r", "s", "t", "th", "tr", "v", "x"
+    )
+    private val NUCLEI: Set<String> = (
+        "a ă â e ê i o ô ơ u ư y " +
+            "ai ao au âu ay ây eo êu ia iê iu oa oă oe oi ôi ơi oo ua uâ uê uô uơ ui uy ưa ưi ươ ưu yê " +
+            "iêu oai oao oay oeo uây uôi ươi ươu uya uyê uyu yêu uêu"
+        ).split(" ").toSet()
+    /** Âm chính bắt buộc phải có âm cuối (tiên, muốn, ươm, xoăn…). */
+    private val NEED_CODA = setOf("ă", "oă", "iê", "uô", "ươ", "yê", "uyê")
 
-    private fun splitTone(c: Char): Pair<Char, Int> {
-        val lower = c.lowercaseChar()
-        for ((ti, row) in TONES.withIndex()) {
-            val i = row.indexOf(lower)
-            if (i >= 0) return BASE[i] to ti
+    /** Một chữ cái: base thường; mark: 0 không, 1 mũ (â ê ô), 2 trăng (ă), 3 râu (ơ ư), 4 gạch (đ). */
+    private class Lt(var base: Char, var mark: Int = 0, var upper: Boolean = false, var fromW: Boolean = false) {
+        fun sym(): Char = when (mark) {
+            1 -> when (base) {
+                'a' -> 'â'
+                'e' -> 'ê'
+                'o' -> 'ô'
+                else -> base
+            }
+            2 -> if (base == 'a') 'ă' else base
+            3 -> when (base) {
+                'o' -> 'ơ'
+                'u' -> 'ư'
+                else -> base
+            }
+            4 -> if (base == 'd') 'đ' else base
+            else -> base
         }
-        return lower to -1
     }
 
-    private fun withTone(base: Char, tone: Int, upper: Boolean): Char {
-        val i = BASE.indexOf(base)
-        val c = if (i < 0 || tone <= 0) base else TONES[tone][i]
-        return if (upper) c.uppercaseChar() else c
+    private class Dec(val l: Lt, val tone: Int)
+    private class Built(val w: ArrayList<Lt>, val tone: Int)
+
+    /** Chữ tiếng Việt đã dựng sẵn (ế, ự, đ…) → chữ + dấu thanh. */
+    private fun decode(ch: Char): Dec? {
+        val low = ch.lowercaseChar()
+        if (low == 'đ') return Dec(Lt('d', 4, ch.isUpperCase()), 0)
+        val n = java.text.Normalizer.normalize(low.toString(), java.text.Normalizer.Form.NFD)
+        val base = n[0]
+        if (!base.isLetter()) return null
+        var mark = 0
+        var tone = 0
+        for (i in 1 until n.length) {
+            when (n[i].code) {
+                0x0301 -> tone = 1
+                0x0300 -> tone = 2
+                0x0309 -> tone = 3
+                0x0303 -> tone = 4
+                0x0323 -> tone = 5
+                0x0302 -> mark = 1
+                0x0306 -> mark = 2
+                0x031B -> mark = 3
+            }
+        }
+        if (mark == 1 && base !in "aeo") return null
+        if (mark == 2 && base != 'a') return null
+        if (mark == 3 && base !in "ou") return null
+        return Dec(Lt(base, mark, ch.isUpperCase()), tone)
     }
 
-    private fun isVowel(c: Char) = splitTone(c).first in BASE
+    private fun part(w: List<Lt>, from: Int, to: Int): String {
+        val sb = StringBuilder()
+        for (i in from until to) sb.append(w[i].sym())
+        return sb.toString()
+    }
 
-    fun compose(raw: String): String {
-        val w = StringBuilder()
+    /** Âm chính [từ, đến) của âm tiết, không tính u của «qu» và i của «gi»; null nếu chưa có nguyên âm. */
+    private fun nucleus(w: List<Lt>): IntArray? {
+        var e = w.size - 1
+        while (e >= 0 && w[e].sym() !in VOW) e--
+        if (e < 0) return null
+        var b = e
+        while (b - 1 >= 0 && w[b - 1].sym() in VOW) b--
+        if (b == 1) {
+            val s0 = w[0].sym()
+            val s1 = w[1].sym()
+            if (e > b && ((s0 == 'g' && s1 == 'i') || (s0 == 'q' && s1 == 'u'))) b = 2
+            else if (e == b && s0 == 'q' && s1 == 'u') return null
+        }
+        return intArrayOf(b, e + 1)
+    }
+
+    /** Có phải âm tiết tiếng Việt không. strict = false: cho phép từ còn gõ dở; true: kiểm tra đủ (khi chốt từ). */
+    private fun valid(w: List<Lt>, tone: Int, strict: Boolean): Boolean {
+        val r = nucleus(w)
+        if (r == null) {
+            val on = part(w, 0, w.size)
+            return on in ONSETS || on == "q"
+        }
+        val onset = part(w, 0, r[0])
+        val nuc = part(w, r[0], r[1])
+        val coda = part(w, r[1], w.size)
+        if (onset !in ONSETS || nuc !in NUCLEI || coda !in CODAS) return false
+        // âm cuối c, ch, p, t chỉ đi với dấu sắc và nặng
+        if ((coda == "c" || coda == "ch" || coda == "p" || coda == "t") && tone != 0 && tone != 1 && tone != 5) return false
+        if ((coda == "ch" || coda == "nh") && nuc.last() !in "aêiy") return false
+        if (strict) {
+            if (coda.isEmpty() && nuc in NEED_CODA) return false
+            val f = nuc[0]
+            if (onset == "k" && f !in "eêiy") return false
+            if (onset == "c" && f in "eêiy") return false
+            if ((onset == "gh" || onset == "ngh") && f !in "eêi") return false
+            if ((onset == "g" || onset == "ng") && f in "eêi") return false
+        }
+        return true
+    }
+
+    /** Dấu thanh đặt ở chữ nào: chữ có mũ/trăng/râu, nếu không thì theo quy tắc cụm nguyên âm. */
+    private fun tonePos(w: List<Lt>, modern: Boolean): Int {
+        val r = nucleus(w) ?: return -1
+        val ns = r[0]
+        val ne = r[1]
+        var marked = -1
+        for (i in ns until ne) if (w[i].sym() in "ăâêôơư") marked = i
+        if (marked >= 0) return marked
+        val size = ne - ns
+        val closed = ne < w.size
+        if (size == 1) return ns
+        if (closed) return ne - 1
+        if (size >= 3) return ns + 1
+        if (modern) {
+            val p = part(w, ns, ne)
+            if (p == "oa" || p == "oe" || p == "uy") return ns + 1
+        }
+        return ns
+    }
+
+    private fun render(w: List<Lt>, tone: Int, modern: Boolean): String {
+        val p = if (tone > 0) tonePos(w, modern) else -1
+        val sb = StringBuilder()
+        for (i in w.indices) {
+            val l = w[i]
+            var c = l.sym()
+            if (i == p) {
+                val j = TONES[0].indexOf(c)
+                if (j >= 0) c = TONES[tone][j]
+            }
+            sb.append(if (l.upper) c.uppercaseChar() else c)
+        }
+        return sb.toString()
+    }
+
+    private fun build(raw: String): Built {
+        val w = ArrayList<Lt>()
+        var tone = 0
+        // phím đã hoàn tác bằng gõ đúp: các lần bấm sau là chữ thường
+        val lock = HashSet<Char>()
         for (ch in raw) {
-            val lower = ch.lowercaseChar()
+            val low = ch.lowercaseChar()
             val up = ch.isUpperCase()
-            val last = w.lastOrNull()
-            val (lastBase, lastTone) = last?.let { splitTone(it) } ?: (' ' to -1)
-            val lastUp = last?.isUpperCase() == true
-            val mod: Char? = when {
-                lower == 'a' && lastBase == 'a' -> 'â'
-                lower == 'w' && lastBase == 'a' -> 'ă'
-                lower == 'e' && lastBase == 'e' -> 'ê'
-                lower == 'o' && lastBase == 'o' -> 'ô'
-                lower == 'w' && lastBase == 'o' -> 'ơ'
-                lower == 'w' && lastBase == 'u' -> 'ư'
-                else -> null
-            }
-            if (mod != null && last != null) {
-                w.setCharAt(w.length - 1, withTone(mod, lastTone, lastUp))
+            if (!ch.isLetter()) {
+                w.add(Lt(ch))
                 continue
             }
-            if (lower == 'd' && last?.lowercaseChar() == 'd') {
-                w.setCharAt(w.length - 1, if (lastUp) 'Đ' else 'đ')
+            if (ch.code > 127) {
+                val d = decode(ch)
+                if (d != null) {
+                    w.add(d.l)
+                    if (d.tone > 0) tone = d.tone
+                } else w.add(Lt(low, 0, up))
                 continue
             }
-            val tone = TONE_KEYS.indexOf(lower) + 1
-            if ((tone > 0 || lower == 'z') && w.any { isVowel(it) }) {
-                val pos = tonePosition(w)
-                if (pos >= 0) {
-                    val (b, cur) = splitTone(w[pos])
-                    val target = if (lower == 'z') 0 else tone
-                    if (cur == target && target != 0) {
-                        // повтор тона — снять его и напечатать букву
-                        w.setCharAt(pos, withTone(b, 0, w[pos].isUpperCase()))
-                        w.append(ch)
-                    } else w.setCharAt(pos, withTone(b, target, w[pos].isUpperCase()))
+            // ---- dấu thanh
+            if (low in TONE_KEYS || low == 'z') {
+                val r = nucleus(w)
+                if (r == null || low in lock) {
+                    w.add(Lt(low, 0, up))
                     continue
                 }
-            }
-            if (lower == 'w' && (last == null || !isVowel(last))) {
-                w.append(if (up) 'Ư' else 'ư')
+                if (low == 'z') {
+                    if (tone != 0) tone = 0 else w.add(Lt(low, 0, up))
+                    continue
+                }
+                val t = TONE_KEYS.indexOf(low) + 1
+                if (tone == t) {
+                    // bấm lại cùng dấu: bỏ dấu và gõ chữ thường
+                    tone = 0
+                    lock.add(low)
+                    w.add(Lt(low, 0, up))
+                } else if (valid(w, t, false)) tone = t
+                else w.add(Lt(low, 0, up))
                 continue
             }
-            w.append(ch)
+            // ---- aa ee oo → â ê ô (cho phép gõ muộn sau âm cuối: tiene → tiên)
+            if ((low == 'a' || low == 'e' || low == 'o') && low !in lock) {
+                val r = nucleus(w)
+                var done = false
+                if (r != null) {
+                    var tgt = -1
+                    for (i in r[1] - 1 downTo r[0]) {
+                        if (w[i].base == low && (w[i].mark == 0 || w[i].mark == 1)) {
+                            tgt = i
+                            break
+                        }
+                    }
+                    if (tgt >= 0) {
+                        if (w[tgt].mark == 1) {
+                            w[tgt].mark = 0
+                            lock.add(low)
+                            w.add(Lt(low, 0, up))
+                            done = true
+                        } else {
+                            w[tgt].mark = 1
+                            if (valid(w, tone, false)) done = true else w[tgt].mark = 0
+                        }
+                    }
+                }
+                if (!done) w.add(Lt(low, 0, up))
+                continue
+            }
+            // ---- dd → đ
+            if (low == 'd' && low !in lock) {
+                val last = w.lastOrNull()
+                if (last != null && last.base == 'd' && (last.mark == 0 || last.mark == 4)) {
+                    if (last.mark == 0) last.mark = 4
+                    else {
+                        last.mark = 0
+                        lock.add('d')
+                        w.add(Lt(low, 0, up))
+                    }
+                } else w.add(Lt(low, 0, up))
+                continue
+            }
+            // ---- w → ă ơ ư (và ươ)
+            if (low == 'w' && low !in lock) {
+                val r = nucleus(w)
+                if (r == null) {
+                    // w đứng một mình ở đầu từ hoặc sau phụ âm → ư
+                    if (w.none { it.sym() in VOW }) w.add(Lt('u', 3, up, true)) else w.add(Lt(low, 0, up))
+                    continue
+                }
+                val ns = r[0]
+                val ne = r[1]
+                var applied = false
+                val nuc = part(w, ns, ne)
+                if (nuc == "uo" || nuc == "uoi" || nuc == "uou" || nuc == "ưo" || nuc == "uơ" || nuc == "uô") {
+                    val u = w[ns]
+                    val o = w[ns + 1]
+                    if (u.base == 'u' && o.base == 'o' && (u.mark == 0 || o.mark == 0 || o.mark == 1)) {
+                        val su = u.mark
+                        val so = o.mark
+                        u.mark = 3
+                        o.mark = 3
+                        if (valid(w, tone, false)) applied = true else {
+                            u.mark = su
+                            o.mark = so
+                        }
+                    }
+                }
+                if (!applied) {
+                    for (i in ns until ne) {
+                        val l = w[i]
+                        if (l.mark == 0 && (l.base == 'a' || l.base == 'o' || l.base == 'u')) {
+                            l.mark = if (l.base == 'a') 2 else 3
+                            if (valid(w, tone, false)) {
+                                applied = true
+                                break
+                            }
+                            l.mark = 0
+                        }
+                    }
+                }
+                if (!applied) {
+                    // đã có râu/trăng rồi: bấm w lần nữa để hoàn tác
+                    val fw = (ns until ne).firstOrNull { w[it].fromW }
+                    if (fw != null) {
+                        w[fw] = Lt('w', 0, w[fw].upper)
+                        lock.add('w')
+                        applied = true
+                    } else {
+                        val hit = (ns until ne).filter { w[it].mark == 2 || w[it].mark == 3 }
+                        if (hit.isNotEmpty()) {
+                            for (i in hit) w[i].mark = 0
+                            lock.add('w')
+                            w.add(Lt(low, 0, up))
+                            applied = true
+                        }
+                    }
+                }
+                if (!applied) w.add(Lt(low, 0, up))
+                continue
+            }
+            w.add(Lt(low, 0, up))
         }
-        return w.toString()
+        return Built(w, tone)
     }
 
-    /** Куда ставить тон: на ăâêôơư, иначе по правилам кластера гласных (qu/gi — не гласные). */
-    private fun tonePosition(w: CharSequence): Int {
-        val s = w.toString().lowercase()
-        var start = 0
-        if (s.startsWith("qu") || (s.startsWith("gi") && s.length > 2 && isVowel(s[2]))) start = 2
-        var end = s.length - 1
-        while (end >= start && !isVowel(s[end])) end--
-        if (end < start) return -1
-        var begin = end
-        while (begin - 1 >= start && isVowel(s[begin - 1])) begin--
-        for (i in begin..end) if (splitTone(s[i]).first in "ăâêôơư") return i
-        val cluster = end - begin + 1
-        val closed = end < s.length - 1
-        return when {
-            cluster == 1 -> begin
-            closed -> end
-            cluster >= 3 -> begin + 1
-            else -> begin
-        }
+    fun compose(raw: String): String {
+        val b = build(raw)
+        return render(b.w, b.tone, modernTone)
+    }
+
+    /**
+     * Từ khi chốt (dấu cách, dấu câu). Nếu kết quả không phải âm tiết tiếng Việt hợp lệ
+     * (windows, fix, next, google…) thì trả lại đúng các phím đã gõ, như Gboard.
+     */
+    fun finalize(raw: String): String {
+        val b = build(raw)
+        val c = render(b.w, b.tone, modernTone)
+        if (c == raw) return c
+        if (b.w.any { !it.base.isLetter() }) return c
+        return if (valid(b.w, b.tone, true)) c else raw
     }
 }

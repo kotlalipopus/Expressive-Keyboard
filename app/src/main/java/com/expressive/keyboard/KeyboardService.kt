@@ -1406,10 +1406,23 @@ class ComposeKeyboardService : InputMethodService(),
 
     private fun composeRaw(c: Composer, raw: String): String = when (c) {
         Composer.HANGUL -> Hangul.compose(raw)
-        Composer.TELEX -> Telex.compose(raw)
+        Composer.TELEX -> {
+            Telex.modernTone = settings.telexModernTone
+            Telex.compose(raw)
+        }
         Composer.KANA -> Kana.compose(raw)
         Composer.ETHIOPIC -> Ethiopic.compose(raw)
         Composer.PINYIN, Composer.NONE -> raw
+    }
+
+    /**
+     * Từ khi chốt: với Telex, nếu không phải âm tiết tiếng Việt (windows, fix, next…) thì trả lại đúng các phím đã gõ,
+     * như Gboard. Các ngôn ngữ khác và từ đã gõ xong thì giữ nguyên.
+     */
+    private fun committedWord(word: String): String {
+        if (kb.language.composer != Composer.TELEX || rawComposing.isEmpty()) return word
+        if (composeRaw(Composer.TELEX, rawComposing) != word) return word
+        return Telex.finalize(rawComposing)
     }
 
     /** Буквы, огласовки и персидский полупробел продолжают слово. */
@@ -1515,7 +1528,7 @@ class ComposeKeyboardService : InputMethodService(),
             if (spaceAfter) markPunctSpace(ch)
             return
         }
-        val word = composing
+        val word = committedWord(composing)
         if (word.isNotEmpty()) {
             learn(lastCommittedWord, word)
             lastCommittedWord = word
@@ -1704,7 +1717,7 @@ class ComposeKeyboardService : InputMethodService(),
 
     private fun commitWithBoundary(ic: InputConnection, suffix: String) {
         if (suffix.isNotBlank()) tokenHasSymbol = true
-        val word = composing
+        val word = committedWord(composing)
         if (word.isEmpty()) {
             if (lateCorrect(ic, suffix)) return
             if (autoSpace && suffix.firstOrNull()?.let { it in ".,!?:;" } == true) {
@@ -1945,10 +1958,13 @@ class ComposeKeyboardService : InputMethodService(),
                 learn(lastCommittedWord, fix)
                 icCommit(ic, fix)
             } else {
-                learn(lastCommittedWord, composing)
-                ic.finishComposingText()
-                composing = ""
-                composingStart = -1
+                val restored = committedWord(composing)
+                learn(lastCommittedWord, restored)
+                if (restored != composing) icCommit(ic, restored) else {
+                    ic.finishComposingText()
+                    composing = ""
+                    composingStart = -1
+                }
             }
         }
         undo = null

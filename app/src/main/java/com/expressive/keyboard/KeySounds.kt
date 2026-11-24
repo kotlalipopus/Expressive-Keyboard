@@ -19,12 +19,17 @@ enum class KeySoundStyle(val id: String, val title: String) {
     WOOD("WOOD", "Дерево"),
     MECHANICAL("MECHANICAL", "Механика"),
     GLASS("GLASS", "Стекло"),
+    CLICKY("CLICKY", "Щелчок"),
+    THOCK("THOCK", "Глухой стук"),
+    TYPEWRITER("TYPEWRITER", "Печатная машинка"),
+    MEMBRANE("MEMBRANE", "Мембрана"),
+    POP("POP", "Лёгкий тик"),
     CUSTOM("CUSTOM", "Свой файл");
 
     companion object {
         fun fromId(id: String?) = entries.firstOrNull { it.id == id } ?: SYSTEM
         /** Синтезированные — то, что можно выбрать без файла. */
-        val synthesized = listOf(SOFT, BUBBLE, WOOD, MECHANICAL, GLASS)
+        val synthesized = listOf(SOFT, BUBBLE, WOOD, MECHANICAL, GLASS, CLICKY, THOCK, TYPEWRITER, MEMBRANE, POP)
     }
 }
 
@@ -52,6 +57,10 @@ object KeySounds {
             KeySoundStyle.WOOD -> 90
             KeySoundStyle.MECHANICAL -> 70
             KeySoundStyle.GLASS -> 160
+            KeySoundStyle.CLICKY -> 70
+            KeySoundStyle.THOCK -> 110
+            KeySoundStyle.TYPEWRITER -> 120
+            KeySoundStyle.MEMBRANE -> 50
             else -> 40
         } * (if (special) 1.2f else 1f)
         val n = (RATE * lenMs / 1000f).toInt()
@@ -106,6 +115,51 @@ object KeySounds {
                     val env = min(1f, t / 0.002f)
                     (sin(2 * PI * f * t).toFloat() * exp(-t / 0.05f) + 0.35f * sin(2 * PI * f * 2.0 * t).toFloat() * exp(-t / 0.025f) +
                         0.2f * sin(2 * PI * f * 2.98 * t).toFloat() * exp(-t / 0.012f)) * env
+                }
+                // кликающий переключатель («синий»): острый щелчок, второй — при ударе колпачка, и короткий корпус
+                KeySoundStyle.CLICKY -> {
+                    val noise = rnd.nextFloat() * 2f - 1f
+                    lp += 0.65f * (noise - lp)
+                    lp2 += 0.12f * (noise - lp2)
+                    val hp = lp - lp2
+                    val click1 = hp * exp(-t / 0.0010f)
+                    val t2 = t - 0.009f
+                    val click2 = if (t2 < 0f) 0f else hp * 0.8f * exp(-t2 / 0.0012f)
+                    val t3 = t - 0.011f
+                    val body = if (t3 < 0f) 0f else sin(2 * PI * 260f * pitch * t3).toFloat() * 0.5f * exp(-t3 / 0.010f)
+                    1.2f * click1 + click2 + body
+                }
+                // глубокий «thock»: низкий тон с падающей высотой и мягкий шорох
+                KeySoundStyle.THOCK -> {
+                    val f = (115f + 90f * exp(-t / 0.008f)) * pitch
+                    phase += 2 * PI * f / RATE
+                    val noise = rnd.nextFloat() * 2f - 1f
+                    lp += 0.12f * (noise - lp)
+                    (0.9f * sin(phase).toFloat() * exp(-t / 0.028f) + 0.35f * lp * exp(-t / 0.006f)) * min(1f, t / 0.0006f)
+                }
+                // печатная машинка: удар литеры, металлический звон и глухой стук каретки
+                KeySoundStyle.TYPEWRITER -> {
+                    val noise = rnd.nextFloat() * 2f - 1f
+                    lp += 0.55f * (noise - lp)
+                    lp2 += 0.1f * (noise - lp2)
+                    val strike = (lp - lp2) * exp(-t / 0.0015f)
+                    val ring = (sin(2 * PI * 1850f * pitch * t).toFloat() * 0.35f +
+                        sin(2 * PI * 3170f * pitch * t).toFloat() * 0.2f) * exp(-t / 0.018f)
+                    val thud = sin(2 * PI * 130f * pitch * t).toFloat() * 0.6f * exp(-t / 0.02f)
+                    (1.3f * strike + ring + thud) * min(1f, t / 0.0004f)
+                }
+                // мембранная клавиатура ноутбука: мягкий приглушённый шорох
+                KeySoundStyle.MEMBRANE -> {
+                    val noise = rnd.nextFloat() * 2f - 1f
+                    lp += 0.3f * (noise - lp)
+                    val tone = sin(2 * PI * 320f * pitch * t).toFloat() * exp(-t / 0.007f)
+                    (0.9f * lp * exp(-t / 0.007f) + 0.5f * tone) * min(1f, t / 0.0008f)
+                }
+                // короткий «тик» с падающей высотой
+                KeySoundStyle.POP -> {
+                    val f = (900f + 700f * exp(-t / 0.004f)) * pitch
+                    phase += 2 * PI * f / RATE
+                    sin(phase).toFloat() * exp(-t / 0.012f) * min(1f, t / 0.0005f)
                 }
                 else -> 0f
             }
