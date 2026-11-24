@@ -1,3 +1,0 @@
-git add app/src/main/assets/sounds
-git commit -m "Add sounds"
-git push
