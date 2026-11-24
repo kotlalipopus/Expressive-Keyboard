@@ -376,7 +376,7 @@ data class KeyboardSettings(
     /** После вставки эмодзи клавиатура сразу возвращается к буквам, как в Gboard. */
     val emojiReturnToKeyboard: Boolean = false,
     // --- интерфейс ---
-    val appLanguage: String = "SYSTEM",           // SYSTEM | ru | en
+    val appLanguage: String = "vi",               // vi (по умолчанию) | SYSTEM | ru | en
     val designStyle: String = "EXPRESSIVE",
     /** Сколько выразительных форм: FULL, ACCENTS или NONE (см. ShapeAmount). */
     val shapeAmount: String = ShapeAmount.FULL,
@@ -685,7 +685,7 @@ object KeyboardPrefs {
             emojiStyle = p.getString("emoji_style", null) ?: if (p.getLong("emoji_font_version", 0L) != 0L) "CUSTOM" else "SYSTEM",
             emojiSizeDp = p.getFloat("emoji_size_dp", 32f).takeIf { it.isFinite() }?.coerceIn(24f, 56f) ?: 32f,
             emojiReturnToKeyboard = p.getBoolean("emoji_return_keyboard", false),
-            appLanguage = p.getString("app_language", null).let { if (it == "ru" || it == "en") it else "SYSTEM" },
+            appLanguage = p.getString("app_language", null).let { if (it == "ru" || it == "en" || it == "vi" || it == "SYSTEM") it else "vi" },
             designStyle = p.getString("design_style", "EXPRESSIVE") ?: "EXPRESSIVE",
             shapeAmount = p.getString("shape_amount", ShapeAmount.FULL) ?: ShapeAmount.FULL
         )

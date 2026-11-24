@@ -60,7 +60,15 @@ class KeyboardLanguage(
     /** Название для настроек на языке интерфейса: по-русски из описания, по-английски — из системы. */
     fun displayTitle(): String {
         if (!I18n.isEnglish) return title
-        val name = runCatching { java.util.Locale.forLanguageTag(locale).getDisplayName(java.util.Locale.ENGLISH) }.getOrNull()
+        val vi = I18n.lang == "vi"
+        val name = runCatching { java.util.Locale.forLanguageTag(locale).getDisplayName(if (vi) java.util.Locale.forLanguageTag("vi") else java.util.Locale.ENGLISH) }.getOrNull()
+        if (vi) when (composer) {
+            Composer.PINYIN -> return "Tiếng Trung ${if (id == "zh-tw") "phồn thể " else ""}(Pinyin)"
+            Composer.KANA -> return "Tiếng Nhật (Romaji → Kana)"
+            Composer.TELEX -> return "Tiếng Việt (Telex)"
+            Composer.ETHIOPIC -> return if (id == "ti") "Tiếng Tigrinya" else "Tiếng Amhara"
+            else -> {}
+        }
         return when (composer) {
             Composer.PINYIN -> "Chinese ${if (id == "zh-tw") "Traditional " else ""}(Pinyin)"
             Composer.KANA -> "Japanese (Romaji → Kana)"

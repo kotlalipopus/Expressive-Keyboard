@@ -12,19 +12,20 @@ import java.util.Locale
 // ============================================================================
 
 object I18n {
-    var lang by mutableStateOf(systemLang())
+    var lang by mutableStateOf("vi")
         private set
 
     private fun systemLang(): String = when (Locale.getDefault().language) {
         "ru", "uk", "be", "kk", "ky", "tg", "tt", "ba", "uz" -> "ru"
         "es" -> "es"
+        "vi" -> "vi"
         else -> "en"
     }
 
-    /** setting: SYSTEM, ru или en. */
+    /** setting: SYSTEM, ru, en или vi. */
     fun apply(setting: String) {
         val next = when (setting) {
-            "ru", "en" -> setting
+            "ru", "en", "vi" -> setting
             else -> systemLang()
         }
         if (next != lang) lang = next
@@ -37,6 +38,7 @@ object I18n {
 fun tr(ru: String): String = when (I18n.lang) {
     "ru" -> ru
     "es" -> ES_EXTRA[ru] ?: ES_STRINGS[ru] ?: EN_EXTRA[ru] ?: EN_STRINGS[ru] ?: ru
+    "vi" -> VI_STRINGS[ru] ?: EN_EXTRA[ru] ?: EN_STRINGS[ru] ?: ru
     else -> EN_EXTRA[ru] ?: EN_STRINGS[ru] ?: ru
 }
 

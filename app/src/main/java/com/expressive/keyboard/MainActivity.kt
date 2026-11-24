@@ -514,7 +514,7 @@ internal fun AppLanguageItem(settings: KeyboardSettings) {
     val context = LocalContext.current
     ChoiceItem(
         Icons.Rounded.Translate, "Язык приложения", null,
-        listOf("SYSTEM" to "Как в системе", "ru" to "Русский", "en" to "English"), settings.appLanguage
+        listOf("vi" to "Tiếng Việt", "SYSTEM" to "Как в системе", "ru" to "Русский", "en" to "English"), settings.appLanguage
     ) { v -> KeyboardPrefs.edit(context) { putString("app_language", v) } }
 }
 
