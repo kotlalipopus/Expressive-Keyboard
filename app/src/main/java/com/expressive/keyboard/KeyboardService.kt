@@ -264,8 +264,11 @@ class ComposeKeyboardService : InputMethodService(),
     private var glideJob: Job? = null
     /** Регистр до последней буквы — чтобы вернуть его, если касание превратилось в свайп. */
     private var shiftBeforeKey = ShiftState.OFF
-    /** Нажатые клавиши текущего слова для корейского (слоги) и вьетнамского (Telex): composing = compose(raw). */
+    /** Нажатые клавиши текущего слова для корейского (слоги) и других композиторов: composing = compose(raw). */
     private var rawComposing = ""
+    /** Состояние текущего слова для вьетнамского Telex (C1/V/C2/T/M, автовосстановление и diff-отрисовка). */
+    private val telex = Telex.Session()
+    private var telexComposing = false
     /** Точка касания последней клавиши и касания по буквам текущего слова (для автоисправления). */
     private var pendingTouch: KeyTouch? = null
     private val wordTouches = ArrayList<KeyTouch?>()
@@ -696,6 +699,7 @@ class ComposeKeyboardService : InputMethodService(),
         composing = ""
         composingStart = -1
         rawComposing = ""
+        clearTelexState()
         undo = null
         autoSpace = false
         // «Отменить» правку ИИ относится только к этому полю и этому показу клавиатуры
@@ -928,6 +932,7 @@ class ComposeKeyboardService : InputMethodService(),
         composing = ""
         composingStart = -1
         rawComposing = ""
+        clearTelexState()
         undo = null
         autoSpace = false
         lastActionWasSpace = false
@@ -1031,8 +1036,15 @@ class ComposeKeyboardService : InputMethodService(),
         if (kb.fieldEmpty && (newSelStart > 0 || newSelEnd > 0 || candidatesEnd > 0)) kb.fieldEmpty = false
         if (expSelStart < 0 || expSelEnd < 0) {
             if (composing.isNotEmpty()) {
-                composingStart = if (candidatesStart >= 0) candidatesStart else newSelStart
-                expect(composingStart + composing.length)
+                if (telexComposing) {
+                    if (newSelStart >= composing.length) {
+                        composingStart = newSelStart - composing.length
+                        expect(newSelStart)
+                    }
+                } else {
+                    composingStart = if (candidatesStart >= 0) candidatesStart else newSelStart
+                    expect(composingStart + composing.length)
+                }
             } else {
                 expSelStart = newSelStart
                 expSelEnd = newSelEnd
@@ -1060,9 +1072,11 @@ class ComposeKeyboardService : InputMethodService(),
         expSelStart = newSelStart
         expSelEnd = newSelEnd
         if (composing.isNotEmpty()) {
-            currentInputConnection?.finishComposingText()
+            if (!telexComposing) currentInputConnection?.finishComposingText()
+            clearTelexState()
             composing = ""
             composingStart = -1
+            rawComposing = ""
         }
         lastCommittedWord = ""
         lastTypedChar = null
@@ -1148,6 +1162,65 @@ class ComposeKeyboardService : InputMethodService(),
         ic.deleteSurroundingText(count, 0)
         if (expSelStart >= 0 && expSelStart == expSelEnd) expect(max(0, expSelStart - count)) else expectUnknown()
         lastTypedChar = null
+    }
+
+    private fun isTelexMode(): Boolean = kb.language.composer == Composer.TELEX && !flags.isPassword
+
+    private fun clearTelexState() {
+        telex.reset()
+        telexComposing = false
+    }
+
+    /** Применяет минимальный diff для Telex-слова напрямую без мигающего composing span. */
+    private fun applyTelexDiff(ic: InputConnection, newWord: String) {
+        tapWord = null
+        val oldWord = composing
+        if (oldWord == newWord) return
+        val diff = Telex.diff(oldWord, newWord)
+        if (oldWord.isEmpty() || composingStart < 0) composingStart = selectionStart()
+        val base = composingStart
+        composing = newWord
+        rawComposing = telex.raw
+        telexComposing = newWord.isNotEmpty()
+        if (newWord.isEmpty()) composingStart = -1
+        lastTypedChar = newWord.lastOrNull()
+        val nextPos = when {
+            base >= 0 -> base + newWord.length
+            expSelStart >= 0 && expSelStart == expSelEnd -> max(0, expSelStart - diff.delete) + diff.insert.length
+            else -> -1
+        }
+        if (nextPos >= 0) expect(nextPos) else expectUnknown()
+        val batch = diff.delete > 0 && diff.insert.isNotEmpty()
+        if (batch) ic.beginBatchEdit()
+        try {
+            if (diff.delete > 0) ic.deleteSurroundingText(diff.delete, 0)
+            if (diff.insert.isNotEmpty()) ic.commitText(diff.insert, 1)
+        } finally {
+            if (batch) ic.endBatchEdit()
+        }
+    }
+
+    /** Финализирует текущее Telex-слово перед границей (пробел, пунктуация, Enter, смена языка/курсора). */
+    private fun finalizeTelexBeforeBoundary(ic: InputConnection): String {
+        if (!telexComposing) return composing
+        val committed = telex.commit()
+        if (committed != composing) applyTelexDiff(ic, committed)
+        clearTelexState()
+        rawComposing = ""
+        composing = ""
+        composingStart = -1
+        return committed
+    }
+
+    /** Обучается на текущем слове (если есть) и вставляет завершающий суффикс с учётом режима Telex. */
+    private fun commitActiveWordWith(ic: InputConnection, suffix: String): Boolean {
+        val wasTelex = telexComposing
+        val word = if (wasTelex) finalizeTelexBeforeBoundary(ic) else composing
+        if (word.isNotEmpty()) {
+            learn(lastCommittedWord, word)
+            lastCommittedWord = word
+        }
+        return icCommit(ic, if (wasTelex || word.isEmpty()) suffix else word + suffix)
     }
 
     private fun resolveCorrection(word: String): String? {
@@ -1460,7 +1533,7 @@ class ComposeKeyboardService : InputMethodService(),
         if (ch != null && settings.autoPair && tryAutoPair(ic, ch)) return
         // «--» → «—» (не в паролях, адресах и почте: там два дефиса — это два дефиса)
         if (ch == '-' && flags.suggestions && settings.dashMerge && mergeDash(ic)) return
-        if (!flags.suggestions && (comp == Composer.NONE || Cjk.isCjk(comp))) {
+        if (flags.isPassword || (!flags.suggestions && (comp == Composer.NONE || Cjk.isCjk(comp)))) {
             icCommit(ic, composing + text)
             undo = null
             autoSpace = false
@@ -1470,11 +1543,14 @@ class ComposeKeyboardService : InputMethodService(),
             typeCjk(ic, comp, text, ch)
             return
         }
-        if (compoundLetter || (ch != null && (isWordLetter(ch) || ((ch == '\'' || ch == '-') && composing.isNotEmpty())))) {
+        if (compoundLetter || (ch != null && (isWordLetter(ch) || ((ch == '\'' || ch == '-') && composing.isNotEmpty() && comp != Composer.TELEX)))) {
             undo = null
             autoSpace = false
-            if (comp != Composer.NONE) {
-                // слово собирается из нажатых клавиш: ㅎㅏㄴ → 한, tieengs → tiếng
+            if (isTelexMode() && ch != null) {
+                if (!telexComposing && composing.isEmpty()) telex.reset()
+                applyTelexDiff(ic, telex.input(ch))
+            } else if (comp != Composer.NONE) {
+                // слово собирается из нажатых клавиш: ㅎㅏㄴ → 한
                 if (composeRaw(comp, rawComposing) != composing) rawComposing = composing
                 rawComposing += text
                 icSetComposing(ic, composeRaw(comp, rawComposing))
@@ -1515,12 +1591,7 @@ class ComposeKeyboardService : InputMethodService(),
             if (spaceAfter) markPunctSpace(ch)
             return
         }
-        val word = composing
-        if (word.isNotEmpty()) {
-            learn(lastCommittedWord, word)
-            lastCommittedWord = word
-        }
-        icCommit(ic, word + text)
+        commitActiveWordWith(ic, text)
         undo = null
         autoSpace = false
         schedulePredictions()
@@ -1625,12 +1696,7 @@ class ComposeKeyboardService : InputMethodService(),
     private fun tryAutoPair(ic: InputConnection, ch: Char): Boolean {
         val close = PAIRS[ch]
         if (close != null) {
-            val word = composing
-            if (word.isNotEmpty()) {
-                learn(lastCommittedWord, word)
-                lastCommittedWord = word
-            }
-            icCommit(ic, "$word$ch$close")
+            commitActiveWordWith(ic, "$ch$close")
             val pos = expSelStart
             if (pos > 0) {
                 ic.setSelection(pos - 1, pos - 1)
@@ -1704,6 +1770,13 @@ class ComposeKeyboardService : InputMethodService(),
 
     private fun commitWithBoundary(ic: InputConnection, suffix: String) {
         if (suffix.isNotBlank()) tokenHasSymbol = true
+        if (telexComposing) {
+            commitActiveWordWith(ic, suffix)
+            undo = null
+            autoSpace = false
+            schedulePredictions()
+            return
+        }
         val word = composing
         if (word.isEmpty()) {
             if (lateCorrect(ic, suffix)) return
@@ -1753,9 +1826,10 @@ class ComposeKeyboardService : InputMethodService(),
         val text = PluginTemplates.expand(template, clipboard = firstTextClip())
         ic.beginBatchEdit()
         if (composing.isNotEmpty()) {
-            ic.finishComposingText()
+            if (telexComposing) clearTelexState() else ic.finishComposingText()
             composing = ""
             composingStart = -1
+            rawComposing = ""
         }
         ic.deleteSurroundingText(t.length, 0)
         ic.commitText("$text ", 1)
@@ -1849,6 +1923,11 @@ class ComposeKeyboardService : InputMethodService(),
         }
         glideWord = false
         if (composing.isNotEmpty()) {
+            if (telexComposing) {
+                applyTelexDiff(ic, telex.backspace())
+                schedulePredictions()
+                return
+            }
             val comp = kb.language.composer
             if (comp != Composer.NONE && rawComposing.isNotEmpty() && composeRaw(comp, rawComposing) == composing) {
                 // стираем последнюю нажатую клавишу: 한 → 하
@@ -1938,7 +2017,10 @@ class ComposeKeyboardService : InputMethodService(),
             schedulePredictions()
             return
         }
-        if (composing.isNotEmpty()) {
+        if (telexComposing) {
+            val word = finalizeTelexBeforeBoundary(ic)
+            if (word.isNotEmpty()) learn(lastCommittedWord, word)
+        } else if (composing.isNotEmpty()) {
             // Enter тоже исправляет последнее слово — как пробел: в чатах сообщение уходит по Enter без пробела в конце
             val fix = runCatching { resolveCorrection(composing) }.getOrNull()
             if (fix != null) {
@@ -2039,7 +2121,13 @@ class ComposeKeyboardService : InputMethodService(),
 
     private fun setLanguage(lang: KeyboardLanguage, syncSubtype: Boolean = true) {
         currentInputConnection?.let { ic ->
-            if (composing.isNotEmpty()) {
+            if (telexComposing) {
+                val word = finalizeTelexBeforeBoundary(ic)
+                if (word.isNotEmpty()) {
+                    learn(lastCommittedWord, word)
+                    lastCommittedWord = word
+                }
+            } else if (composing.isNotEmpty()) {
                 learn(lastCommittedWord, composing)
                 lastCommittedWord = composing
                 ic.finishComposingText()
@@ -2047,6 +2135,7 @@ class ComposeKeyboardService : InputMethodService(),
                 composingStart = -1
             }
         }
+        clearTelexState()
         rawComposing = ""
         undo = null
         if (kb.language == lang) return
@@ -2098,6 +2187,7 @@ class ComposeKeyboardService : InputMethodService(),
         composing = ""
         composingStart = -1
         rawComposing = ""
+        clearTelexState()
         undo = null
         autoSpace = false
         tapWord = null
@@ -2223,6 +2313,11 @@ class ComposeKeyboardService : InputMethodService(),
 
     private fun finishComposing(ic: InputConnection) {
         if (composing.isEmpty()) return
+        if (telexComposing) {
+            val word = finalizeTelexBeforeBoundary(ic)
+            if (word.isNotEmpty()) learn(lastCommittedWord, word)
+            return
+        }
         learn(lastCommittedWord, composing)
         ic.finishComposingText()
         composing = ""
@@ -2262,7 +2357,14 @@ class ComposeKeyboardService : InputMethodService(),
         undo = null
         autoSpace = false
         if (composing.isNotEmpty()) {
-            icCommit(ic, "")
+            if (telexComposing) {
+                icDeleteBefore(ic, composing.length)
+                clearTelexState()
+                composing = ""
+                composingStart = -1
+            } else {
+                icCommit(ic, "")
+            }
             rawComposing = ""
             schedulePredictions()
             return
@@ -2456,9 +2558,21 @@ class ComposeKeyboardService : InputMethodService(),
             // «оставить как есть» — это слово больше не исправлять
             if (chip.isKeepExact && composing.isNotEmpty() && word == composing) WordPredictorEngine.rejectCorrection(kb.language, word)
             if (composing.isEmpty() && kb.shift != ShiftState.OFF) word = word.replaceFirstChar { it.uppercase() }
-            // курсор стоит вплотную к слову (его переставили) — следующее слово не должно к нему приклеиться
-            val glue = composing.isEmpty() && ic.getTextBeforeCursor(1, 0)?.lastOrNull()?.let { isWordLetter(it) || it.isDigit() } == true
-            icCommit(ic, (if (glue) " " else "") + "$word ")
+            if (telexComposing && composing.isNotEmpty()) {
+                val del = composing.length
+                clearTelexState()
+                rawComposing = ""
+                composing = ""
+                composingStart = -1
+                ic.beginBatchEdit()
+                icDeleteBefore(ic, del)
+                icCommit(ic, "$word ")
+                ic.endBatchEdit()
+            } else {
+                // курсор стоит вплотную к слову (его переставили) — следующее слово не должно к нему приклеиться
+                val glue = composing.isEmpty() && ic.getTextBeforeCursor(1, 0)?.lastOrNull()?.let { isWordLetter(it) || it.isDigit() } == true
+                icCommit(ic, (if (glue) " " else "") + "$word ")
+            }
             charBeforeAutoSpace = word.lastOrNull()
             // выбранная подсказка — сигнал сильнее, чем просто набранное слово
             learn(lastCommittedWord, word, if (chip.isKeepExact) WordPredictorEngine.LEARNED_TYPO else 2)
@@ -2480,12 +2594,7 @@ class ComposeKeyboardService : InputMethodService(),
         val ic = currentInputConnection ?: return false
         // набор пиньинем/ромадзи сначала превращается в иероглифы/кану, а не уходит латиницей
         if (Cjk.isCjk(kb.language.composer) && composing.isNotEmpty() && rawComposing.isNotEmpty()) commitCjk(ic, 0, all = true)
-        val word = composing
-        if (word.isNotEmpty()) {
-            learn(lastCommittedWord, word)
-            lastCommittedWord = word
-        }
-        val committed = icCommit(ic, word + text)
+        val committed = commitActiveWordWith(ic, text)
         tokenHasSymbol = true
         undo = null
         autoSpace = false
