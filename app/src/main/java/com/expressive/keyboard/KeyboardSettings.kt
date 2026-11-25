@@ -206,7 +206,6 @@ data class KeyboardSettings(
     // --- фон ---
     val bgImageVersion: Long = 0L,
     val pluginAccessReminder: Boolean = true,
-    val homePins: String = "",
     val bgIsVideo: Boolean = false,
     val bgDim: Float = 0.35f,
     val photoFrame: PhotoFrame = PhotoFrame(),
@@ -568,7 +567,6 @@ object KeyboardPrefs {
             bgTransparency = p.getFloat("bg_transparency", 0f).coerceIn(0f, 1f),
             bgImageVersion = p.getLong("bg_image_version", 0L),
             pluginAccessReminder = p.getBoolean("plugin_access_reminder", true),
-            homePins = p.getString("home_pins", "").orEmpty(),
             bgIsVideo = p.getBoolean("bg_is_video", false),
             bgDim = p.getFloat("bg_dim", 0.35f).coerceIn(0f, 0.9f),
             photoFrame = PhotoFrame(

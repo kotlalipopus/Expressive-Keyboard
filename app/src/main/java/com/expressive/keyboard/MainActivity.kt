@@ -339,7 +339,10 @@ internal fun SettingsPageScaffold(
     page: SettingsPage, settings: KeyboardSettings, onNavigate: (SettingsPage) -> Unit,
     selected: SettingsPage? = null, showBack: Boolean = page != SettingsPage.HOME
 ) {
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val home = page == SettingsPage.HOME
+    // на главной — компактная панель с названием по центру, без большого пустого заголовка
+    val scrollBehavior =
+        if (home) TopAppBarDefaults.pinnedScrollBehavior() else TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val cs = MaterialTheme.colorScheme
     var testText by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     val showTest = page in setOf(SettingsPage.SIZE, SettingsPage.KEYS, SettingsPage.LAYOUT, SettingsPage.LANGUAGES,
@@ -348,15 +351,14 @@ internal fun SettingsPageScaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         containerColor = cs.surfaceContainer,
         topBar = {
-            LargeTopAppBar(
-                title = {
-                    val home = page == SettingsPage.HOME
-                    Text(
-                        tr(page.title), fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        textAlign = if (home) TextAlign.Center else TextAlign.Start,
-                        modifier = if (home) Modifier.fillMaxWidth() else Modifier
-                    )
-                },
+            if (home) {
+                CenterAlignedTopAppBar(
+                    title = { Text(tr(page.title), fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = cs.surfaceContainer, scrolledContainerColor = cs.surfaceContainer),
+                    scrollBehavior = scrollBehavior
+                )
+            } else LargeTopAppBar(
+                title = { Text(tr(page.title), fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     if (showBack) {
                         FilledTonalIconButton(onClick = { onNavigate(page.parent) }, modifier = Modifier.padding(start = 8.dp)) {
@@ -486,18 +488,11 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
     val layoutOwner = PluginRepository.settingsLayoutOwner
     val arranger = PluginRepository.active.firstOrNull { it.id == layoutOwner && it.settingsLayout != null }
     val layout = arranger?.settingsLayout
-    val pins = if (layout == null) remember(settings.homePins) { homePins(settings.homePins) } else emptyList()
-    var selectingPins by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
-    if (selectingPins && layout == null) {
-        androidx.activity.compose.BackHandler { selectingPins = false }
-        HomePinEditor(pins) { selectingPins = false }
-        return
-    }
     val expressive = settings.designStyle == DesignStyle.EXPRESSIVE.id && settings.shapeAmount == ShapeAmount.FULL
     SettingsSection(null) {
         AppLanguageItem(settings)
         val p = SettingsPage.WHATS_NEW
-        if (p !in pins && (layout == null || layout.arrange(listOf(p)).isNotEmpty())) {
+        if (layout == null || layout.arrange(listOf(p)).isNotEmpty()) {
             CategoryTile(p, i++, selected = p == selected, expressive = expressive) { onNavigate(p) }
         }
     }
@@ -520,13 +515,6 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
             ActionItem(Icons.Rounded.Extension, "Вернуть обычный порядок", arranger.name,
                 onClick = { PluginRepository.setSettingsLayoutOwner(context, null) })
         }
-    } else {
-        SettingsSection(if (pins.isEmpty()) null else "Закреплённые разделы") {
-            for (p in pins) {
-                CategoryTile(p, i++, selected = p == selected || p == selected?.parent, expressive = expressive) { onNavigate(p) }
-            }
-            ActionItem(Icons.Rounded.StarBorder, "Выбрать закреплённые разделы", null, onClick = { selectingPins = true })
-        }
     }
     val groups = listOf(
         "Внешний вид" to listOf(SettingsPage.SIZE, SettingsPage.KEYS, SettingsPage.THEMES, SettingsPage.COLORS, SettingsPage.ANIMATIONS),
@@ -535,7 +523,7 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         "Приложение" to listOf(SettingsPage.POWER, SettingsPage.BACKUP, SettingsPage.ABOUT)
     )
     for ((title, defaultPages) in groups) {
-        val pages = layout?.arrange(defaultPages) ?: defaultPages.filterNot { it in pins }
+        val pages = layout?.arrange(defaultPages) ?: defaultPages
         if (pages.isEmpty()) continue
         SettingsSection(title) {
             for (p in pages) {
