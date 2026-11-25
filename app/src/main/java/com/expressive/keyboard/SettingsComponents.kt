@@ -614,15 +614,13 @@ internal fun StylePreview(settings: KeyboardSettings, spec: WavySpec) {
 
 /** Плитка категории на главном экране: иконка в фигуре Expressive своего цвета. */
 @Composable
-internal fun CategoryTile(page: SettingsPage, index: Int, selected: Boolean = false, onClick: () -> Unit) {
+internal fun CategoryTile(page: SettingsPage, index: Int, selected: Boolean, expressive: Boolean, onClick: () -> Unit) {
     val cs = MaterialTheme.colorScheme
     val (bg, fg) = when (index % 3) {
         0 -> cs.primaryContainer to cs.onPrimaryContainer
         1 -> cs.secondaryContainer to cs.onSecondaryContainer
         else -> cs.tertiaryContainer to cs.onTertiaryContainer
     }
-    val prefs = KeyboardPrefs.observe().value
-    val expressive = prefs.designStyle == DesignStyle.EXPRESSIVE.id && prefs.shapeAmount == ShapeAmount.FULL
     val spec = remember(page, expressive) { if (expressive) WavySpec.of(page.shape) else WavySpec.Circle }
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()

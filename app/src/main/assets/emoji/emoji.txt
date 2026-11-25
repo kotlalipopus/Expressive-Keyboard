@@ -10,6 +10,7 @@
 🙂		slightly smiling face	слегка улыбается	face | happy | slightly | smile | smiling | легкая | лицо | радость | смайлик | улыбка
 🙃		upside-down face	вверх тормашками	face | hehe | smile | upside-down | вверх | ногами | перевернутый | смайлик | тормашками | улыбка
 🫠		melting face	тает	disappear | dissolve | embarrassed | face | haha | heat | hot | liquid | lol | melt | melting | sarcasm | sarcastic | грустная | жара | жарко | лол | нежность | печальная | плавится | растаять | таю | улыбка
+🫫		cracking face	трескающееся лицо		-1
 😉		winking face	подмигивает	face | flirt | heartbreaker | sexy | slide | tease | wink | winking | winks | глаз | договорились | ироничная | легкая | окей | подмигивает | улыбка | флирт | хорошо | шутка
 😊		smiling face with smiling eyes	довольно улыбается	blush | eye | eyes | face | glad | satisfied | smile | smiling | глаза | довольный | закрытые | краснеть | легкая | радость | румянец | улыбка | щеки
 😇		smiling face with halo	с нимбом	angel | angelic | angels | blessed | face | fairy | fairytale | fantasy | halo | happy | innocent | peaceful | smile | smiling | spirit | tale | ангел | глаза | добрый | закрытые | легкая | невинная | нимб | улыбка
@@ -84,6 +85,7 @@
 😯		hushed face	неприятный сюрприз	epic | face | hushed | omg | stunned | surprised | whoa | woah | вау | верю | неприятный | ого | омг | сюрприз | удивление
 😲		astonished face	в шоке	astonished | cost | face | no | omg | shocked | totally | way | вау | глаза | изумление | лоб | ого | омг | ох | потрясение | удивление | шок
 😳		flushed face	краснеет	amazed | awkward | crazy | dazed | dead | disbelief | embarrassed | face | flushed | geez | heat | hot | impressed | jeez | what | wow | извини | краснеет | обидел | прости | румянец | смущение | стесняется | стыдно | хотел
+🫪		distorted face	искажённое лицо		-1
 🥺		pleading face	умоляет	begging | big | eyes | face | mercy | not | pleading | please | pretty | puppy | sad | why | большие | глаза | грустно | почему | просить | сжалься | слезы | умолять | щенячьи
 🥹		face holding back tears	еле сдерживает слезы	admiration | aww | back | cry | embarrassed | face | feelings | grateful | gratitude | holding | joy | please | proud | resist | sad | tears | благодарность | восхищение | гордость | плакать | радость | слезы | счастья | умиление
 😦		frowning face with open mouth	в изумлении	caught | face | frown | frowning | guard | mouth | open | scared | scary | surprise | what | wow | изумление | испуг | неприятный | ого | омг | страх | сюрприз | устал
@@ -157,6 +159,7 @@
 💋		kiss mark	след от поцелуя	dating | emotion | heart | kiss | kissing | lips | mark | romance | sexy | губы | любовь | помада | поцелуй | романтика | свидание | целовать | чувства | эмоции
 💯		hundred points	сто баллов	100 | a+ | agree | clearly | definitely | faithful | fleek | full | hundred | keep | perfect | point | score | true | truth | yup | именно | сотка | сотня | сто | сто баллов | сто процентов | сто пудов | точно
 💢		anger symbol	значок «гнев»	anger | angry | comic | mad | symbol | upset | гнев | злость | значок «гнев» | ярость
+🫯		fight cloud	облако драки		-1
 💥		collision	взрыв	bomb | boom | collide | collision | comic | explode | бомба | бум | взрыв | вспышка | искра | столкновение
 💫		dizzy	кружащаяся звезда	comic | dizzy | shining | shooting | star | stars | астероид | головокружение | звезда | звездочка | звезды | метеорит
 💦		sweat droplets	капли пота	comic | drip | droplet | droplets | drops | splashing | squirt | sweat | water | wet | work | workout | брызги | вода | капать | капельки | капли | мокрый | пот | тренировка
@@ -198,6 +201,8 @@
 🫵	🫵🏻 🫵🏼 🫵🏽 🫵🏾 🫵🏿	index pointing at the viewer	указательный палец на себя	at | finger | hand | index | pointing | poke | viewer | you | жест | палец | показать | рука | ты | указательный | указывать
 👍	👍🏻 👍🏼 👍🏽 👍🏾 👍🏿	thumbs up	большой палец вверх	+1 | good | hand | like | thumb | up | yes | вверх | договорились | жест | лайк | нравится | одобрение | отлично | палец | рука | супер | хорошо
 👎	👎🏻 👎🏼 👎🏽 👎🏾 👎🏿	thumbs down	большой палец вниз	-1 | bad | dislike | down | good | hand | no | nope | thumb | thumbs | бу | вниз | недоволен | недовольна | нет | палец | плохо | порицание | рука | фу
+🫹	🫹🏻 🫹🏼 🫹🏽 🫹🏾 🫹🏿	leftwards thumb sign	большой палец влево		-1
+🫺	🫺🏻 🫺🏼 🫺🏽 🫺🏾 🫺🏿	rightwards thumb sign	большой палец вправо		-1
 ✊	✊🏻 ✊🏼 ✊🏽 ✊🏾 ✊🏿	raised fist	поднятый кулак	clenched | fist | hand | punch | raised | solidarity | кулак | пальцы | поднятый кулак | рука | удар
 👊	👊🏻 👊🏼 👊🏽 👊🏾 👊🏿	oncoming fist	кулак	absolutely | agree | boom | bro | bruh | bump | clenched | correct | fist | hand | knuckle | oncoming | pound | punch | rock | ttyl | бокс | боксировать | бро | кулак | кулачок | опасность | рука | удар
 🤛	🤛🏻 🤛🏼 🤛🏽 🤛🏾 🤛🏿	left-facing fist	кулак влево	fist | left-facing | leftwards | влево | кулак | рука
@@ -403,6 +408,7 @@
 🧟‍♂️		man zombie	мужчина-зомби	apocalypse | dead | halloween | horror | man | scary | undead | walking | zombie | живой | живой метрвец | зомби | мертвец | мужчина | мужчина-зомби
 🧟‍♀️		woman zombie	женщина-зомби	apocalypse | dead | halloween | horror | scary | undead | walking | woman | zombie | женщина | женщина-зомби | живой | зомби | мертвец
 🧌		troll	тролль	fairy | fantasy | monster | tale | troll | trolling | монстр | сказка | троллинг | тролль | чудище | чудовище
+🫈		hairy creature	снежный человек		-1
 💆	💆🏻 💆🏼 💆🏽 💆🏾 💆🏿	person getting massage	человеку массируют лицо	face | getting | headache | massage | person | relax | relaxing | salon | soothe | spa | tension | therapy | treatment | голова | лицо | массаж | массаж головы | массаж лица | процедура | салон | спа | человеку массируют лицо
 💆‍♂️	💆🏻‍♂️ 💆🏼‍♂️ 💆🏽‍♂️ 💆🏾‍♂️ 💆🏿‍♂️	man getting massage	мужчине массируют лицо	face | getting | headache | man | massage | relax | relaxing | salon | soothe | spa | tension | therapy | treatment | голова | лицо | массаж | массаж головы | массаж лица | мужчина | мужчине массируют лицо | процедура | салон | спа
 💆‍♀️	💆🏻‍♀️ 💆🏼‍♀️ 💆🏽‍♀️ 💆🏾‍♀️ 💆🏿‍♀️	woman getting massage	женщине массируют лицо	face | getting | headache | massage | relax | relaxing | salon | soothe | spa | tension | therapy | treatment | woman | женщине массируют лицо | массаж | массаж головы | массаж лица | спа
@@ -448,12 +454,13 @@
 🏃‍➡️	🏃🏻‍➡️ 🏃🏼‍➡️ 🏃🏽‍➡️ 🏃🏾‍➡️ 🏃🏿‍➡️	person running: facing right	человек бежит: , направленные вправо	facing | fast | hurry | marathon | move | person | quick | race | racing | right | run | rush | speed | , | бег | бежит | вправо | марафон | направленные | спорт | трусцой | человек
 🏃‍♀️‍➡️	🏃🏻‍♀️‍➡️ 🏃🏼‍♀️‍➡️ 🏃🏽‍♀️‍➡️ 🏃🏾‍♀️‍➡️ 🏃🏿‍♀️‍➡️	woman running: facing right	женщина бежит: , направленные вправо	facing | fast | hurry | marathon | move | quick | race | racing | right | run | rush | speed | woman | , | бег | бежит | вправо | женщина | марафон | направленные | спешу | спорт | трусцой | убегаю
 🏃‍♂️‍➡️	🏃🏻‍♂️‍➡️ 🏃🏼‍♂️‍➡️ 🏃🏽‍♂️‍➡️ 🏃🏾‍♂️‍➡️ 🏃🏿‍♂️‍➡️	man running: facing right	мужчина бежит: , направленные вправо	facing | fast | hurry | man | marathon | move | quick | race | racing | right | run | rush | speed | , | бег | вправо | марафон | мужчина | мужчина бежит | направленные | спорт | трусцой
+🧑‍🩰	🧑🏻‍🩰 🧑🏼‍🩰 🧑🏽‍🩰 🧑🏾‍🩰 🧑🏿‍🩰	ballet dancer	артист балета		-1
 💃	💃🏻 💃🏼 💃🏽 💃🏾 💃🏿	woman dancing	танцующая женщина	dance | dancer | dancing | elegant | festive | flair | flamenco | groove | let’s | salsa | tango | woman | движения | дискотека | женщина | красное платье | красота | танцовщица | танцующая женщина | танцы | человек
 🕺	🕺🏻 🕺🏼 🕺🏽 🕺🏾 🕺🏿	man dancing	танцующий мужчина	dance | dancer | dancing | elegant | festive | flair | flamenco | groove | let’s | man | salsa | tango | движения | красота | мужчина | танец | танцующий мужчина | танцы | человек
 🕴️	🕴🏻 🕴🏼 🕴🏽 🕴🏾 🕴🏿	person in suit levitating	бизнесмен в воздухе	business | levitating | person | suit | бизнес | бизнесмен в воздухе | костюм | полет | человек
-👯		people with bunny ears	люди с ушами кролика	bestie | bff | bunny | counterpart | dancer | double | ear | identical | pair | party | partying | people | soulmate | twin | twinsies | близкие | вечеринка | двое | двойняшки | кордебалет | кролик | парочка | подруги | танец | уши
-👯‍♂️		men with bunny ears	мужчины с ушами кролика	bestie | bff | bunny | counterpart | dancer | double | ear | identical | men | pair | party | partying | people | soulmate | twin | twinsies | вечеринка | кордебалет | кролик | мужчины с ушами кролика | танец | танцор | уши | уши кролика
-👯‍♀️		women with bunny ears	женщины с ушами кролика	bestie | bff | bunny | counterpart | dancer | double | ear | identical | pair | party | partying | people | soulmate | twin | twinsies | women | вечеринка | женщины с ушами кролика | кордебалет | кролик | танец | уши | уши кролика
+👯	👯🏻 👯🏼 👯🏽 👯🏾 👯🏿 🧑🏻‍🐰‍🧑🏼 🧑🏻‍🐰‍🧑🏽 🧑🏻‍🐰‍🧑🏾 🧑🏻‍🐰‍🧑🏿 🧑🏼‍🐰‍🧑🏻 🧑🏼‍🐰‍🧑🏽 🧑🏼‍🐰‍🧑🏾 🧑🏼‍🐰‍🧑🏿 🧑🏽‍🐰‍🧑🏻 🧑🏽‍🐰‍🧑🏼 🧑🏽‍🐰‍🧑🏾 🧑🏽‍🐰‍🧑🏿 🧑🏾‍🐰‍🧑🏻 🧑🏾‍🐰‍🧑🏼 🧑🏾‍🐰‍🧑🏽 🧑🏾‍🐰‍🧑🏿 🧑🏿‍🐰‍🧑🏻 🧑🏿‍🐰‍🧑🏼 🧑🏿‍🐰‍🧑🏽 🧑🏿‍🐰‍🧑🏾	people with bunny ears	люди с ушами кролика	bestie | bff | bunny | counterpart | dancer | double | ear | identical | pair | party | partying | people | soulmate | twin | twinsies | близкие | вечеринка | двое | двойняшки | кордебалет | кролик | парочка | подруги | танец | уши	0
+👯‍♂️	👯🏻‍♂️ 👯🏼‍♂️ 👯🏽‍♂️ 👯🏾‍♂️ 👯🏿‍♂️ 👨🏻‍🐰‍👨🏼 👨🏻‍🐰‍👨🏽 👨🏻‍🐰‍👨🏾 👨🏻‍🐰‍👨🏿 👨🏼‍🐰‍👨🏻 👨🏼‍🐰‍👨🏽 👨🏼‍🐰‍👨🏾 👨🏼‍🐰‍👨🏿 👨🏽‍🐰‍👨🏻 👨🏽‍🐰‍👨🏼 👨🏽‍🐰‍👨🏾 👨🏽‍🐰‍👨🏿 👨🏾‍🐰‍👨🏻 👨🏾‍🐰‍👨🏼 👨🏾‍🐰‍👨🏽 👨🏾‍🐰‍👨🏿 👨🏿‍🐰‍👨🏻 👨🏿‍🐰‍👨🏼 👨🏿‍🐰‍👨🏽 👨🏿‍🐰‍👨🏾	men with bunny ears	мужчины с ушами кролика	bestie | bff | bunny | counterpart | dancer | double | ear | identical | men | pair | party | partying | people | soulmate | twin | twinsies | вечеринка | кордебалет | кролик | мужчины с ушами кролика | танец | танцор | уши | уши кролика	0
+👯‍♀️	👯🏻‍♀️ 👯🏼‍♀️ 👯🏽‍♀️ 👯🏾‍♀️ 👯🏿‍♀️ 👩🏻‍🐰‍👩🏼 👩🏻‍🐰‍👩🏽 👩🏻‍🐰‍👩🏾 👩🏻‍🐰‍👩🏿 👩🏼‍🐰‍👩🏻 👩🏼‍🐰‍👩🏽 👩🏼‍🐰‍👩🏾 👩🏼‍🐰‍👩🏿 👩🏽‍🐰‍👩🏻 👩🏽‍🐰‍👩🏼 👩🏽‍🐰‍👩🏾 👩🏽‍🐰‍👩🏿 👩🏾‍🐰‍👩🏻 👩🏾‍🐰‍👩🏼 👩🏾‍🐰‍👩🏽 👩🏾‍🐰‍👩🏿 👩🏿‍🐰‍👩🏻 👩🏿‍🐰‍👩🏼 👩🏿‍🐰‍👩🏽 👩🏿‍🐰‍👩🏾	women with bunny ears	женщины с ушами кролика	bestie | bff | bunny | counterpart | dancer | double | ear | identical | pair | party | partying | people | soulmate | twin | twinsies | women | вечеринка | женщины с ушами кролика | кордебалет | кролик | танец | уши | уши кролика	0
 🧖	🧖🏻 🧖🏼 🧖🏽 🧖🏾 🧖🏿	person in steamy room	человек в бане	day | luxurious | pamper | person | relax | room | sauna | spa | steam | steambath | unwind | баня | париться | парная | паровая | паром | пропотеть | сауна | хамам
 🧖‍♂️	🧖🏻‍♂️ 🧖🏼‍♂️ 🧖🏽‍♂️ 🧖🏾‍♂️ 🧖🏿‍♂️	man in steamy room	мужчина в бане	day | luxurious | man | pamper | relax | room | sauna | spa | steam | steambath | unwind | мужчина в бане | парная | сауна
 🧖‍♀️	🧖🏻‍♀️ 🧖🏼‍♀️ 🧖🏽‍♀️ 🧖🏾‍♀️ 🧖🏿‍♀️	woman in steamy room	женщина в бане	day | luxurious | pamper | relax | room | sauna | spa | steam | steambath | unwind | woman | женщина в бане | парная | сауна
@@ -491,9 +498,9 @@
 🤸	🤸🏻 🤸🏼 🤸🏽 🤸🏾 🤸🏿	person cartwheeling	акробатический трюк	active | cartwheel | cartwheeling | excited | flip | gymnastics | happy | person | somersault | акробатика | акробатический трюк | активный | вверх ногами | гимнастика | колесо | спорт | счастливый | трюк | человек
 🤸‍♂️	🤸🏻‍♂️ 🤸🏼‍♂️ 🤸🏽‍♂️ 🤸🏾‍♂️ 🤸🏿‍♂️	man cartwheeling	акробат	active | cartwheel | cartwheeling | excited | flip | gymnastics | happy | man | somersault | акробат | акробатика | гимнастика | мужчина | спорт | трюк
 🤸‍♀️	🤸🏻‍♀️ 🤸🏼‍♀️ 🤸🏽‍♀️ 🤸🏾‍♀️ 🤸🏿‍♀️	woman cartwheeling	женщина-акробат	active | cartwheel | cartwheeling | excited | flip | gymnastics | happy | somersault | woman | акробат | акробатика | гимнастика | женщина | спорт | трюк
-🤼		people wrestling	борцы	combat | duel | grapple | people | ring | tournament | wrestle | wrestling | бороться | борцы | борьба | драка | рестлинг | ринг | спаринг | спарринг | спорт | человек
-🤼‍♂️		men wrestling	мужчины-борцы	combat | duel | grapple | men | ring | tournament | wrestle | wrestling | борьба | мужчина | мужчины-борцы | спорт
-🤼‍♀️		women wrestling	женщины-борцы	combat | duel | grapple | ring | tournament | women | wrestle | wrestling | борцы | борчихи | борьба | женщины | спарринг | спорт
+🤼	🤼🏻 🤼🏼 🤼🏽 🤼🏾 🤼🏿 🧑🏻‍🫯‍🧑🏼 🧑🏻‍🫯‍🧑🏽 🧑🏻‍🫯‍🧑🏾 🧑🏻‍🫯‍🧑🏿 🧑🏼‍🫯‍🧑🏻 🧑🏼‍🫯‍🧑🏽 🧑🏼‍🫯‍🧑🏾 🧑🏼‍🫯‍🧑🏿 🧑🏽‍🫯‍🧑🏻 🧑🏽‍🫯‍🧑🏼 🧑🏽‍🫯‍🧑🏾 🧑🏽‍🫯‍🧑🏿 🧑🏾‍🫯‍🧑🏻 🧑🏾‍🫯‍🧑🏼 🧑🏾‍🫯‍🧑🏽 🧑🏾‍🫯‍🧑🏿 🧑🏿‍🫯‍🧑🏻 🧑🏿‍🫯‍🧑🏼 🧑🏿‍🫯‍🧑🏽 🧑🏿‍🫯‍🧑🏾	people wrestling	борцы	combat | duel | grapple | people | ring | tournament | wrestle | wrestling | бороться | борцы | борьба | драка | рестлинг | ринг | спаринг | спарринг | спорт | человек	0
+🤼‍♂️	🤼🏻‍♂️ 🤼🏼‍♂️ 🤼🏽‍♂️ 🤼🏾‍♂️ 🤼🏿‍♂️ 👨🏻‍🫯‍👨🏼 👨🏻‍🫯‍👨🏽 👨🏻‍🫯‍👨🏾 👨🏻‍🫯‍👨🏿 👨🏼‍🫯‍👨🏻 👨🏼‍🫯‍👨🏽 👨🏼‍🫯‍👨🏾 👨🏼‍🫯‍👨🏿 👨🏽‍🫯‍👨🏻 👨🏽‍🫯‍👨🏼 👨🏽‍🫯‍👨🏾 👨🏽‍🫯‍👨🏿 👨🏾‍🫯‍👨🏻 👨🏾‍🫯‍👨🏼 👨🏾‍🫯‍👨🏽 👨🏾‍🫯‍👨🏿 👨🏿‍🫯‍👨🏻 👨🏿‍🫯‍👨🏼 👨🏿‍🫯‍👨🏽 👨🏿‍🫯‍👨🏾	men wrestling	мужчины-борцы	combat | duel | grapple | men | ring | tournament | wrestle | wrestling | борьба | мужчина | мужчины-борцы | спорт	0
+🤼‍♀️	🤼🏻‍♀️ 🤼🏼‍♀️ 🤼🏽‍♀️ 🤼🏾‍♀️ 🤼🏿‍♀️ 👩🏻‍🫯‍👩🏼 👩🏻‍🫯‍👩🏽 👩🏻‍🫯‍👩🏾 👩🏻‍🫯‍👩🏿 👩🏼‍🫯‍👩🏻 👩🏼‍🫯‍👩🏽 👩🏼‍🫯‍👩🏾 👩🏼‍🫯‍👩🏿 👩🏽‍🫯‍👩🏻 👩🏽‍🫯‍👩🏼 👩🏽‍🫯‍👩🏾 👩🏽‍🫯‍👩🏿 👩🏾‍🫯‍👩🏻 👩🏾‍🫯‍👩🏼 👩🏾‍🫯‍👩🏽 👩🏾‍🫯‍👩🏿 👩🏿‍🫯‍👩🏻 👩🏿‍🫯‍👩🏼 👩🏿‍🫯‍👩🏽 👩🏿‍🫯‍👩🏾	women wrestling	женщины-борцы	combat | duel | grapple | ring | tournament | women | wrestle | wrestling | борцы | борчихи | борьба | женщины | спарринг | спорт	0
 🤽	🤽🏻 🤽🏼 🤽🏽 🤽🏾 🤽🏿	person playing water polo	водное поло	person | playing | polo | sport | swimming | water | waterpolo | вода | водное | поло | спорт | человек
 🤽‍♂️	🤽🏻‍♂️ 🤽🏼‍♂️ 🤽🏽‍♂️ 🤽🏾‍♂️ 🤽🏿‍♂️	man playing water polo	мужчина играет в водное поло	man | playing | polo | sport | swimming | water | waterpolo | вода | водное | мужчина | мяч | поло | спорт
 🤽‍♀️	🤽🏻‍♀️ 🤽🏼‍♀️ 🤽🏽‍♀️ 🤽🏾‍♀️ 🤽🏿‍♀️	woman playing water polo	женщина играет в водное поло	playing | polo | sport | swimming | water | waterpolo | woman | вода | водное | женщина | мяч | поло | спорт
@@ -662,6 +669,7 @@
 🐳		spouting whale	кит с фонтанчиком	animal | beach | face | ocean | spouting | whale | брызги | вода | кит | кит с фонтанчиком
 🐋		whale	кит	animal | beach | ocean | whale | животное | кит | океан
 🐬		dolphin	дельфин	animal | beach | dolphin | flipper | ocean | вода | дельфин | море | океан | пляж
+🫍		orca	косатка		-1
 🦭		seal	тюлень	animal | lion | ocean | sea | seal | животное | морской котик | морской лев | нерпа | океан | тюлень
 🐟		fish	рыба	animal | dinner | fish | fishes | fishing | pisces | zodiac | гороскоп | знак зодиака | зодиак | рыба | рыбалка | рыбы
 🐠		tropical fish	тропическая рыба	animal | fish | fishes | tropical | рыба | тропики | тропическая рыба | экзотическая
@@ -678,6 +686,7 @@
 🦪		oyster	устрица	diving | oyster | pearl | жемчуг | жемчужина | нырять | раковина | ракушка | устрица | устричный
 🐌		snail	улитка	animal | escargot | garden | nature | slug | snail | медленно | ползти | раковина | улитка
 🦋		butterfly	бабочка	butterfly | insect | pretty | бабочка | красота | мотылек | насекомое
+🫌		monarch butterfly	бабочка монарх		-1
 🐛		bug	гусеница	animal | bug | garden | insect | гусеница | жук | многоножка | насекомое | сороконожка
 🐜		ant	муравей	animal | ant | garden | insect | муравей | насекомое
 🐝		honeybee	пчела	animal | bee | bumblebee | honey | honeybee | insect | nature | spring | жало | желто-черная | мед | насекомое | природа | пчела
@@ -750,6 +759,7 @@
 🌶️		hot pepper	острый перец	hot | pepper | красный | острый | перец | растение | чили
 🫑		bell pepper	болгарский перец	bell | capsicum | food | pepper | vegetable | болгарский перец | еда | овощ | перец | растение | сладкий
 🥒		cucumber	огурец	cucumber | food | pickle | vegetable | еда | зелень | овощ | огурец | огурчик | соленье
+🫝		pickle	солёный огурец		-1
 🥬		leafy green	зеленый салат	bok | burgers | cabbage | choy | green | kale | leafy | lettuce | salad | ботва | зеленый | капуста | латук | листовой | листья | салат
 🥦		broccoli	брокколи	broccoli | cabbage | wild | брокколи | капуста
 🧄		garlic	чеснок	flavoring | garlic | вкус | головка | готовить | еда | запах | приправа | специя | чеснок | чесночный
@@ -863,6 +873,7 @@
 🧭		compass	компас	compass | direction | magnetic | navigation | orienteering | компас | магнит | навигация | направление | ориентирование | поход | путешествие | путь | света | стороны | турист
 🏔️		snow-capped mountain	гора со снежной шапкой	cold | mountain | snow | snow-capped | вершина | гора | гора со снежной шапкой | снег
 ⛰️		mountain	гора	mountain | вершина | гора | пик
+🛘		landslide	оползень		-1
 🌋		volcano	вулкан	eruption | mountain | nature | volcano | вулкан | извержение вулкана | кратер | лава
 🗻		mount fuji	Фудзияма	fuji | mount | mountain | nature | вулкан | гора | фудзияма
 🏕️		camping	кемпинг	camping | кемпинг | лагерь | палатка | поход
@@ -970,6 +981,7 @@
 🚦		vertical traffic light	вертикальный светофор	drove | intersection | light | signal | stop | stoplight | traffic | vertical | вертикальный светофор | перекресток | свет | светофор
 🛑		stop sign	знак «стоп»	octagonal | sign | stop | восьмиугольник | знак | знак «стоп» | красный знак | остановка | стоп
 🚧		construction	строительные работы	barrier | construction | барьер | заграждение | опасность | преграда | препятствие | строительные работы | строительство | стройка
+🛙		lighthouse	маяк		-1
 ⚓		anchor	якорь	anchor | ship | tool | корабль | якорь
 🛟		ring buoy	спасательный круг	buoy | float | life | lifesaver | preserver | rescue | ring | safety | save | saver | swim | безопасность | круг | надувной | помощь | спасательный круг | спасение
 ⛵		sailboat	парусник	boat | resort | sailboat | sailing | sea | yacht | кораблик | лодка | отдых | парус | парусник | яхта
@@ -1069,6 +1081,7 @@
 ☃️		snowman	снеговик под снегом	cold | man | snow | snowman | снег | снеговик | снеговик под снегом | фигура | человек | человечек
 ⛄		snowman without snow	снеговик	cold | man | snow | snowman | снег | снеговик | снеговичок | снежная баба | снежная скульптура | фигура | человек | человечек
 ☄️		comet	комета	comet | space | комета | космос | метеор | метеорит | метеоритный дождь | небо | планета
+🪋		meteor	метеор		-1
 🔥		fire	огонь	af | burn | fire | flame | hot | lit | litaf | tool | костер | огонь | очаг | пламя
 💧		droplet	капля	cold | comic | drop | droplet | nature | sad | sweat | tear | water | weather | вода | дождь | капелька | капля | пот | слеза
 🌊		water wave	волна	nature | ocean | surf | surfer | surfing | water | wave | вода | волна | море | морская пена | океан | серфинг
@@ -1229,6 +1242,7 @@
 🎸		guitar	гитара	guitar | instrument | music | strat | гитара | гитарист | инструмент | концерт | музыка | музыкальный | рок
 🎹		musical keyboard	клавишные	instrument | keyboard | music | musical | piano | инструмент | клавиши | клавишные | музыка | музыкальный инструмент | пианино | рояль | синтезатор
 🎺		trumpet	труба	instrument | music | trumpet | духовой инструмент | инструмент | музыка | музыкальный инструмент | труба
+🪊		trombone	тромбон		-1
 🎻		violin	скрипка	instrument | music | violin | инструмент | музыка | музыкальный инструмент | скрипка | смычковый | смычок | струнный инструмент | струны
 🪕		banjo	банджо	banjo | music | stringed | банджо | гитара | играть | инструмент | музыка | струнный
 🥁		drum	барабан	drum | drumsticks | music | барабан | инструмент | музыка | музыкальный инструмент | палочки | ударные
@@ -1290,6 +1304,7 @@
 🔖		bookmark	закладка	bookmark | mark | закладка | книга | книжка | отметка
 🏷️		label	бирка	label | tag | бирка | сведения | этикетка | ярлык
 💰		money bag	мешок денег	bag | bank | bet | billion | cash | cost | dollar | gold | million | money | moneybag | paid | paying | pot | rich | win | банкноты | деньги | доллар | доллары | мешок | мешок денег | миллион | много
+🪎		treasure chest	сундук с сокровищами		-1
 🪙		coin	монета	coin | dollar | euro | gold | metal | money | rich | silver | treasure | деньги | доллар | евро | золото | казна | металл | монета | рубль | серебро
 💴		yen banknote	банкнота иены	bank | banknote | bill | currency | money | note | yen | банкнота | банкнота иены | валюта | деньги | иена | япония
 💵		dollar banknote	банкнота доллара	bank | banknote | bill | currency | dollar | money | note | австралия | бакс | банкнота | банкнота доллара | валюта | деньги | доллар | канада | купюра | сша
@@ -1319,6 +1334,7 @@
 🖌️		paintbrush	кисточка	paintbrush | painting | кисточка | кисть | рисование | щетина
 🖍️		crayon	восковой мелок	crayon | восковой мелок | выделение | карандаш | красный | маркер | мелки | фломастер | цвет
 📝		memo	заметка	communication | media | memo | notes | pencil | заметка | запись | карандаш | писать | письмо
+🪌		eraser	ластик		-1
 💼		briefcase	портфель	briefcase | office | бумаги | дипломат | документы | офис | портфель | работа
 📁		file folder	папка	file | folder | бумаги | документы | папка | файл
 📂		open file folder	открытая папка	file | folder | open | бумаги | документы | открытая | папка | файл
@@ -1348,6 +1364,7 @@
 🔐		locked with key	закрытый замок с ключом	bike | closed | key | lock | locked | secure | безопасность | закрытый | закрытый замок с ключом | замок | ключ
 🔑		key	ключ	key | keys | lock | major | password | unlock | закрыть | ключ | открыть | пароль
 🗝️		old key	старинный ключ	clue | key | lock | old | винтажный | замок | ключ | старинный | старый
+🪍		net with handle	сачок		-1
 🔨		hammer	молоток	hammer | home | improvement | repairs | tool | забить | инструмент | молот | молоток | ремонт | удар
 🪓		axe	топор	ax | axe | chop | hatchet | split | wood | дрова | дровосек | рубить | рубка | топор
 ⛏️		pick	кирка	hammer | mining | pick | tool | добыча | инструмент | кирка | шахта

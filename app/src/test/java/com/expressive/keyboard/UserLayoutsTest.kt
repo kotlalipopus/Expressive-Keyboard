@@ -15,7 +15,9 @@ class UserLayoutsTest {
             assertEquals("8", rows[2].keys[1].label)
             assertEquals("0", rows[3].keys[1].label)
             assertEquals(KeyType.SPACE, rows[3].keys[3].type)
-            assertTrue(rows.flatMap { it.keys }.none { it.label in setOf(".", ",") || it.customVariants.orEmpty().any { v -> v == "." || v == "," } })
+            val sideKey = rows[2].keys[3]
+            assertEquals(if (phone) "*" else ".", sideKey.text(false))
+            assertEquals(if (phone) null else listOf(","), sideKey.customVariants)
         }
     }
 

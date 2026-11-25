@@ -46,6 +46,7 @@ import kotlin.math.cos
 import kotlin.math.log10
 import kotlin.math.min
 import kotlin.math.sin
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 // ============================================================================
@@ -744,6 +745,18 @@ internal fun DrawScope.drawShaderItem(it: OverlayItem.Shader) {
 
 /** Наклон телефона и вращение. Датчики работают, только пока клавиатура на экране и они кому-то нужны. */
 object ModSensors : SensorEventListener {
+    var dynamicShadows = false
+        private set
+    var shadowOffset by mutableStateOf(Offset.Zero)
+        private set
+
+    fun updateShadowSetting(enabled: Boolean): Boolean {
+        if (dynamicShadows == enabled) return false
+        dynamicShadows = enabled
+        if (!enabled) shadowOffset = Offset.Zero
+        return true
+    }
+
     @Volatile var tiltX = 0f
         private set
     @Volatile var tiltY = 0f
@@ -761,30 +774,49 @@ object ModSensors : SensorEventListener {
 
     private var wantTilt = false
     private var wantGyro = false
+    private var wantShake = false
+    private val shakeDetector = ShakeDetector()
+    private var tiltType = -1
 
-    fun sync(context: Context, tilt: Boolean, gyro: Boolean) {
-        if (tilt == wantTilt && gyro == wantGyro) return
+    fun sync(context: Context, tilt: Boolean, gyro: Boolean, shake: Boolean) {
+        if (tilt == wantTilt && gyro == wantGyro && shake == wantShake) return
         wantTilt = tilt
         wantGyro = gyro
+        if (wantShake != shake) shakeDetector.reset()
+        wantShake = shake
         val sm = manager ?: context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager ?: return
         sm.unregisterListener(this)
         manager = null
+        tiltType = -1
         if (tilt) {
             val s = sm.getDefaultSensor(Sensor.TYPE_GRAVITY) ?: sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-            if (s != null && sm.registerListener(this, s, SensorManager.SENSOR_DELAY_GAME)) manager = sm
+            if (s != null && sm.registerListener(this, s, SensorManager.SENSOR_DELAY_GAME)) {
+                manager = sm
+                tiltType = s.type
+            }
         } else {
             tiltX = 0f
             tiltY = 0f
             tiltZ = 0f
+            shadowOffset = Offset.Zero
         }
         if (gyro) {
             val s = sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
             if (s != null && sm.registerListener(this, s, SensorManager.SENSOR_DELAY_GAME)) manager = sm
         }
+        if (shake && tiltType != Sensor.TYPE_ACCELEROMETER) {
+            val sensor = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+            if (sensor != null && sm.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME)) manager = sm
+        }
     }
 
     override fun onSensorChanged(e: SensorEvent) {
         val now = SystemClock.uptimeMillis()
+        if (wantShake && e.sensor.type == Sensor.TYPE_ACCELEROMETER && !ScriptHost.privateMode) {
+            shakeDetector.feed(e.values[0], e.values[1], e.values[2], now)?.let {
+                ScriptHost.emit("shake", mapOf("strength" to it))
+            }
+        }
         when (e.sensor.type) {
             Sensor.TYPE_GYROSCOPE -> {
                 if (now - lastGyro < 16L) return
@@ -792,6 +824,7 @@ object ModSensors : SensorEventListener {
                 ScriptHost.emit("gyro", mapOf("x" to e.values[0], "y" to e.values[1], "z" to e.values[2]))
             }
             else -> {
+                if (!wantTilt || e.sensor.type != tiltType) return
                 // сглаживание: акселерометр без него дрожит
                 val k = if (e.sensor.type == Sensor.TYPE_GRAVITY) 1f else 0.15f
                 val g = SensorManager.GRAVITY_EARTH
@@ -800,6 +833,10 @@ object ModSensors : SensorEventListener {
                 tiltZ += (e.values[2] / g - tiltZ) * k
                 if (now - lastTilt < 16L) return
                 lastTilt = now
+                if (dynamicShadows) shadowOffset = Offset(
+                    (tiltX.coerceIn(-1f, 1f) * 8f).roundToInt() / 2f,
+                    ((tiltY - 1f).coerceIn(-1f, 1f) * 6f).roundToInt() / 2f
+                )
                 ScriptHost.emit("tilt", mapOf("x" to tiltX, "y" to tiltY, "z" to tiltZ))
             }
         }

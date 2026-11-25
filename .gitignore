@@ -19,3 +19,8 @@ CLAUDE.md
 CLAUDE.local.md
 AGENTS.md
 .claude/
+
+# отрендеренные видео и кадры для публикаций — генерируются tools/video
+tools/video/out-*.mp4
+tools/video/chk*.png
+tools/video/render.log

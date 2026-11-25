@@ -1,5 +1,9 @@
 package com.expressive.keyboard
 
+import android.content.Context
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
@@ -25,7 +29,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.roundToInt
@@ -84,6 +90,8 @@ object Anims {
         PressAnim("squish", "Расплющивание", 1.12f, 0.82f, lift = 2f, damping = 0.5f, stiffness = 1000f),
         PressAnim("tilt", "Наклон", 0.95f, 0.95f, rotate = -6f, damping = 0.55f, stiffness = 1000f),
         PressAnim("fade", "Затухание", 0.97f, 0.97f, alpha = 0.5f, damping = 1f, stiffness = 1200f),
+        PressAnim("twist", "Вихрь", 0.87f, 0.87f, lift = -3f, rotate = 16f, damping = 0.56f, stiffness = 1250f),
+        PressAnim("stretch", "Растяжение", 0.83f, 1.19f, lift = -2f, damping = 0.48f, stiffness = 1150f),
         PressAnim("none", "Без анимации", 1f, 1f, damping = 1f, stiffness = 1500f)
     )
 
@@ -152,6 +160,36 @@ object Anims {
         }
     }
 
+    fun exportCustom(settings: KeyboardSettings): String = JSONObject()
+        .put("format", "expressive-keyboard-animations")
+        .put("version", 1)
+        .put("animations", JSONArray(custom(settings).map { it.toJson() }))
+        .toString(2)
+
+    fun importCustom(context: Context, json: String): Int {
+        val text = json.removePrefix("\uFEFF").trim()
+        val entries = if (text.startsWith("[")) JSONArray(text) else {
+            val document = JSONObject(text)
+            if (document.has("animations")) document.getJSONArray("animations") else JSONArray().put(document)
+        }
+        require(entries.length() in 1..100) { "Expected 1–100 animations" }
+        val existing = custom(KeyboardPrefs.current(context)).associateByTo(linkedMapOf()) { it.id }
+        val reserved = presets.mapTo(hashSetOf("THEME")) { it.id }
+        val imported = List(entries.length()) { index ->
+            val entry = entries.getJSONObject(index)
+            require(listOf("sx", "sy", "lift", "rot", "alpha").any(entry::has)) { "Invalid animation" }
+            val animation = PressAnim.fromJson(entry)
+            require(listOf(animation.scaleX, animation.scaleY, animation.lift, animation.rotate,
+                animation.alpha, animation.damping, animation.stiffness).all(Float::isFinite)) { "Invalid animation values" }
+            val id = animation.id.takeIf { it.isNotBlank() && it.length <= 128 && it !in reserved }
+                ?: "custom.${java.util.UUID.randomUUID()}"
+            animation.copy(id = id, title = animation.title.take(24).ifBlank { tr("Моя анимация") })
+        }
+        imported.forEach { existing[it.id] = it }
+        KeyboardPrefs.edit(context) { putString("custom_anims", JSONArray(existing.values.map { it.toJson() }).toString()) }
+        return imported.size
+    }
+
     /** a — прогресс нажатия (может «перелетать» за 1 и уходить ниже 0 у упругих анимаций). */
     fun apply(scope: androidx.compose.ui.graphics.GraphicsLayerScope, anim: PressAnim, a: Float, strength: Float) {
         val k = a * strength
@@ -213,8 +251,40 @@ internal fun AnimSample(anim: PressAnim, speed: Float, strength: Float, selected
 @Composable
 internal fun AnimationsPage(settings: KeyboardSettings) {
     val context = LocalContext.current
+    val fileScope = rememberCoroutineScope()
+    val importAnimations = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) fileScope.launch {
+            val result = runCatching {
+                val json = withContext(Dispatchers.IO) {
+                    requireNotNull(context.contentResolver.openInputStream(uri)).bufferedReader().use { reader ->
+                        val buffer = CharArray(8192)
+                        buildString {
+                            while (true) {
+                                val count = reader.read(buffer)
+                                if (count < 0) break
+                                require(length + count <= 1_048_576) { "Animation file is too large" }
+                                appendRange(buffer, 0, count)
+                            }
+                        }
+                    }
+                }
+                Anims.importCustom(context, json)
+            }
+            result.onSuccess { Toast.makeText(context, tr("Импортировано анимаций: {0}", it), Toast.LENGTH_SHORT).show() }
+                .onFailure { Toast.makeText(context, tr("Ошибка: {0}", it.message), Toast.LENGTH_LONG).show() }
+        }
+    }
+    val exportAnimations = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) fileScope.launch {
+            val json = Anims.exportCustom(KeyboardPrefs.current(context))
+            val saved = withContext(Dispatchers.IO) {
+                runCatching { requireNotNull(context.contentResolver.openOutputStream(uri)).bufferedWriter().use { it.write(json) } }.isSuccess
+            }
+            Toast.makeText(context, tr(if (saved) "Файл сохранён" else "Не удалось сохранить"), Toast.LENGTH_SHORT).show()
+        }
+    }
     var editing by remember { mutableStateOf<PressAnim?>(null) }
-    val speed = settings.animSpeed
+    val speed = settings.pressAnimSpeed
     InfoCard(Icons.Rounded.Animation, "Нажмите на любую клавишу-образец, чтобы увидеть анимацию. «Как в теме» — у каждой темы своя анимация нажатия.")
     SettingsSection("Нажатие клавиши") {
         GroupItem {
@@ -240,13 +310,19 @@ internal fun AnimationsPage(settings: KeyboardSettings) {
             onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("press_animation", if (v < 0.05f) 0f else v) } }
         )
         SliderItem(
-            icon = Icons.Rounded.Speed, title = "Скорость анимаций",
-            value = settings.animSpeed, range = 0.5f..2f,
+            icon = Icons.Rounded.Speed, title = "Скорость нажатия клавиш",
+            value = settings.pressAnimSpeed, range = 0.5f..2f,
             format = { String.format("×%.1f", it) },
-            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("anim_speed", v) } }
+            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("press_anim_speed", v) } }
         )
     }
     SettingsSection("Свои анимации") {
+        ActionItem(Icons.Rounded.FileOpen, "Импорт анимаций", null,
+            onClick = { importAnimations.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) })
+        if (Anims.custom(settings).isNotEmpty()) {
+            ActionItem(Icons.Rounded.Download, "Экспорт анимаций", null,
+                onClick = { exportAnimations.launch("expressive-animations.json") })
+        }
         Anims.custom(settings).forEach { anim ->
             ActionItem(Icons.Rounded.AutoAwesome, anim.title, animSummary(anim), onClick = { editing = anim }, trailing = {
                 IconButton(onClick = { Anims.saveCustom(context, settings, null, anim.id) }) {
@@ -266,15 +342,37 @@ internal fun AnimationsPage(settings: KeyboardSettings) {
         ) { v -> KeyboardPrefs.edit(context) { putString("anim_popup", v) } }
     }
     SettingsSection("Панели") {
+        SliderItem(
+            icon = Icons.Rounded.Speed, title = "Скорость переходов панелей",
+            value = settings.panelAnimSpeed, range = 0.5f..2f,
+            format = { String.format("×%.1f", it) },
+            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("panel_anim_speed", v) } }
+        )
+        val power = context.getSystemService(android.os.PowerManager::class.java)
+        val hiddenByPowerSaving = settings.panelAnimations &&
+            !settings.forPower(power?.isPowerSaveMode == true).panelAnimations
         ChoiceItem(
-            Icons.Rounded.Layers, "Переход между клавиатурой, эмодзи и панелями", null,
-            listOf("SCALE" to "Увеличение", "SLIDE" to "Сдвиг", "FADE" to "Проявление", "NONE" to "Без анимации"),
+            Icons.Rounded.Layers, "Переход между буквами, символами и панелями", null,
+            listOf(
+                "CENTER" to "Из центра", "SPLIT" to "Разлёт", "FOLD" to "Переворот",
+                "WAVE" to "Волна по клавишам", "WAVE_SCALE" to "Волна с увеличением",
+                "CASCADE" to "Каскад рядов", "SWEEP" to "Ряды в сторону",
+                "SCALE" to "Увеличение", "SLIDE" to "Сдвиг", "FADE" to "Проявление", "NONE" to "Без анимации"
+            ),
             if (settings.panelAnimations) settings.animPanel else "NONE"
         ) { v ->
             KeyboardPrefs.edit(context) {
                 putString("anim_panel", v)
                 putBoolean("panel_animations", v != "NONE")
             }
+        }
+        if (hiddenByPowerSaving) {
+            ActionItem(
+                Icons.Rounded.Animation,
+                "Включить переходы в энергосбережении",
+                "Энергосбережение отключило анимацию панелей",
+                onClick = { KeyboardPrefs.edit(context) { putBoolean("eco_panels", false) } }
+            )
         }
     }
     editing?.let { a -> AnimEditorDialog(a, settings, onDismiss = { editing = null }) { Anims.saveCustom(context, settings, it); editing = null } }
@@ -296,7 +394,7 @@ private fun AnimEditorDialog(initial: PressAnim, settings: KeyboardSettings, onD
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    AnimSample(a, settings.animSpeed, 1f, true, "Нажмите", null)
+                    AnimSample(a, settings.pressAnimSpeed, 1f, true, "Нажмите", null)
                 }
                 OutlinedTextField(
                     value = a.title, onValueChange = { a = a.copy(title = it.take(24)) }, singleLine = true,

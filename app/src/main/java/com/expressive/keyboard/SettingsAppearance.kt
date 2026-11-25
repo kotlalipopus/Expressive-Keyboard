@@ -365,6 +365,9 @@ internal fun ColorsPage(settings: KeyboardSettings) {
     // система может запретить размытие окон: экономия заряда, «Уменьшить прозрачность», слабая видеокарта
     val blurAllowed = rememberWindowBlurSupported()
     SettingsSection("Размытие") {
+        ToggleItem(Icons.Rounded.LightMode, "Тени реагируют на наклон", "Для тем с тенями на клавишах", settings.dynamicShadows) {
+            KeyboardPrefs.edit(context) { putBoolean("dynamic_shadows", it) }
+        }
         ChoiceItem(
             Icons.Rounded.BlurOn, "Размытие под клавиатурой",
             when {
@@ -440,7 +443,12 @@ internal fun ColorsPage(settings: KeyboardSettings) {
                     format = { "${(it * 100).roundToInt()}%" },
                     onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("bg_dim", v) } }
                 )
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (!video) {
+                    ToggleItem(Icons.Rounded.BlurOn, "Статическое размытие фото", null, settings.staticPhotoBlur) {
+                        KeyboardPrefs.edit(context) { putBoolean("static_photo_blur", it) }
+                    }
+                }
+                if (!video && (settings.staticPhotoBlur || Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)) {
                     SliderItem(
                         icon = Icons.Rounded.BlurOn, title = "Размытие",
                         value = settings.bgBlurDp, range = 0f..24f,

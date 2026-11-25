@@ -144,16 +144,25 @@ internal fun PluginsPage() {
     val cs = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
     val plugins = PluginRepository.plugins
+    val appSettings by KeyboardPrefs.observe()
     val errors = PluginRepository.errors
     var expanded by remember { mutableStateOf<String?>(null) }
     var confirmDelete by remember { mutableStateOf<KeyboardPlugin?>(null) }
     var pendingNetwork by remember { mutableStateOf<KeyboardPlugin?>(null) }
+    var linkDialog by remember { mutableStateOf(false) }
+    var url by remember { mutableStateOf("") }
+    var downloading by remember { mutableStateOf(false) }
+    var linkError by remember { mutableStateOf(false) }
+    var linkPreview by remember { mutableStateOf<Pair<String, KeyboardPlugin>?>(null) }
+    var previewUrl by remember { mutableStateOf("") }
+    var checkingLinks by remember { mutableStateOf(false) }
+    var linkRevision by remember { mutableIntStateOf(0) }
 
     fun onImported(r: Result<KeyboardPlugin>) {
         r.onSuccess { p ->
             Toast.makeText(context, tr("Плагин «{0}» установлен", tr(p.name)), Toast.LENGTH_SHORT).show()
             expanded = p.id
-            if (p.usesNetwork || p.permissions.any { it in setOf("read_text", "clipboard", "launch", "ai", "sensors", "microphone", "app_info") }) pendingNetwork = p
+            if (p.usesNetwork || p.permissions.any { it in setOf("read_text", "clipboard", "launch", "ai", "sensors", "microphone", "app_info", "media", "screen") }) pendingNetwork = p
         }.onFailure { Toast.makeText(context, tr("Ошибка: {0}", it.message), Toast.LENGTH_LONG).show() }
     }
     val modExampleLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/javascript")) { uri: Uri? ->
@@ -191,6 +200,40 @@ internal fun PluginsPage() {
         ActionItem(Icons.Rounded.FileOpen, "Импорт из файла", ".js (мод), .zip (мод с картинками) или .json", onClick = {
             importLauncher.launch(arrayOf("application/json", "application/javascript", "text/javascript", "application/zip", "text/plain", "application/octet-stream", "*/*"))
         })
+        ActionItem(Icons.Rounded.Link, "Импорт по ссылке", "HTTPS-ссылка на файл плагина", onClick = {
+            linkError = false
+            linkDialog = true
+        })
+        val linked = remember(plugins, linkRevision) {
+            plugins.mapNotNull { p -> PluginRepository.linkSource(context, p.id)?.let { p to it } }
+        }
+        if (linked.isNotEmpty()) {
+            ActionItem(Icons.Rounded.Refresh, if (checkingLinks) "Проверяем обновления…" else "Проверить обновления плагинов", null,
+                onClick = {
+                    if (!checkingLinks) scope.launch {
+                        checkingLinks = true
+                        var failed = false
+                        try {
+                            val update = withContext(Dispatchers.IO) {
+                                linked.firstNotNullOfOrNull { (installed, source) ->
+                                    runCatching { PluginRepository.previewLink(source) }.onFailure { failed = true }
+                                        .getOrNull()?.takeIf { (_, plugin) ->
+                                            plugin.id == installed.id && PluginLink.newer(plugin.version, installed.version)
+                                        }?.let { source to it }
+                                }
+                            }
+                            if (update != null) {
+                                previewUrl = update.first
+                                linkPreview = update.second
+                            } else {
+                                Toast.makeText(context, tr(if (failed) "Не удалось проверить все обновления" else "Обновлений плагинов нет"), Toast.LENGTH_SHORT).show()
+                            }
+                        } finally {
+                            checkingLinks = false
+                        }
+                    }
+                })
+        }
         ActionItem(Icons.Rounded.Code, "Сохранить пример мода (.js)", "Своя панель, кнопка, реакция на слова и хранилище", onClick = {
             modExampleLauncher.launch("my-mod.js")
         })
@@ -219,6 +262,12 @@ internal fun PluginsPage() {
     val user = plugins.filter { !it.builtIn }
     val builtIn = plugins.filter { it.builtIn }
     if (user.isNotEmpty()) {
+        SettingsSection("Доступ модов") {
+            ToggleItem(Icons.Rounded.Security, "Напоминать о доступе модов", "Показывать индикатор и периодическое напоминание",
+                appSettings.pluginAccessReminder) {
+                KeyboardPrefs.edit(context) { putBoolean("plugin_access_reminder", it) }
+            }
+        }
         SettingsSection("Мои плагины") {
             user.forEach { p ->
                 PluginCard(p, expanded == p.id, onExpand = { expanded = if (expanded == p.id) null else p.id }, onDelete = { confirmDelete = p })
@@ -229,6 +278,59 @@ internal fun PluginsPage() {
         builtIn.forEach { p ->
             PluginCard(p, expanded == p.id, onExpand = { expanded = if (expanded == p.id) null else p.id }, onDelete = null)
         }
+    }
+
+    if (linkDialog) AlertDialog(
+        onDismissRequest = { if (!downloading) linkDialog = false },
+        title = { Text(tr("Импорт по ссылке")) },
+        text = {
+            OutlinedTextField(url, {
+                url = it
+                linkError = false
+            }, label = { Text(tr("HTTPS-ссылка на файл плагина")) }, enabled = !downloading, singleLine = true,
+                isError = linkError, supportingText = if (linkError) {
+                    { Text(tr("Не удалось загрузить плагин по ссылке")) }
+                } else null)
+        },
+        confirmButton = {
+            Button(enabled = !downloading && url.isNotBlank(), onClick = {
+                scope.launch {
+                    downloading = true
+                    val requested = url
+                    try {
+                        val result = withContext(Dispatchers.IO) { runCatching { PluginRepository.previewLink(requested) } }
+                        result.onSuccess {
+                            linkDialog = false
+                            previewUrl = requested
+                            linkPreview = it
+                        }.onFailure { linkError = true }
+                    } finally {
+                        downloading = false
+                    }
+                }
+            }) { Text(tr(if (downloading) "Загрузка…" else "Загрузить")) }
+        },
+        dismissButton = { TextButton(enabled = !downloading, onClick = { linkDialog = false }) { Text(tr("Отмена")) } }
+    )
+    linkPreview?.let { (json, plugin) ->
+        AlertDialog(
+            onDismissRequest = { linkPreview = null },
+            title = { Text(tr("Установить «{0}»?", plugin.name)) },
+            text = { Text(listOf(plugin.id, plugin.version, plugin.author, plugin.permissions.joinToString(", "))
+                .filter(String::isNotBlank).joinToString("\n")) },
+            confirmButton = { Button(onClick = {
+                linkPreview = null
+                val source = previewUrl
+                scope.launch {
+                    val installed = withContext(Dispatchers.IO) {
+                        PluginRepository.importText(context, json).onSuccess { PluginRepository.setLinkSource(context, it.id, source) }
+                    }
+                    if (installed.isSuccess) linkRevision++
+                    onImported(installed)
+                }
+            }) { Text(tr("Установить")) } },
+            dismissButton = { TextButton(onClick = { linkPreview = null }) { Text(tr("Отмена")) } }
+        )
     }
 
     confirmDelete?.let { p ->
@@ -261,6 +363,8 @@ internal fun PluginsPage() {
                         if ("sensors" in p.permissions) add("• " + tr("видеть наклон и движение телефона, пока открыта клавиатура"))
                         if ("microphone" in p.permissions) add("• " + tr("слышать громкость и частоты с микрофона, пока открыта клавиатура (сам звук мод не получает)"))
                         if ("app_info" in p.permissions) add("• " + tr("знать, в каком приложении вы печатаете"))
+                        if ("media" in p.permissions) add("• " + tr("видеть текущий трек и управлять воспроизведением"))
+                        if ("screen" in p.permissions) add("• " + tr("открывать отдельный экран поверх приложения"))
                         if ("network" in p.permissions) add(
                             "• " + tr("выходить в интернет") + p.actions.filter { it.type == PluginActionType.HTTP }
                                 .joinToString("") { "\n   ${tr(it.title)}: ${Uri.parse(it.url).host}" }
@@ -285,6 +389,22 @@ internal fun PluginCard(p: KeyboardPlugin, expanded: Boolean, onExpand: () -> Un
     val context = LocalContext.current
     val cs = MaterialTheme.colorScheme
     val settings by KeyboardPrefs.observe()
+    val scope = rememberCoroutineScope()
+    fun export(uri: Uri, javascript: Boolean) {
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { PluginRepository.exportTo(context, p, uri, javascript) }
+            Toast.makeText(context, tr(if (result.isSuccess) "Файл сохранён" else "Не удалось сохранить"), Toast.LENGTH_SHORT).show()
+        }
+    }
+    val exportJson = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) export(uri, javascript = false)
+    }
+    val exportZip = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        if (uri != null) export(uri, false)
+    }
+    val exportScript = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/javascript")) { uri ->
+        if (uri != null) export(uri, javascript = true)
+    }
     val enabled = PluginRepository.isEnabled(p.id) && p.id !in PluginRepository.disabled
     val spec = remember(p.id, settings.shapeAmount) {
         val presets = ExpressiveShapePreset.decorative
@@ -336,11 +456,39 @@ internal fun PluginCard(p: KeyboardPlugin, expanded: Boolean, onExpand: () -> Un
                                     "sensors" -> tr("датчики движения")
                                     "microphone" -> tr("громкость микрофона")
                                     "app_info" -> tr("видит приложение")
+                                    "media" -> tr("медиасессии")
+                                    "screen" -> tr("экран мода")
+                                    "settings_layout" -> tr("порядок разделов настроек")
+                                    "toolbar_layout" -> tr("порядок кнопок панели")
                                     else -> tr("интернет")
                                 }
                             },
                             style = MaterialTheme.typography.bodySmall, color = cs.tertiary
                         )
+                    }
+                    if ("media" in p.permissions) MediaPermissionControls(p)
+                    if (p.display != null && "screen" in p.permissions) {
+                        var allowed by remember(p) { mutableStateOf(ModScreenGrant.has(context, p.id)) }
+                        ToggleItem(Icons.Rounded.OpenInFull, "Разрешить экран мода", null, allowed) {
+                            ModScreenGrant.set(context, p.id, it)
+                            allowed = it
+                        }
+                    }
+                    if (p.settingsLayout != null) {
+                        val selected = PluginRepository.settingsLayoutOwner == p.id
+                        OutlinedButton(enabled = enabled, onClick = {
+                            PluginRepository.setSettingsLayoutOwner(context, p.id.takeUnless { selected })
+                        }) {
+                            Text(tr(if (selected) "Вернуть обычный порядок" else "Применить порядок разделов"))
+                        }
+                    }
+                    if (p.toolbarLayout != null) {
+                        val selected = PluginRepository.toolbarLayoutOwner == p.id
+                        OutlinedButton(enabled = enabled, onClick = {
+                            PluginRepository.setToolbarLayoutOwner(context, p.id.takeUnless { selected })
+                        }) {
+                            Text(tr(if (selected) "Вернуть обычный порядок панели" else "Применить порядок кнопок панели"))
+                        }
                     }
                     if (p.config.isNotEmpty()) {
                         Text(tr("Настройки мода"), style = MaterialTheme.typography.labelLarge, color = cs.primary)
@@ -384,6 +532,16 @@ internal fun PluginCard(p: KeyboardPlugin, expanded: Boolean, onExpand: () -> Un
                     }
                     val skinOn = p.skin != null && settings.skinPlugin == p.id
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (!p.builtIn) {
+                            if (p.files.values.any { it.startsWith(PluginArchive.PREFIX) }) {
+                                OutlinedButton(onClick = { exportZip.launch("${p.id}.zip") }) { Text(tr("Экспорт ZIP")) }
+                            } else {
+                                OutlinedButton(onClick = { exportJson.launch("${p.id}.json") }) { Text(tr("Экспорт JSON")) }
+                            }
+                            if (p.script != null && p.files.isEmpty()) {
+                                OutlinedButton(onClick = { exportScript.launch("${p.id}.js") }) { Text(tr("Экспорт скрипта")) }
+                            }
+                        }
                         if (p.hasLook && !skinOn) {
                             FilledTonalButton(onClick = {
                                 if (!enabled) PluginRepository.setEnabled(context, p.id, true)
@@ -413,6 +571,36 @@ internal fun PluginCard(p: KeyboardPlugin, expanded: Boolean, onExpand: () -> Un
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun MediaPermissionControls(plugin: KeyboardPlugin) {
+    val context = LocalContext.current
+    var granted by remember(plugin) { mutableStateOf(MediaBridge.isGranted(context, plugin.id)) }
+    var systemAccess by remember { mutableStateOf(MediaBridge.hasAccess(context)) }
+    val systemSettings = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        systemAccess = MediaBridge.hasAccess(context)
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.weight(1f)) {
+            Text(tr("Доступ к воспроизведению"), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                tr("Текущий трек, обложка и управление музыкой"),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(checked = granted, onCheckedChange = {
+            MediaBridge.setGranted(context, plugin.id, it)
+            granted = it
+        })
+    }
+    if (granted && !systemAccess) {
+        OutlinedButton(onClick = {
+            runCatching { systemSettings.launch(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+                .onFailure { Toast.makeText(context, tr("Не удалось открыть настройки Android"), Toast.LENGTH_SHORT).show() }
+        }) { Text(tr("Разрешить доступ в Android")) }
     }
 }
 

@@ -149,7 +149,8 @@ enum class HapticMode(val id: String, val title: String) {
     }
 }
 
-internal val BOTTOM_OFFSET_RANGE = -16f..64f
+internal val BOTTOM_OFFSET_RANGE = -80f..64f
+internal const val BOTTOM_OFFSET_BASE_GAP_DP = 16f
 private const val DEFAULT_BOTTOM_OFFSET_DP = -12f
 
 @Immutable
@@ -204,10 +205,14 @@ data class KeyboardSettings(
     val bgTransparency: Float = 0f,
     // --- фон ---
     val bgImageVersion: Long = 0L,
+    val pluginAccessReminder: Boolean = true,
+    val homePins: String = "",
     val bgIsVideo: Boolean = false,
     val bgDim: Float = 0.35f,
     val photoFrame: PhotoFrame = PhotoFrame(),
     val bgBlurDp: Float = 0f,
+    val staticPhotoBlur: Boolean = false,
+    val dynamicShadows: Boolean = false,
     // --- клавиши ---
     val keyLabelScale: Float = 1f,
     val fontWeight: Int = 700,
@@ -264,11 +269,12 @@ data class KeyboardSettings(
     /** Анимация нажатия: THEME — из темы, id готовой или своей (Animations.kt). */
     val animPress: String = "THEME",
     /** Скорость всех анимаций клавиатуры. */
-    val animSpeed: Float = 1f,
+    val pressAnimSpeed: Float = 1f,
+    val panelAnimSpeed: Float = 1f,
     /** Появление подсказки над клавишей: POP | ZOOM | SLIDE | FADE | NONE */
     val animPopup: String = "POP",
     /** Переход между панелями: SCALE | SLIDE | FADE | NONE */
-    val animPanel: String = "SCALE",
+    val animPanel: String = "WAVE",
     /** Свои анимации нажатия (JSON-массив). */
     val customAnims: String = "",
     // --- ввод ---
@@ -561,6 +567,8 @@ object KeyboardPrefs {
             keyBackground = p.getBoolean("key_background", true),
             bgTransparency = p.getFloat("bg_transparency", 0f).coerceIn(0f, 1f),
             bgImageVersion = p.getLong("bg_image_version", 0L),
+            pluginAccessReminder = p.getBoolean("plugin_access_reminder", true),
+            homePins = p.getString("home_pins", "").orEmpty(),
             bgIsVideo = p.getBoolean("bg_is_video", false),
             bgDim = p.getFloat("bg_dim", 0.35f).coerceIn(0f, 0.9f),
             photoFrame = PhotoFrame(
@@ -572,6 +580,8 @@ object KeyboardPrefs {
                 y = p.getFloat("photo_y", 0f).coerceIn(-1f, 1f)
             ),
             bgBlurDp = p.getFloat("bg_blur_dp", 0f).coerceIn(0f, 24f),
+            staticPhotoBlur = p.getBoolean("static_photo_blur", false),
+            dynamicShadows = p.getBoolean("dynamic_shadows", false),
             keyLabelScale = p.getFloat("key_label_scale", 1f).coerceIn(0.7f, 1.4f),
             fontWeight = p.getInt("font_weight", 700).coerceIn(300, 900),
             showHints = p.getBoolean("show_hints", true),
@@ -610,9 +620,10 @@ object KeyboardPrefs {
             ecoSound = p.getBoolean("eco_sound", false),
             ecoSuggestions = p.getBoolean("eco_suggestions", false),
             animPress = p.getString("anim_press", "THEME") ?: "THEME",
-            animSpeed = p.getFloat("anim_speed", 1f).coerceIn(0.5f, 2f),
+            pressAnimSpeed = p.getFloat("press_anim_speed", p.getFloat("anim_speed", 1f)).coerceIn(0.5f, 2f),
+            panelAnimSpeed = p.getFloat("panel_anim_speed", p.getFloat("anim_speed", 1f)).coerceIn(0.5f, 2f),
             animPopup = p.getString("anim_popup", "POP") ?: "POP",
-            animPanel = p.getString("anim_panel", "SCALE") ?: "SCALE",
+            animPanel = p.getString("anim_panel", "WAVE") ?: "WAVE",
             customAnims = p.getString("custom_anims", "") ?: "",
             spaceSwipe = p.getString("space_swipe", "CURSOR") ?: "CURSOR",
             globeLongPress = p.getString("globe_long_press", "LANGUAGES") ?: "LANGUAGES",
@@ -712,7 +723,7 @@ object KeyboardPrefs {
             "key_height_dp", "header_height_dp", "landscape_scale", "corner_radius_dp", "key_spacing_dp", "row_spacing_dp", "bottom_offset_dp", "emoji_size_dp",
             "wave_amplitude_percent", "vibration_ms", "vibration_amplitude", "long_press_ms", "enter_hold_ms", "key_opacity", "bg_transparency", "bg_dim",
             "photo_zoom", "photo_width", "photo_height", "photo_x", "photo_y",
-            "bg_blur_dp", "window_blur_dp", "key_label_scale", "side_padding_dp", "one_handed_w", "float_width", "float_key_height_dp", "flick_sensitivity", "enter_width", "number_row_scale", "press_animation", "sound_volume", "anim_speed"
+            "bg_blur_dp", "window_blur_dp", "key_label_scale", "side_padding_dp", "one_handed_w", "float_width", "float_key_height_dp", "flick_sensitivity", "enter_width", "number_row_scale", "press_animation", "sound_volume", "anim_speed", "press_anim_speed", "panel_anim_speed"
         ).forEach { put(it, 'f') }
         listOf(
             "wave_count", "seed_color", "color_background", "color_key", "color_key_text", "color_func",
@@ -723,7 +734,7 @@ object KeyboardPrefs {
             "double_space_period", "haptics_enabled", "vibrate_on_release", "strong_special_keys", "sound_enabled",
             "show_hints", "show_header", "number_pad", "floating_keyboard", "liquid_glass", "glass_merge", "myanmar_visual", "show_suggestions", "inline_calculator", "enter_hold_send", "show_mic_button", "suggestions_full_width", "show_emoji_key", "show_globe_key", "panel_animations",
             "backspace_swipe", "swipe_down_hide", "clipboard_history", "instant_input", "glide_typing", "glide_trail", "swipe_up_hint",
-            "space_long_press", "auto_pair", "incognito", "dict_auto_download", "punctuation_keys", "smart_punctuation",
+            "space_long_press", "auto_pair", "incognito", "dict_auto_download", "punctuation_keys", "smart_punctuation", "static_photo_blur", "dynamic_shadows",
             "system_spellcheck", "edit_bar", "auto_space_punct", "eco_mode", "eco_press", "eco_panels", "eco_blur", "eco_trail", "eco_preview", "eco_haptics", "eco_sound", "eco_suggestions", "dash_merge", "clip_screenshots", "correct_everywhere", "dynamic_zones", "ai_voice_cleanup", "tools_button", "pinned_tools", "landscape_split"
         ).forEach { put(it, 'b') }
         listOf(

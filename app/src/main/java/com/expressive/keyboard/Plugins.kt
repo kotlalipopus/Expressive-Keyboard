@@ -217,6 +217,7 @@ object ModConfig {
     /** Значение под тип настройки: скрипт мог передать 1 в переключатель или строку в ползунок. */
     internal fun normalize(o: ModOption, v: Any?): Any? = when {
         v == null -> null
+        o.type == "image" -> UserPictures.token(o.id, v) ?: ""
         o.type == "toggle" -> when (v) {
             is Boolean -> v
             is Number -> v.toDouble() != 0.0
@@ -249,7 +250,7 @@ object ModConfig {
         val changed = LinkedHashMap<String, Any?>()
         val e = prefs(context, plugin.id).edit()
         for ((k, raw) in values) {
-            val o = plugin.config.firstOrNull { it.id == k && it.hasValue } ?: continue
+            val o = plugin.config.firstOrNull { it.id == k && it.hasValue && it.type != "image" } ?: continue
             val v = normalize(o, raw) ?: continue
             if (v != get(context, plugin, o)) {
                 put(e, k, v)
@@ -320,7 +321,10 @@ data class KeyboardPlugin(
     val skinJson: String? = null,
     /** Свои настройки мода (блок "config"). */
     val config: List<ModOption> = emptyList(),
-    val scriptEngine: PluginScriptEngine = PluginScriptEngine.RHINO
+    val scriptEngine: PluginScriptEngine = PluginScriptEngine.RHINO,
+    val settingsLayout: SettingsLayoutSpec? = null,
+    val toolbarLayout: ToolbarLayoutSpec? = null,
+    val display: String? = null
 ) {
     val usesNetwork: Boolean get() = "network" in permissions && (actions.any { it.type == PluginActionType.HTTP } || script != null)
     /** Есть что применить кнопкой «Применить оформление». */
@@ -352,7 +356,8 @@ object PluginParser {
     )
     val LAYOUT_IDS = setOf("symbols", "symbols2")
     private val LANG_ID = Regex("^[a-z]{2,3}([-_][a-z0-9]{2,8})?$")
-    val PERMISSIONS = setOf("network", "read_text", "clipboard", "launch", "ai", "sensors", "microphone", "app_info")
+    val PERMISSIONS = setOf("network", "read_text", "clipboard", "launch", "ai", "sensors", "microphone", "app_info",
+        "media", "settings_layout", "toolbar_layout", "screen")
     val KEYS = setOf(
         "tab", "enter", "left", "right", "up", "down", "home", "end", "select_all", "copy", "cut",
         "paste", "undo", "redo", "delete_word", "escape"
@@ -486,7 +491,8 @@ object PluginParser {
             ic.keys().forEach { k ->
                 val v = ic.optString(k)
                 // путь к картинке внутри архива превращается в data URI
-                icons[k] = files[v]?.let { data -> "data:image/${v.substringAfterLast('.', "png")};base64,$data" } ?: v
+                icons[k] = files[v]?.takeUnless { it.startsWith(PluginArchive.PREFIX) }
+                    ?.let { data -> "data:image/${v.substringAfterLast('.', "png")};base64,$data" } ?: v
             }
         }
 
@@ -548,7 +554,10 @@ object PluginParser {
             dictionary = dictionary,
             enabledByDefault = o.optBoolean("enabledByDefault", true),
             skinJson = o.optJSONObject("skin")?.toString(),
-            config = parseConfig(o.optJSONArray("config"))
+            config = parseConfig(o.optJSONArray("config")),
+            settingsLayout = if ("settings_layout" in perms) SettingsLayoutSpec.parse(o.optJSONObject("settingsLayout")) else null,
+            toolbarLayout = if ("toolbar_layout" in perms) ToolbarLayoutSpec.parse(o.optJSONObject("toolbarLayout"), id) else null,
+            display = o.optString("display").takeIf { it in setOf("fullscreen", "landscape", "landscape-right", "floating") }
         )
     }
 
@@ -557,7 +566,7 @@ object PluginParser {
     private fun parseConfig(a: JSONArray?): List<ModOption> {
         if (a == null) return emptyList()
         val out = ArrayList<ModOption>()
-        val types = setOf("toggle", "text", "textarea", "choice", "slider", "color", "preset", "button", "info")
+        val types = setOf("toggle", "text", "textarea", "choice", "slider", "color", "preset", "button", "info", "image")
         var tab = ""
         var section = ""
         var collapsed = false
@@ -596,6 +605,7 @@ object PluginParser {
                 "slider" -> c.optDouble("default", c.optDouble("min", 0.0)).toFloat()
                 "choice" -> c.optString("default", choices.firstOrNull()?.first.orEmpty())
                 "preset", "button", "info" -> null
+                "image" -> ""
                 else -> c.optString("default", "")
             }
             val values = LinkedHashMap<String, Any?>()
@@ -641,9 +651,9 @@ object PluginParser {
                 if (e.isDirectory) continue
                 val name = e.name.replace('\\', '/').trimStart('/')
                 require(!name.contains("..")) { "Недопустимый путь в архиве: $name" }
-                val data = zin.readBytes()
-                total += data.size
-                require(total <= 8L * 1024 * 1024) { "Архив больше 8 МБ после распаковки" }
+                val output = java.io.ByteArrayOutputStream()
+                total += PluginArchive.copy(zin, output, PluginArchive.MAX_INLINE - total)
+                val data = output.toByteArray()
                 entries[name] = data
             }
         }
@@ -899,6 +909,12 @@ object PluginRepository {
         private set
     var errors by mutableStateOf<List<String>>(emptyList())
         private set
+    var settingsLayoutOwner by mutableStateOf<String?>(null)
+        private set
+    var toolbarLayoutOwner by mutableStateOf<String?>(null)
+        private set
+    val toolbarArranger: KeyboardPlugin?
+        get() = toolbarLayoutOwner?.let { id -> active.firstOrNull { it.id == id && it.toolbarLayout != null } }
 
     /** Активные плагины и их сокращения пересчитываются только при изменениях. */
     var active by mutableStateOf<List<KeyboardPlugin>>(emptyList())
@@ -940,6 +956,8 @@ object PluginRepository {
                 .onFailure { errs += "${f.name}: ${it.message}" }
         }
         val sp = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        settingsLayoutOwner = sp.getString("settings_layout_owner", null)
+        toolbarLayoutOwner = sp.getString("toolbar_layout_owner", null)
         var dis = sp.getStringSet("disabled", emptySet())?.toSet() ?: emptySet()
         val edit = sp.edit()
         var changed = false
@@ -1025,48 +1043,161 @@ object PluginRepository {
 
     fun isEnabled(id: String) = id !in disabled
 
+    fun setSettingsLayoutOwner(context: Context, id: String?) {
+        settingsLayoutOwner = id
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putString("settings_layout_owner", id).apply()
+    }
+
+    fun setToolbarLayoutOwner(context: Context, id: String?) {
+        toolbarLayoutOwner = id
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putString("toolbar_layout_owner", id).apply()
+    }
+
     fun setEnabled(context: Context, id: String, enabled: Boolean) {
         disabled = if (enabled) disabled - id else disabled + id
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putStringSet("disabled", disabled).apply()
         recompute(context.applicationContext)
     }
 
+    @Synchronized
     fun importFrom(context: Context, uri: Uri): Result<KeyboardPlugin> = runCatching {
         val app = context.applicationContext
-        val bytes = app.contentResolver.openInputStream(uri)?.use { input ->
-            val out = java.io.ByteArrayOutputStream()
-            val buf = ByteArray(8192)
-            while (true) {
-                val n = input.read(buf)
-                if (n < 0) break
-                out.write(buf, 0, n)
-                require(out.size() <= MAX_FILE) { "Файл больше 8 МБ" }
+        val input = app.contentResolver.openInputStream(uri)?.buffered() ?: error("Не удалось открыть файл")
+        input.use {
+            it.mark(2)
+            val zip = it.read() == 'P'.code && it.read() == 'K'.code
+            it.reset()
+            if (!zip) {
+                val out = java.io.ByteArrayOutputStream()
+                PluginArchive.copy(it, out, MAX_FILE.toLong())
+                importText(app, out.toString(Charsets.UTF_8.name())).getOrThrow()
+            } else {
+                val temp = File.createTempFile("plugin-", ".zip", app.cacheDir)
+                try {
+                    temp.outputStream().use { output -> PluginArchive.copy(it, output, PluginArchive.MAX_ZIP) }
+                    PluginArchive.prepare(app, temp) { json -> installText(app, json, archive = true) }
+                } finally {
+                    temp.delete()
+                }
             }
-            out.toByteArray()
-        } ?: throw IllegalStateException("Не удалось открыть файл")
-        // .zip начинается с «PK»
-        if (bytes.size > 4 && bytes[0] == 'P'.code.toByte() && bytes[1] == 'K'.code.toByte()) {
-            importText(app, PluginParser.zipToJson(bytes)).getOrThrow()
-        } else importText(app, String(bytes, Charsets.UTF_8)).getOrThrow()
+        }
+    }
+
+    private fun pluginText(bytes: ByteArray): String =
+        if (bytes.size > 4 && bytes[0] == 'P'.code.toByte() && bytes[1] == 'K'.code.toByte()) PluginParser.zipToJson(bytes)
+        else String(bytes, Charsets.UTF_8)
+
+    fun previewLink(url: String): Pair<String, KeyboardPlugin> {
+        val json = pluginJson(pluginText(PluginLink.download(url, MAX_FILE)))
+        return json to PluginParser.parse(json, false)
+    }
+
+    fun linkSource(context: Context, id: String): String? =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("source.$id", null)
+
+    fun setLinkSource(context: Context, id: String, url: String?) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString("source.$id", url?.let { PluginLink.normalize(it).toExternalForm() }).apply()
+    }
+
+    private fun pluginJson(raw: String): String {
+        val clean = raw.removePrefix("\uFEFF").trim()
+        return if (clean.startsWith("{")) clean else PluginParser.jsToJson(clean)
+    }
+
+    fun exportTo(context: Context, plugin: KeyboardPlugin, uri: Uri, javascript: Boolean): Result<Unit> = runCatching {
+        require(!plugin.builtIn)
+        val app = context.applicationContext
+        val file = File(File(app.filesDir, DIR), "${plugin.id}.json")
+        val raw = file.readText()
+        if (plugin.files.values.any { it.startsWith(PluginArchive.PREFIX) }) {
+            require(!javascript)
+            val manifest = JSONObject(raw)
+            val main = generateSequence("main.js") { "_$it" }.first { it !in plugin.files }
+            val script = manifest.optString("script")
+            manifest.remove("files")
+            manifest.put("main", main)
+            requireNotNull(app.contentResolver.openOutputStream(uri)).use { output ->
+                java.util.zip.ZipOutputStream(output.buffered()).use { zip ->
+                    fun write(name: String, content: ByteArray) {
+                        zip.putNextEntry(java.util.zip.ZipEntry(name))
+                        zip.write(content)
+                        zip.closeEntry()
+                    }
+                    manifest.remove("script")
+                    write("plugin.json", manifest.toString().toByteArray())
+                    if (script.isNotEmpty()) write(main, script.toByteArray())
+                    for ((name, value) in plugin.files) {
+                        val resource = PluginArchive.file(app, plugin.id, value)
+                        if (resource == null) {
+                            write(name, requireNotNull(PluginArchive.bytes(app, plugin.id, value, PluginArchive.MAX_INLINE)))
+                        } else {
+                            zip.putNextEntry(java.util.zip.ZipEntry(name))
+                            resource.inputStream().use { it.copyTo(zip) }
+                            zip.closeEntry()
+                        }
+                    }
+                }
+            }
+            return@runCatching Unit
+        }
+        val output = if (javascript) {
+            val manifest = JSONObject(raw)
+            require((manifest.optJSONObject("files")?.length() ?: 0) == 0)
+            val script = manifest.getString("script")
+            manifest.remove("script")
+            manifest.remove("files")
+            val header = manifest.toString().replace("*/", "*\\u002f")
+            "/* @plugin $header */\n$script"
+        } else raw
+        requireNotNull(app.contentResolver.openOutputStream(uri)).bufferedWriter().use { it.write(output) }
     }
 
     /** JSON плагина или исходник мода .js с манифестом в комментарии /* @plugin {…} */. */
+    @Synchronized
     fun importText(context: Context, raw: String): Result<KeyboardPlugin> = runCatching {
-        val app = context.applicationContext
-        val clean = raw.removePrefix("﻿").trim()
-        val json = if (clean.startsWith("{")) clean else PluginParser.jsToJson(clean)
-        val plugin = PluginParser.parse(json, false)
-        require(plugins.none { it.builtIn && it.id == plugin.id }) { "id «${plugin.id}» занят встроенным плагином" }
-        val dir = File(app.filesDir, DIR).apply { mkdirs() }
-        File(dir, "${plugin.id}.json").writeText(json)
-        if (plugin.id in disabled) setEnabled(app, plugin.id, true)
-        reload(app)
-        plugin
+        installText(context, raw, archive = false)
     }
 
+    private fun installText(context: Context, raw: String, archive: Boolean): KeyboardPlugin {
+        val app = context.applicationContext
+        val json = pluginJson(raw)
+        val plugin = PluginParser.parse(json, false)
+        require(archive || plugin.files.values.none { it.startsWith(PluginArchive.PREFIX) })
+        require(plugins.none { it.builtIn && it.id == plugin.id }) { "id «${plugin.id}» занят встроенным плагином" }
+        val dir = File(app.filesDir, DIR).apply { mkdirs() }
+        val manifest = android.util.AtomicFile(File(dir, "${plugin.id}.json"))
+        val stream = manifest.startWrite()
+        try {
+            stream.write(json.toByteArray())
+            manifest.finishWrite(stream)
+        } catch (failure: Exception) {
+            manifest.failWrite(stream)
+            throw failure
+        }
+        if (!archive) PluginArchive.clear(app, plugin.id)
+        if (settingsLayoutOwner == plugin.id) setSettingsLayoutOwner(app, null)
+        if (toolbarLayoutOwner == plugin.id) setToolbarLayoutOwner(app, null)
+        if (MediaBridge.isGranted(app, plugin.id)) MediaBridge.setGranted(app, plugin.id, false)
+        ModScreenGrant.set(app, plugin.id, false)
+        if (plugin.id in disabled) setEnabled(app, plugin.id, true)
+        reload(app)
+        return plugin
+    }
+
+    @Synchronized
     fun delete(context: Context, id: String) {
         val app = context.applicationContext
         File(File(app.filesDir, DIR), "$id.json").delete()
+        UserPictures.clearAll(app, id)
+        PluginArchive.clear(app, id)
+        setLinkSource(app, id, null)
+        if (settingsLayoutOwner == id) setSettingsLayoutOwner(app, null)
+        if (toolbarLayoutOwner == id) setToolbarLayoutOwner(app, null)
+        if (MediaBridge.isGranted(app, id)) MediaBridge.setGranted(app, id, false)
+        ModScreenGrant.set(app, id, false)
         reload(app)
     }
 

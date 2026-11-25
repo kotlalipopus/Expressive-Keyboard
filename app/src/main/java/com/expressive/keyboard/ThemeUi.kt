@@ -7,6 +7,7 @@
 package com.expressive.keyboard
 
 import android.Manifest
+import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
@@ -649,11 +650,38 @@ object ThemeEditor {
         shareText(context, text, p.name)
     }
 
+    /**
+     * Темы передаются файлом .json, а не строкой: приложение, которому отправили тему, должно получить файл,
+     * который можно импортировать, а не текст сообщения. Заодно большой JSON не упирается в лимит Intent.
+     */
     fun shareText(context: Context, text: String, name: String) {
-        runCatching {
-            val send = Intent(Intent.ACTION_SEND).setType("application/json")
-                .putExtra(Intent.EXTRA_TEXT, text).putExtra(Intent.EXTRA_SUBJECT, name)
+        val title = name.ifBlank { tr("Моя тема") }
+        val fromFile = runCatching {
+            val dir = File(context.cacheDir, "shared_themes").apply { mkdirs() }
+            // старые файлы больше не нужны: получатель уже скопировал их к себе
+            dir.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 86_400_000L }?.forEach { it.delete() }
+            val safe = title.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_").trim('.', ' ').take(64).ifBlank { "theme" }
+            val file = File(dir, "$safe.json")
+            file.writeText(text)
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "application/json"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, title)
+                putExtra(Intent.EXTRA_TEXT, tr("Файл темы «{0}» для Expressive Keyboard. Импортируйте его в «Темы» → «Импорт темы».", title))
+                clipData = ClipData.newRawUri(title, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
             context.startActivity(Intent.createChooser(send, tr("Поделиться темой")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+        if (fromFile.isSuccess) return
+        // на телефоне может не найтись приложение, принимающее .json: тогда хотя бы отправляем текст
+        runCatching {
+            val send = Intent(Intent.ACTION_SEND).setType("text/plain")
+                .putExtra(Intent.EXTRA_TEXT, text).putExtra(Intent.EXTRA_SUBJECT, title)
+            context.startActivity(Intent.createChooser(send, tr("Поделиться темой")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure {
+            Toast.makeText(context, tr("Не удалось поделиться темой"), Toast.LENGTH_SHORT).show()
         }
     }
 }

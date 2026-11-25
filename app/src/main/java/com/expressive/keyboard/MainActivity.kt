@@ -242,7 +242,7 @@ internal fun importCustomFont(context: Context, uri: Uri): String? = runCatching
 }.getOrNull()
 
 /** Картинка уменьшается до ~1600 px и пересжимается — клавиатура не держит в памяти 50-мегапиксельное фото. */
-internal fun importBackground(context: Context, uri: Uri): Boolean = runCatching {
+internal fun importBackground(context: Context, uri: Uri, fileName: String = KeyboardPrefs.BG_IMAGE_FILENAME): Boolean = runCatching {
     val bmp = if (Build.VERSION.SDK_INT >= 28) {
         android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(context.contentResolver, uri)) { decoder, info, _ ->
             decoder.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE
@@ -262,7 +262,7 @@ internal fun importBackground(context: Context, uri: Uri): Boolean = runCatching
         val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
         context.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, opts) } ?: return false
     }
-    val file = android.util.AtomicFile(File(context.filesDir, KeyboardPrefs.BG_IMAGE_FILENAME))
+    val file = android.util.AtomicFile(File(context.filesDir, fileName))
     try {
         val stream = file.startWrite()
         try {
@@ -280,6 +280,13 @@ internal fun importBackground(context: Context, uri: Uri): Boolean = runCatching
 
 @Composable
 fun SettingsScreen(settings: KeyboardSettings) {
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer)) {
+        SettingsNavigation(settings)
+    }
+}
+
+@Composable
+private fun SettingsNavigation(settings: KeyboardSettings) {
     var page by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(SettingsPage.HOME) }
     // M3, классы размера окна: от 840 dp (expanded) — две панели «список — подробности»,
     // слева разделы, справа выбранный; на 600–839 dp — одна панель, но не шире 720 dp (строки не растягиваются)
@@ -287,7 +294,7 @@ fun SettingsScreen(settings: KeyboardSettings) {
     if (widthDp >= 840) {
         val detail = if (page == SettingsPage.HOME) SettingsPage.THEMES else page
         androidx.activity.compose.BackHandler(enabled = detail.parent != SettingsPage.HOME) { page = detail.parent }
-        Row(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer)) {
+        Row(Modifier.fillMaxSize()) {
             Box(Modifier.width(if (widthDp >= 1200) 420.dp else 360.dp).fillMaxHeight()) {
                 SettingsPageScaffold(SettingsPage.HOME, settings, onNavigate = { page = it }, selected = detail)
             }
@@ -321,7 +328,7 @@ fun SettingsScreen(settings: KeyboardSettings) {
         },
         label = "settingsPage"
     ) { p ->
-        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer), contentAlignment = Alignment.TopCenter) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             Box(Modifier.widthIn(max = 720.dp)) { SettingsPageScaffold(p, settings, onNavigate = { page = it }) }
         }
     }
@@ -336,13 +343,20 @@ internal fun SettingsPageScaffold(
     val cs = MaterialTheme.colorScheme
     var testText by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     val showTest = page in setOf(SettingsPage.SIZE, SettingsPage.KEYS, SettingsPage.LAYOUT, SettingsPage.LANGUAGES,
-        SettingsPage.GESTURES, SettingsPage.TYPING, SettingsPage.FEEDBACK)
+        SettingsPage.GESTURES, SettingsPage.TYPING, SettingsPage.FEEDBACK, SettingsPage.ANIMATIONS)
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         containerColor = cs.surfaceContainer,
         topBar = {
             LargeTopAppBar(
-                title = { Text(tr(page.title), fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                title = {
+                    val home = page == SettingsPage.HOME
+                    Text(
+                        tr(page.title), fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        textAlign = if (home) TextAlign.Center else TextAlign.Start,
+                        modifier = if (home) Modifier.fillMaxWidth() else Modifier
+                    )
+                },
                 navigationIcon = {
                     if (showBack) {
                         FilledTonalIconButton(onClick = { onNavigate(page.parent) }, modifier = Modifier.padding(start = 8.dp)) {
@@ -455,6 +469,7 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     var query by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    AuthorLine()
     PillField(query, { query = it }, "Найти настройку: вибрация, шрифт, свайп…", Icons.Rounded.Search, tonal = true)
     if (query.isNotBlank()) {
         val found = SettingsSearch.find(query)
@@ -468,10 +483,23 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         return
     }
     var i = 0
+    val layoutOwner = PluginRepository.settingsLayoutOwner
+    val arranger = PluginRepository.active.firstOrNull { it.id == layoutOwner && it.settingsLayout != null }
+    val layout = arranger?.settingsLayout
+    val pins = if (layout == null) remember(settings.homePins) { homePins(settings.homePins) } else emptyList()
+    var selectingPins by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    if (selectingPins && layout == null) {
+        androidx.activity.compose.BackHandler { selectingPins = false }
+        HomePinEditor(pins) { selectingPins = false }
+        return
+    }
+    val expressive = settings.designStyle == DesignStyle.EXPRESSIVE.id && settings.shapeAmount == ShapeAmount.FULL
     SettingsSection(null) {
         AppLanguageItem(settings)
         val p = SettingsPage.WHATS_NEW
-        CategoryTile(p, i++, selected = p == selected) { onNavigate(p) }
+        if (p !in pins && (layout == null || layout.arrange(listOf(p)).isNotEmpty())) {
+            CategoryTile(p, i++, selected = p == selected, expressive = expressive) { onNavigate(p) }
+        }
     }
     if (!imeEnabled || !imeSelected) HeroCard(
         spec = rememberSpec(settings),
@@ -484,21 +512,35 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         onSelect = { (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker() },
         onMic = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }
     )
-    SettingsSection("Внешний вид") {
-        for (p in listOf(SettingsPage.SIZE, SettingsPage.KEYS, SettingsPage.THEMES, SettingsPage.COLORS, SettingsPage.ANIMATIONS)) {
-            CategoryTile(p, i++, selected = p == selected || p == selected?.parent) { onNavigate(p) }
+    if (arranger != null && layout != null) {
+        SettingsSection(tr("Закреплённые разделы")) {
+            for (p in layout.pinned) {
+                CategoryTile(p, i++, selected = p == selected || p == selected?.parent, expressive = expressive) { onNavigate(p) }
+            }
+            ActionItem(Icons.Rounded.Extension, "Вернуть обычный порядок", arranger.name,
+                onClick = { PluginRepository.setSettingsLayoutOwner(context, null) })
+        }
+    } else {
+        SettingsSection(if (pins.isEmpty()) null else "Закреплённые разделы") {
+            for (p in pins) {
+                CategoryTile(p, i++, selected = p == selected || p == selected?.parent, expressive = expressive) { onNavigate(p) }
+            }
+            ActionItem(Icons.Rounded.StarBorder, "Выбрать закреплённые разделы", null, onClick = { selectingPins = true })
         }
     }
     val groups = listOf(
+        "Внешний вид" to listOf(SettingsPage.SIZE, SettingsPage.KEYS, SettingsPage.THEMES, SettingsPage.COLORS, SettingsPage.ANIMATIONS),
         "Ввод" to listOf(SettingsPage.LANGUAGES, SettingsPage.GESTURES, SettingsPage.TYPING, SettingsPage.MY_WORDS, SettingsPage.FEEDBACK),
         "Инструменты" to listOf(SettingsPage.LAYOUT, SettingsPage.TOOLBAR, SettingsPage.CLIPBOARD, SettingsPage.PLUGINS),
         "Приложение" to listOf(SettingsPage.POWER, SettingsPage.BACKUP, SettingsPage.ABOUT)
     )
-    for ((title, pages) in groups) {
+    for ((title, defaultPages) in groups) {
+        val pages = layout?.arrange(defaultPages) ?: defaultPages.filterNot { it in pins }
+        if (pages.isEmpty()) continue
         SettingsSection(title) {
             for (p in pages) {
                 val idx = i++
-                CategoryTile(p, idx, selected = p == selected || p == selected?.parent) { onNavigate(p) }
+                CategoryTile(p, idx, selected = p == selected || p == selected?.parent, expressive = expressive) { onNavigate(p) }
             }
             if (SettingsPage.TOOLBAR in pages && imeSelected && !micGranted) {
                 ActionItem(Icons.Rounded.Mic, "Микрофон для голосового ввода", null,

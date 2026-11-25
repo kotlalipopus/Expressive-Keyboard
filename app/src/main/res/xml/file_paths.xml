@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="shared_gifs" path="gifs/" />
+    <cache-path name="shared_themes" path="shared_themes/" />
     <files-path name="clips" path="clips/" />
     <cache-path name="updates" path="updates/" />
 </paths>

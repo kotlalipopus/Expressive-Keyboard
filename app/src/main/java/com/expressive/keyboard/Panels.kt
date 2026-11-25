@@ -393,50 +393,73 @@ internal fun TranslatorBar(state: KeyboardState, actions: KeyboardActions, setti
     }
 }
 
-/** Вкладки внизу между ABC и ⌫, как в Gboard; удержание эмодзи с тонами кожи — выбор тона. */
+private data class EmojiSection(val id: String, val title: String, val icon: String, val emojis: List<String>)
+
+/** Вертикальная прокрутка по всем категориям; нижние вкладки переходят к заголовкам. */
 @Composable
 internal fun EmojiPanel(recents: List<String>, actions: KeyboardActions, settings: KeyboardSettings, palette: KeyPalette, font: FontFamily) {
     val context = LocalContext.current
     val cats = EmojiCatalog.categories
-    var tab by remember { mutableIntStateOf(if (recents.isEmpty()) 1 else 0) }
     var variantsOf by remember { mutableStateOf<EmojiItem?>(null) }
     val style = settings.emojiStyle
     val glyphSize = settings.emojiSizeDp.dp
     val cellHeight = (settings.emojiSizeDp + 14f).dp
     val emojiFont = remember(settings.emojiFontVersion) { FontRepository.emoji(context, settings.emojiFontVersion) }
     val imageStyle = EmojiStyles.isImageStyle(style)
-    val list: List<String> = remember(tab, cats, recents, style) {
-        if (tab == 0) recents
-        else cats.getOrNull(tab - 1)?.items.orEmpty()
-            .filter { it.system || (imageStyle && EmojiStyles.has(context, style, it.index)) || style == EmojiStyles.CUSTOM }
-            .map { it.emoji }
+    val categorized = remember(cats, style, context) {
+        cats.mapNotNull { category ->
+            val emojis = category.items.filter {
+                it.system || (imageStyle && EmojiStyles.has(context, style, it.index)) || style == EmojiStyles.CUSTOM
+            }.map { it.emoji }
+            if (emojis.isEmpty()) null else EmojiSection(category.id, category.title, category.icon, emojis)
+        }
     }
-    // каждая категория открывается с начала (раньше прокрутка переносилась из прошлой), полоса вкладок едет за выбранной
+    val recentTitle = tr("Недавние")
+    val sections = remember(categorized, recents, recentTitle) {
+        listOf(EmojiSection("recent", recentTitle, "🕒", recents)) + categorized
+    }
+    val starts = remember(sections) {
+        var offset = 0
+        sections.map { section ->
+            offset.also { offset += 1 + section.emojis.size.coerceAtLeast(1) }
+        }
+    }
     val grid = rememberLazyGridState()
     val tabsRow = rememberLazyListState()
-    LaunchedEffect(tab) {
-        grid.scrollToItem(0)
-        // +1: перед «Недавними» стоит кнопка поиска
-        runCatching { tabsRow.animateScrollToItem((tab + 1 - 2).coerceAtLeast(0)) }
+    val scope = rememberCoroutineScope()
+    val tab by remember(starts, grid) {
+        derivedStateOf {
+            if (!grid.canScrollForward && grid.canScrollBackward) starts.lastIndex
+            else starts.indexOfLast { it <= grid.firstVisibleItemIndex }.coerceAtLeast(0)
+        }
     }
-    val lastTab = cats.size
+    LaunchedEffect(tab) {
+        if (tab + 1 !in tabsRow.layoutInfo.visibleItemsInfo.map { it.index }) {
+            tabsRow.animateScrollToItem((tab - 1).coerceAtLeast(0))
+        }
+    }
+    fun openSection(index: Int) {
+        variantsOf = null
+        starts.getOrNull(index)?.let { start -> scope.launch { grid.scrollToItem(start) } }
+    }
     Column(Modifier.fillMaxSize().panelSurface(palette)) {
-        val v = variantsOf
-        if (v != null) {
-            // выбор тона кожи: основной вариант и все тона
+        val itemWithVariants = variantsOf
+        if (itemWithVariants != null) {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp).clip(RoundedCornerShape(18.dp))
-                    .background(palette.accentSoft).horizontalScroll(rememberScrollState()).padding(4.dp),
+                    .background(palette.accentSoft).padding(4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                (listOf(v.emoji) + v.variants).forEach { e ->
-                    Box(
-                        Modifier.size(cellHeight).clip(RoundedCornerShape(14.dp)).clickable {
-                            actions.commitEmoji(e)
-                            variantsOf = null
-                        },
-                        contentAlignment = Alignment.Center
-                    ) { EmojiGlyph(e, glyphSize, style, emojiFont) }
+                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
+                    (listOf(itemWithVariants.emoji) + itemWithVariants.variants).forEach { e ->
+                        Box(
+                            Modifier.size(cellHeight).clip(RoundedCornerShape(14.dp)).clickable {
+                                actions.commitEmoji(e)
+                                variantsOf = null
+                            },
+                            contentAlignment = Alignment.Center
+                        ) { EmojiGlyph(e, glyphSize, style, emojiFont) }
+                    }
                 }
                 Box(Modifier.size(40.dp).clip(CircleShape).clickable { variantsOf = null }, contentAlignment = Alignment.Center) {
                     Icon(Icons.Rounded.Close, tr("Закрыть"), tint = palette.onAccentSoft, modifier = Modifier.size(20.dp))
@@ -444,34 +467,42 @@ internal fun EmojiPanel(recents: List<String>, actions: KeyboardActions, setting
             }
         }
         // свайп влево-вправо по эмодзи — соседняя категория; вертикальную прокрутку сетки он не трогает
-        Box(Modifier.weight(1f).fillMaxWidth().pointerInput(lastTab) {
+        Box(Modifier.weight(1f).fillMaxWidth().pointerInput(starts) {
             var dx = 0f
             detectHorizontalDragGestures(
                 onDragStart = { dx = 0f },
                 onDragEnd = {
                     val step = 56.dp.toPx()
-                    if (dx <= -step && tab < lastTab) { tab++; variantsOf = null }
-                    else if (dx >= step && tab > 0) { tab--; variantsOf = null }
+                    if (dx <= -step) openSection(tab + 1)
+                    else if (dx >= step) openSection(tab - 1)
                 }
             ) { change, d -> change.consume(); dx += d }
         }) {
-            if (list.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    if (cats.isEmpty()) LoadingIndicator(Modifier.size(40.dp), color = palette.accent)
-                    else Text(tr("Пока пусто"), color = palette.muted, fontFamily = font)
-                }
-            } else {
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive((settings.emojiSizeDp + 12f).dp),
-                    state = grid,
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp),
-                    contentPadding = PaddingValues(top = 6.dp, bottom = 6.dp)
-                ) {
-                    gridItems(list, key = { it }) { e ->
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive((settings.emojiSizeDp + 12f).dp),
+                state = grid,
+                modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp),
+                contentPadding = PaddingValues(top = 4.dp, bottom = 6.dp)
+            ) {
+                sections.forEach { section ->
+                    item(key = section.id, span = { GridItemSpan(maxLineSpan) }, contentType = "heading") {
+                        Text(section.title, Modifier.padding(start = 8.dp, top = 8.dp, bottom = 4.dp),
+                            color = palette.onLetter, fontFamily = font, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    }
+                    if (section.emojis.isEmpty()) {
+                        item(key = "${section.id}:empty", span = { GridItemSpan(maxLineSpan) }) {
+                            Text(tr("Пока пусто"),
+                                Modifier.padding(horizontal = 8.dp, vertical = 6.dp), color = palette.muted,
+                                fontFamily = font, fontSize = 12.sp)
+                        }
+                    }
+                    gridItems(section.emojis, key = { "${section.id}:$it" }, contentType = { "emoji" }) { e ->
                         val item = remember(e) { EmojiCatalog.item(e) }
                         Box(
                             Modifier.height(cellHeight).clip(RoundedCornerShape(14.dp)).combinedClickable(
-                                onLongClick = { if (item != null && item.variants.isNotEmpty()) variantsOf = item }
+                                onLongClick = item?.takeIf { it.variants.isNotEmpty() }?.let { withVariants ->
+                                    { variantsOf = withVariants }
+                                }
                             ) { actions.commitEmoji(e) },
                             contentAlignment = Alignment.Center
                         ) {
@@ -484,6 +515,11 @@ internal fun EmojiPanel(recents: List<String>, actions: KeyboardActions, setting
                                 )
                             }
                         }
+                    }
+                }
+                if (cats.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
+                    Box(Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
+                        LoadingIndicator(Modifier.size(32.dp), color = palette.accent)
                     }
                 }
             }
@@ -507,9 +543,10 @@ internal fun EmojiPanel(recents: List<String>, actions: KeyboardActions, setting
                         contentAlignment = Alignment.Center
                     ) { Icon(Icons.Rounded.Search, tr("Поиск эмодзи"), tint = palette.onLetter, modifier = Modifier.size(22.dp)) }
                 }
-                item { EmojiTab(tab == 0, palette, "emoji_recent", "🕒", style, emojiFont) { tab = 0; variantsOf = null } }
-                itemsIndexed(cats) { i, c ->
-                    EmojiTab(tab == i + 1, palette, "emoji_cat_$i", c.icon, style, emojiFont) { tab = i + 1; variantsOf = null }
+                itemsIndexed(sections, key = { _, section -> section.id }) { i, section ->
+                    val slot = if (section.id == "recent") "emoji_recent" else
+                        "emoji_cat_${cats.indexOfFirst { it.id == section.id }}"
+                    EmojiTab(tab == i, palette, slot, section.icon, style, emojiFont) { openSection(i) }
                 }
             }
             RepeatingBackspace(palette) { actions.deleteBackward() }

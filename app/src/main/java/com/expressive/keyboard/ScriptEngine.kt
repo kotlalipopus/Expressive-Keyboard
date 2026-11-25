@@ -155,10 +155,12 @@ private class Mod(val plugin: KeyboardPlugin) {
     /** Время последних запросов kb.ai — не больше 10 в минуту. */
     val aiTimes = ArrayDeque<Long>()
     /** Звуки, которые мод сейчас играет (kb.playAudio). */
-    val players = HashMap<Int, android.media.MediaPlayer>()
+    val players = HashMap<Int, ModVoice>()
+    val accessAt = HashMap<String, Long>()
     var nextPlayer = 1
     /** Мод хочет касания по клавиатуре (kb.captureTouches): пока так, печатать нельзя. */
     var touches = false
+    var panZoom = false
     /** Эффекты клавиш (kb.keyEffects). */
     var keyFx: Map<String, KeyFx> = emptyMap()
     /** Мод слушает микрофон (kb.audio.start). */
@@ -167,6 +169,49 @@ private class Mod(val plugin: KeyboardPlugin) {
 }
 
 object ScriptHost {
+    internal var modScreen by mutableStateOf<ModScreen?>(null)
+        private set
+    private var screenOwner: Mod? = null
+    private var screenActionOwner: Mod? = null
+    @Volatile private var glAudioMods = emptySet<String>()
+
+    internal fun glAudioLevel(plugin: String) = if (!privateMode && plugin in glAudioMods) ModAudio.level else 0f
+
+    internal fun recentAccess(): List<PluginAccess> {
+        if (!shown || privateMode) return emptyList()
+        val now = SystemClock.uptimeMillis()
+        return mods.values.filter { m -> !m.plugin.builtIn && m.plugin.permissions.any { it in sensitivePluginPermissions } }
+            .map { m ->
+                val live = m.accessAt.filterValues { now - it <= 4000L }.keys
+                PluginAccess(m.plugin.name, live.isNotEmpty(), "microphone" in live, m.has("network"))
+            }
+    }
+
+    fun closeModScreen() {
+        val owner = screenOwner ?: return
+        val screen = modScreen ?: return
+        screenOwner = null
+        modScreen = null
+        owner.touches = false
+        publishTouches()
+        sendScreenEvent(owner, screen, false)
+    }
+
+    private fun sendScreenEvent(owner: Mod, screen: ModScreen, open: Boolean) {
+        for (handler in owner.handlers["screen"]?.toList().orEmpty()) exec(owner, CALL_BUDGET_MS) {
+            owner.runtime.call(handler, arrayOf(mapOf("open" to open, "mode" to if (screen.floating) "floating" else "fullscreen")))
+        }
+    }
+
+    private inline fun withScreenAction(owner: Mod, block: () -> Unit) {
+        val previous = screenActionOwner
+        screenActionOwner = owner
+        try {
+            block()
+        } finally {
+            screenActionOwner = previous
+        }
+    }
     private val main = Handler(Looper.getMainLooper())
     private val io = CoroutineScope(SupervisorJob() + Dispatchers.IO + BackgroundErrors)
     private var mods: Map<String, Mod> = emptyMap()
@@ -206,7 +251,13 @@ object ScriptHost {
         set(value) {
             if (field == value) return
             field = value
-            main.post { syncDevices() }
+            main.post {
+                if (privateMode) {
+                    closeModScreen()
+                    releaseTouches()
+                }
+                syncDevices()
+            }
         }
 
     /** Открыт голосовой ввод: микрофон нужен ему, моды его не занимают. */
@@ -264,10 +315,11 @@ object ScriptHost {
     private val EVENT_PERMS = mapOf(
         "key" to "read_text", "word" to "read_text", "suggest" to "read_text", "start" to "read_text", "press" to "read_text",
         "selection" to "read_text", "pick" to "read_text", "voice" to "read_text", "autocorrect" to "read_text", "glide" to "read_text",
+        "typing" to "read_text", "shake" to "sensors",
         // координаты пальца на клавиатуре — это и есть набираемый текст
         "pointer" to "read_text",
         "clipboard" to "clipboard",
-        "tilt" to "sensors", "gyro" to "sensors", "audio" to "microphone", "app" to "app_info"
+        "tilt" to "sensors", "gyro" to "sensors", "audio" to "microphone", "app" to "app_info", "media" to "media"
     )
 
     fun log(pluginId: String, line: String) {
@@ -329,6 +381,7 @@ object ScriptHost {
         }
         firstLoad = false
         appContext = context.applicationContext
+        closeModScreen()
         mods.values.forEach(::stop)
         mods = emptyMap()
         if (prompt != null) {
@@ -337,6 +390,9 @@ object ScriptHost {
         }
         touchCapture = false
         ModFx.reset()
+        OverlayGroups.clear()
+        ScriptView.reset()
+        val prelude = PRELUDE + "\n" + context.assets.open("kb/prelude-extra.js").bufferedReader().use { it.readText() }
         val next = LinkedHashMap<String, Mod>()
         for (p in plugins) {
             val src = p.script ?: continue
@@ -350,7 +406,7 @@ object ScriptHost {
             }.onFailure { log(p.id, "✕ " + describe(it)) }.getOrNull() ?: continue
             m.runtime = runtime
             exec(m, LOAD_BUDGET_MS) {
-                runtime.load(bindings(m), PRELUDE, src, p.id + ".js")
+                runtime.load(bindings(m), prelude, src, p.id + ".js")
             }.onSuccess {
                 next[p.id] = m
                 log(p.id, "✓ " + tr("загружен за {0} мс", SystemClock.uptimeMillis() - started))
@@ -366,7 +422,7 @@ object ScriptHost {
         m.timers.values.forEach(main::removeCallbacks)
         m.timers.clear()
         m.parked.clear()
-        m.players.values.forEach { runCatching { it.release() } }
+        m.players.values.forEach { it.stop() }
         m.players.clear()
         m.runtime.close()
     }
@@ -396,21 +452,55 @@ object ScriptHost {
         return mods.values.any { m -> m.handlers[event]?.isNotEmpty() == true && (perm == null || m.has(perm)) }
     }
 
+    fun setDynamicShadows(enabled: Boolean) {
+        if (ModSensors.updateShadowSetting(enabled)) syncDevices()
+    }
+
+    fun refreshMediaAccess() {
+        main.post { syncDevices() }
+    }
+
+    fun mediaChanged(state: Map<String, Any>) {
+        if (shown && !privateMode) emit("media", state)
+    }
+
     /** Датчики, микрофон и слежение за пальцем: только пока клавиатура на экране и они кому-то нужны. */
     private fun syncDevices() {
         val ctx = appContext ?: return
         if (!shown) ModFx.clearPointers()
         val usable = shown && !privateMode
-        val nativeTilt = ModFx.usesTilt() || ModFx.shaderItems || ModFx.post != null
-        ModSensors.sync(ctx, shown && nativeTilt || usable && listens("tilt"), usable && listens("gyro"))
+        val glLayers = (overlayItems + backgroundItems).filterIsInstance<OverlayItem.GlSurface>()
+        val glTilt = usable && glLayers.any { it.sensors && "iTilt" in it.frag }
+        val nativeTilt = ModSensors.dynamicShadows || ModFx.usesTilt() || ModFx.shaderItems || ModFx.post != null || glTilt
+        ModSensors.sync(ctx, shown && nativeTilt || usable && listens("tilt"), usable && listens("gyro"), usable && listens("shake"))
         ModAudio.sync(ctx, usable && !voiceBusy && mods.values.any { it.audio && it.has("microphone") })
-        ModFx.usesPointer(!privateMode && listens("pointer"))
+        glAudioMods = if (usable && !voiceBusy) glLayers.mapNotNull { layer ->
+            mods[layer.pluginId]?.takeIf { it.audio && it.has("microphone") }?.plugin?.id
+        }.toSet() else emptySet()
+        MediaBridge.sync(ctx, usable && mods.values.any {
+            it.has("media") && it.handlers["media"]?.isNotEmpty() == true && MediaBridge.isGranted(ctx, it.plugin.id)
+        })
+        ModFx.usesPointer(usable && (listens("pointer") || glLayers.any { "iTouch" in it.frag }))
     }
 
     private fun parseItems(m: Mod, raw: Any?): List<OverlayItem> {
         val list = raw as? List<*> ?: listOfNotNull(raw)
         return list.take(4000).mapNotNull { v ->
-            OverlayItem.parse(v) ?: null.also {
+            val item = OverlayItem.parse(v)
+            if (item is OverlayItem.GlSurface) {
+                val layer = item.copy(pluginId = m.plugin.id, sensors = m.has("sensors"))
+                layer.liveKey?.let(GlSupport::dropLive)
+                appContext?.let { ctx ->
+                    for (texture in layer.textures) {
+                        if (!texture.isEmpty && !texture.src.startsWith("data:") &&
+                            !GlTextureFiles.register(ctx, m.plugin, texture.src)) {
+                            log(m.plugin.id, "✕ gl: missing texture ${texture.name}")
+                        }
+                    }
+                }
+                layer
+            } else if (item is OverlayItem.Group) item.copy(pluginId = m.plugin.id)
+            else item ?: null.also {
                 val o = v as? Map<*, *>
                 if (o?.get("type") == "shader") {
                     val src = o["src"]?.toString().orEmpty()
@@ -454,7 +544,7 @@ object ScriptHost {
         val back = mods.values.flatMap { it.background }
         if (back.isNotEmpty() || backgroundItems.isNotEmpty()) backgroundItems = back
         val shaders = items.any { it is OverlayItem.Shader } || back.any { it is OverlayItem.Shader }
-        if (shaders != ModFx.shaderItems) {
+        if (shaders != ModFx.shaderItems || items.any { it is OverlayItem.GlSurface } || back.any { it is OverlayItem.GlSurface } || glAudioMods.isNotEmpty()) {
             ModFx.shaderItems = shaders
             syncDevices()
         }
@@ -470,6 +560,7 @@ object ScriptHost {
     fun setVisible(v: Boolean) {
         if (shown != v) {
             shown = v
+            if (!v) closeModScreen()
             syncDevices()
         }
         if (visible == v) return
@@ -503,6 +594,10 @@ object ScriptHost {
                 val hs = m.handlers[event] ?: continue
                 val perm = EVENT_PERMS[event]
                 if (perm != null && (privateMode || !m.has(perm))) continue
+                if (event == "media" && appContext?.let {
+                    MediaBridge.hasAccess(it) && MediaBridge.isGranted(it, m.plugin.id)
+                } != true) continue
+                if (perm != null && perm in sensitivePluginPermissions && hs.isNotEmpty()) m.accessAt[perm] = SystemClock.uptimeMillis()
                 for (h in hs.toList()) {
                     exec(m, CALL_BUDGET_MS) {
                         fromJs(m.runtime.call(h, args, readResult = true))
@@ -537,21 +632,21 @@ object ScriptHost {
     fun runButton(pluginId: String, id: String) {
         val m = mods[pluginId] ?: return
         val fn = m.buttons[id]?.second ?: return
-        exec(m, CALL_BUDGET_MS) { m.runtime.call(fn, emptyArray()) }
+        withScreenAction(m) { exec(m, CALL_BUDGET_MS) { m.runtime.call(fn, emptyArray()) } }
     }
 
     /** Клавиша раскладки с "action": "pluginId/команда". */
     fun runCommand(spec: String): Boolean {
         val m = mods[spec.substringBefore('/')] ?: return false
         val fn = m.commands[spec.substringAfter('/')] ?: return false
-        exec(m, CALL_BUDGET_MS) { m.runtime.call(fn, emptyArray()) }
+        withScreenAction(m) { exec(m, CALL_BUDGET_MS) { m.runtime.call(fn, emptyArray()) } }
         return true
     }
 
     fun invoke(call: ScriptCall, vararg args: Any?) {
         val m = mods[call.pluginId]?.takeIf { it.runtime === call.runtime } ?: return
-        exec(m, CALL_BUDGET_MS) {
-            m.runtime.call(call.fn, args)
+        withScreenAction(m) {
+            exec(m, CALL_BUDGET_MS) { m.runtime.call(call.fn, args) }
         }
     }
 
@@ -623,8 +718,9 @@ object ScriptHost {
 
     /** Касание слоя мода (dp от угла клавиатуры); type — down, move, up. */
     fun touch(type: String, x: Float, y: Float, pointer: Int) {
+        if (privateMode) return
         for (m in mods.values) {
-            if (!m.touches) continue
+            if (!m.touches || (screenOwner != null && screenOwner !== m)) continue
             val hs = m.handlers["touch"] ?: continue
             for (h in hs.toList()) exec(m, CALL_BUDGET_MS) {
                 m.runtime.call(h, arrayOf(mapOf("type" to type, "x" to x, "y" to y, "pointer" to pointer)))
@@ -633,7 +729,21 @@ object ScriptHost {
     }
 
     private fun publishTouches() {
-        touchCapture = mods.values.any { it.touches }
+        touchCapture = !privateMode && mods.values.any { it.touches && (screenOwner == null || screenOwner === it) }
+        ScriptView.enabled = touchCapture && mods.values.any { it.touches && it.panZoom && (screenOwner == null || screenOwner === it) }
+    }
+
+    private var lastViewEvent = 0L
+    internal fun viewChanged(ended: Boolean) {
+        val now = SystemClock.uptimeMillis()
+        if (privateMode || (!ended && now - lastViewEvent < 100L)) return
+        lastViewEvent = now
+        for (owner in mods.values) {
+            if (!owner.touches || !owner.panZoom || (screenOwner != null && screenOwner !== owner)) continue
+            for (handler in owner.handlers["view"]?.toList().orEmpty()) exec(owner, CALL_BUDGET_MS) {
+                owner.runtime.call(handler, arrayOf(ScriptView.toMap()))
+            }
+        }
     }
 
     /** Кнопка ✕ поверх клавиатуры: снять перехват касаний у всех модов (им приходит touch с type "cancel"). */
@@ -768,35 +878,29 @@ object ScriptHost {
     }
 
     /** Звук из data: URI или файла архива мода — во временный файл и в MediaPlayer. */
-    private fun playAudio(ctx: Context, m: Mod, src: String, volume: Float, loop: Boolean): Int {
+    private fun playAudio(ctx: Context, m: Mod, src: String, options: Map<*, *>): Int {
         require(m.players.size < 8) { "playAudio: не больше 8 звуков сразу" }
         val b64 = when {
             src.startsWith("data:") -> src.substringAfter(',')
             else -> m.plugin.files[src] ?: throw IllegalArgumentException("playAudio: нет файла «$src»")
         }
-        val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
-        require(bytes.size < 8 * 1024 * 1024) { "playAudio: файл больше 8 МБ" }
-        val dir = java.io.File(ctx.cacheDir, "mod_audio").apply { mkdirs() }
-        val f = java.io.File(dir, "${m.plugin.id.hashCode()}_${src.hashCode()}.bin")
-        if (!f.exists() || f.length() != bytes.size.toLong()) f.writeBytes(bytes)
-        val pid = m.nextPlayer++
-        val mp = android.media.MediaPlayer()
-        mp.setAudioAttributes(
-            android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
-                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
-        )
-        mp.setDataSource(f.absolutePath)
-        mp.isLooping = loop
-        mp.setVolume(volume, volume)
-        mp.setOnCompletionListener {
-            if (!loop) {
-                m.players.remove(pid)
-                it.release()
+        val f = if (b64.startsWith(PluginArchive.PREFIX) && !src.startsWith("data:")) {
+            requireNotNull(PluginArchive.file(ctx, m.plugin.id, b64)) { "playAudio: файл архива недоступен" }
+        } else {
+            val bytes = requireNotNull(PluginArchive.bytes(ctx, m.plugin.id, b64, PluginArchive.MAX_INLINE))
+            val dir = java.io.File(ctx.cacheDir, "mod_audio").apply { mkdirs() }
+            val name = digest("SHA-256", b64)
+            java.io.File(dir, "$name.bin").also {
+                if (!it.exists() || it.length() != bytes.size.toLong()) it.writeBytes(bytes)
             }
         }
-        mp.setOnPreparedListener { it.start() }
-        mp.prepareAsync()
-        m.players[pid] = mp
+        val pid = m.nextPlayer++
+        val player = ModVoice(f.absolutePath, options["loop"] == true, options["gapless"] == true) {
+            m.players.remove(pid)
+        }
+        player.update(options)
+        player.start()
+        m.players[pid] = player
         return pid
     }
 
@@ -890,6 +994,10 @@ object ScriptHost {
 
     private fun need(m: Mod, perm: String) {
         if (!m.has(perm)) throw IllegalStateException("нужно разрешение \"$perm\" в поле permissions")
+        if (shown && !privateMode && perm in sensitivePluginPermissions &&
+            (perm != "media" || appContext?.let { MediaBridge.isGranted(it, m.plugin.id) && MediaBridge.hasAccess(it) } == true)) {
+            m.accessAt[perm] = SystemClock.uptimeMillis()
+        }
     }
 
     // ------------------------------------------------------------------ API kb.*
@@ -902,8 +1010,33 @@ object ScriptHost {
             obj[name] = ScriptBinding(name, body)
         }
         fun b() = bridge
+        fun canUseMedia() = shown && !privateMode && MediaBridge.isGranted(ctx, id) && MediaBridge.hasAccess(ctx)
 
         val kb = linkedMapOf<String, Any?>("pluginId" to id, "apiVersion" to 4)
+        def(kb, "screenOpen") { a ->
+            need(m, "screen")
+            val display = m.plugin.display ?: return@def false
+            if (screenActionOwner !== m || !shown || privateMode || !ModScreenGrant.has(ctx, id)) return@def false
+            val options = opts(a, 0)
+            val panel = options["panel"]?.toString()?.let { m.panels[it]?.first }
+            if (display == "floating" && (panel == null || KeyboardPrefs.current(ctx).floating)) return@def false
+            fun dimension(name: String, fallback: Float, min: Float, max: Float) =
+                (options[name] as? Number)?.toFloat()?.takeIf { it.isFinite() }?.coerceIn(min, max) ?: fallback
+            val screen = ModScreen(id, display, options["keys"] != false, panel,
+                dimension("width", 320f, 160f, 600f), dimension("height", 340f, 120f, 700f),
+                options["exit"]?.toString().orEmpty())
+            main.post {
+                if (shown && !privateMode && mods[id] === m && ModScreenGrant.has(ctx, id)) {
+                    closeModScreen()
+                    screenOwner = m
+                    modScreen = screen
+                    publishTouches()
+                    sendScreenEvent(m, screen, true)
+                }
+            }
+            true
+        }
+        def(kb, "screenClose") { _ -> main.post { if (screenOwner === m) closeModScreen() }; Unit }
         // --- регистрация
         def(kb, "on") { a ->
             val ev = str(a, 0)
@@ -983,6 +1116,42 @@ object ScriptHost {
             Unit
         }
         def(kb, "clearOverlay") { _ -> m.overlay = emptyList(); publishOverlay(); Unit }
+        def(kb, "defineGroup") { a ->
+            val key = str(a, 0).take(64)
+            if (key.isBlank()) return@def false
+            OverlayGroups.put(id, key, parseItems(m, fromJs(a.getOrNull(1))).filterNot {
+                it is OverlayItem.GlSurface || it is OverlayItem.Gl
+            })
+            true
+        }
+        def(kb, "removeGroup") { a -> OverlayGroups.remove(id, str(a, 0).take(64)) }
+        def(kb, "view") { a ->
+            val o = opts(a, 0)
+            ScriptView.set((o["x"] as? Number)?.toFloat(), (o["y"] as? Number)?.toFloat(), (o["zoom"] as? Number)?.toFloat())
+            ScriptView.toMap()
+        }
+        def(kb, "toWorld") { a ->
+            mapOf("x" to (num(a, 0, 0.0) - ScriptView.panX) / ScriptView.zoom,
+                "y" to (num(a, 1, 0.0) - ScriptView.panY) / ScriptView.zoom)
+        }
+        def(kb, "toScreen") { a ->
+            mapOf("x" to num(a, 0, 0.0) * ScriptView.zoom + ScriptView.panX,
+                "y" to num(a, 1, 0.0) * ScriptView.zoom + ScriptView.panY)
+        }
+        def(kb, "panZoom") { a ->
+            m.panZoom = a.getOrNull(0) != false
+            if (m.panZoom) {
+                val options = opts(a, 0).ifEmpty { opts(a, 1) }
+                fun limit(key: String, fallback: Float) =
+                    (options[key] as? Number)?.toFloat()?.takeIf { it.isFinite() }?.coerceIn(0.01f, 100f) ?: fallback
+                ScriptView.minZoom = limit("min", 0.2f)
+                ScriptView.maxZoom = limit("max", 8f).coerceAtLeast(ScriptView.minZoom)
+                ScriptView.mode = if (options["mode"] == "any") "any" else "two"
+                ScriptView.set(null, null, ScriptView.zoom)
+            }
+            publishTouches()
+            Unit
+        }
         // то же, но под клавишами: фон, волны, частицы — клавиши остаются сверху
         def(kb, "background") { a ->
             m.background = parseItems(m, fromJs(a.getOrNull(0)))
@@ -1022,17 +1191,43 @@ object ScriptHost {
         }
         def(kb, "shaderError") { a -> ModShaders.error(str(a, 0)) }
         def(kb, "glslError") { a -> PluginGl.error(str(a, 0)) }
+        def(kb, "glError") { a -> GlSupport.error(str(a, 0)) ?: PluginGl.error(str(a, 0)) }
+        def(kb, "glDebug") { a ->
+            (a.getOrNull(0) == true).also { GlSupport.perfVisible.value = it }
+        }
+        def(kb, "glUniforms") { a ->
+            val name = str(a, 0).take(64)
+            val patch = fromJs(a.getOrNull(1)) as? Map<*, *> ?: return@def false
+            if (name.isBlank() || (m.overlay + m.background).none { it is OverlayItem.GlSurface && it.id == name }) return@def false
+            GlSupport.putUniforms(GlSupport.liveKey(id, name), patch.entries.take(64).associate { it.key.toString() to it.value })
+            true
+        }
         def(kb, "supports") { a ->
             when (str(a, 0)) {
+                "gl", "batch", "groups", "panZoom", "glFeedback", "glInstancing", "glDebug", "glQuality", "glTextures", "imageSettings" -> true
+                "screen" -> m.has("screen") && m.plugin.display != null
                 "shader", "postEffect" -> ModShaders.supported
                 "glsl", "mesh3d" -> true
                 "labelBlur" -> android.os.Build.VERSION.SDK_INT >= 31
                 "particles", "keyEffects", "pointer" -> true
                 "sensors" -> ModSensors.available(ctx)
                 "microphone" -> m.has("microphone") && ModAudio.hasPermission(ctx)
+                "mediaInfo" -> m.has("media") && canUseMedia()
                 else -> false
             }
         }
+
+        val media = linkedMapOf<String, Any?>()
+        def(media, "state") { _ -> need(m, "media"); if (canUseMedia()) MediaBridge.state(ctx) else MediaBridge.EMPTY }
+        def(media, "art") { _ -> need(m, "media"); if (canUseMedia()) MediaBridge.art(ctx) else "" }
+        for (command in listOf("play", "pause", "toggle", "next", "previous")) {
+            def(media, command) { _ -> need(m, "media"); canUseMedia() && MediaBridge.control(ctx, command) }
+        }
+        def(media, "seek") { a ->
+            need(m, "media")
+            canUseMedia() && MediaBridge.control(ctx, "seek", num(a, 0, 0.0).toLong())
+        }
+        kb["media"] = media
 
         // --- частицы: считаются клавиатурой, а не скриптом
         val particles = linkedMapOf<String, Any?>()
@@ -1153,7 +1348,11 @@ object ScriptHost {
         // --- файлы из архива плагина
         def(kb, "asset") { a ->
             val path = str(a, 0)
-            val data = m.plugin.files[path] ?: return@def null
+            val stored = m.plugin.files[path] ?: return@def null
+            val data = if (stored.startsWith(PluginArchive.PREFIX)) {
+                val bytes = PluginArchive.bytes(ctx, id, stored, PluginArchive.MAX_INLINE) ?: return@def null
+                android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+            } else stored
             if (path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".webp") || path.endsWith(".gif")) {
                 "data:image/${path.substringAfterLast('.')};base64,$data"
             } else String(android.util.Base64.decode(data, android.util.Base64.DEFAULT))
@@ -1173,6 +1372,30 @@ object ScriptHost {
         def(storage, "keys") { _ -> prefs.all.keys.toList() }
         def(storage, "clear") { _ -> prefs.edit().clear().apply(); Unit }
         kb["storage"] = storage
+        val savePrefs = ctx.getSharedPreferences("plugin_saves", Context.MODE_PRIVATE)
+        val savePrefix = "$id/"
+        val saves = linkedMapOf<String, Any?>()
+        val saveName = Regex("^(slot|hs)\\.[A-Za-z0-9_. -]{1,40}$")
+        fun saveKey(args: Array<Any?>): String {
+            val name = str(args, 0)
+            require(saveName.matches(name)) { "Invalid save name" }
+            return savePrefix + name
+        }
+        def(saves, "rawGet") { a -> savePrefs.getString(saveKey(a), null) }
+        def(saves, "rawSet") { a ->
+            val key = saveKey(a)
+            val value = str(a, 1, "null")
+            require(value.length <= 256 * 1024) { "Save is larger than 256 KB" }
+            val other = savePrefs.all.filterKeys { it != key && it.startsWith(savePrefix) }
+            require(other.size < 100 && other.values.sumOf { (it as? String)?.length ?: 0 } + value.length <= 8 * 1024 * 1024) {
+                "Plugin save storage is full"
+            }
+            savePrefs.edit().putString(key, value).apply()
+            Unit
+        }
+        def(saves, "rawRemove") { a -> savePrefs.edit().remove(saveKey(a)).apply(); Unit }
+        def(saves, "rawKeys") { _ -> savePrefs.all.keys.filter { it.startsWith(savePrefix) }.map { it.removePrefix(savePrefix) } }
+        kb["saves"] = saves
 
         // --- настройки клавиатуры
         val settings = linkedMapOf<String, Any?>()
@@ -1296,11 +1519,13 @@ object ScriptHost {
         def(kb, "editorAction") { a -> b()?.scriptEditorAction(str(a, 0, "done")); Unit }
         def(kb, "commitImage") { a ->
             val src = str(a, 0)
-            val data = if (src.startsWith("data:")) src else m.plugin.files[src]?.let { "data:image/${src.substringAfterLast('.')};base64,$it" }
+            val encoded = if (src.startsWith("data:")) src.substringAfter(',') else m.plugin.files[src]
                 ?: throw IllegalArgumentException("commitImage: data:image/… или файл из архива мода")
-            val mime = data.substringAfter("data:").substringBefore(';').ifEmpty { "image/png" }
-            val bytes = android.util.Base64.decode(data.substringAfter(','), android.util.Base64.DEFAULT)
-            require(bytes.size < 16 * 1024 * 1024) { "commitImage: картинка больше 16 МБ" }
+            val mime = if (src.startsWith("data:")) src.substringAfter("data:").substringBefore(';').ifEmpty { "image/png" }
+                else "image/${src.substringAfterLast('.', "png")}"
+            val bytes = requireNotNull(PluginArchive.bytes(ctx, id, encoded, 16L * 1024 * 1024)) {
+                "commitImage: картинка недоступна или больше 16 МБ"
+            }
             b()?.scriptCommitImage(bytes, if (mime == "image/jpg") "image/jpeg" else mime) ?: false
         }
         // подсказки со своим обработчиком: так моды делают свои способы ввода, меню и автодополнение
@@ -1336,7 +1561,7 @@ object ScriptHost {
 
         // --- касания клавиатуры: игры и рисование поверх клавиш (пока включено, клавиши не нажимаются)
         def(kb, "captureTouches") { a ->
-            m.touches = a.getOrNull(0).let { it == null || it is Undefined || Rhino.toBoolean(it) }
+            m.touches = !privateMode && a.getOrNull(0).let { it == null || it is Undefined || Rhino.toBoolean(it) }
             publishTouches()
             Unit
         }
@@ -1352,6 +1577,7 @@ object ScriptHost {
         def(kb, "setConfig") { a ->
             val key = str(a, 0)
             require(m.plugin.config.any { it.id == key }) { "setConfig: нет настройки «$key» в блоке config" }
+            require(m.plugin.config.none { it.id == key && it.type == "image" }) { "Choose an image in the plugin settings" }
             ModConfig.set(ctx, m.plugin, key, fromJs(a.getOrNull(1)))
             Unit
         }
@@ -1371,13 +1597,17 @@ object ScriptHost {
             Unit
         }
         def(kb, "playAudio") { a ->
-            val o = opts(a, 1)
-            playAudio(ctx, m, str(a, 0), (o["volume"] as? Double)?.toFloat()?.coerceIn(0f, 1f) ?: 1f, o["loop"] == true)
+            playAudio(ctx, m, str(a, 0), opts(a, 1))
+        }
+        def(kb, "setAudio") { a ->
+            val voice = m.players[num(a, 0, -1.0).toInt()] ?: return@def false
+            voice.update(opts(a, 1))
+            true
         }
         def(kb, "stopAudio") { a ->
             val pid = num(a, 0, -1.0).toInt()
             val list = if (pid < 0) m.players.keys.toList() else listOf(pid)
-            list.forEach { k -> m.players.remove(k)?.let { runCatching { it.stop(); it.release() } } }
+            list.forEach { k -> m.players.remove(k)?.stop() }
             Unit
         }
         def(kb, "sound") { a ->

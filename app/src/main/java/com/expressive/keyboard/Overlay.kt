@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -202,6 +203,20 @@ sealed interface OverlayItem {
         )
     }
 
+    data class GlSurface(
+        val x: Float, val y: Float, val w: Float, val h: Float, val frag: String, val vert: String,
+        val uniforms: Map<String, Any?>, val mesh: GlMesh?, val scale: Float, val fps: Int,
+        val depth: Boolean, val clear: Color, override val alpha: Float, override val rotation: Float,
+        val id: String? = null, val pluginId: String = "", val blend: Boolean = false,
+        val feedback: Boolean = false, val auto: Boolean = true, val minScale: Float = 0.4f,
+        val textures: List<GlTexSpec> = emptyList(), val sensors: Boolean = false
+    ) : OverlayItem {
+        val liveKey: String? get() = id?.let { GlSupport.liveKey(pluginId, it) }
+    }
+
+    data class Group(val key: String, val x: Float, val y: Float, val scale: Float, val world: Boolean,
+        override val alpha: Float, override val rotation: Float, val pluginId: String = "") : OverlayItem
+
     companion object {
         private val shaderTime = Regex("""\biTime\b""")
         private fun f(o: Map<*, *>, k: String, def: Float) = (o[k] as? Number)?.toFloat()?.takeIf { it.isFinite() } ?: def
@@ -253,6 +268,22 @@ sealed interface OverlayItem {
                     Shader(x, y, f(o, "w", 0f), f(o, "h", 0f), prog, uniforms, alpha, rot)
                 }
                 "glsl", "mesh3d" -> PluginGl.parse(o, x, y, f(o, "w", 0f), f(o, "h", 0f), alpha, rot)
+                "batch" -> GlBatch.parse(o, x, y, f(o, "w", 0f), f(o, "h", 0f), alpha, rot)
+                "group" -> {
+                    val key = (o["key"] as? String)?.take(64)?.takeIf { it.isNotBlank() } ?: return null
+                    Group(key, x, y, f(o, "scale", 1f).coerceIn(0.001f, 100f), o["world"] == true, alpha, rot)
+                }
+                "gl" -> {
+                    val frag = (o["frag"] as? String)?.takeIf { it.isNotBlank() && it.length <= GlSupport.MAX_SRC } ?: return null
+                    val uniforms = (o["uniforms"] as? Map<*, *>)?.entries?.take(64)
+                        ?.associate { it.key.toString() to it.value }.orEmpty()
+                    GlSurface(x, y, f(o, "w", 0f).coerceIn(0f, 4096f), f(o, "h", 0f).coerceIn(0f, 4096f),
+                        frag, (o["vert"] as? String).orEmpty().take(GlSupport.MAX_SRC), uniforms, GlMesh.parse(o["mesh"]),
+                        f(o, "scale", 1f).coerceIn(0.1f, 1f), f(o, "fps", 30f).toInt().coerceIn(1, 60),
+                        o["depth"] == true, color(o, "clear", Color.Transparent), alpha, rot, (o["id"] as? String)?.take(64),
+                        feedback = o["feedback"] == true, auto = o["autoQuality"] != false,
+                        minScale = f(o, "minScale", 0.4f).coerceIn(0.1f, 1f), textures = GlTextures.parse(o["textures"]))
+                }
                 else -> null
             }
         }
@@ -272,9 +303,17 @@ internal fun BoxScope.ScriptOverlayLayer() {
     // мод попросил касания (kb.captureTouches): слой ловит их вместо клавиш — для игр и рисования
     val touch = if (capture) Modifier.pointerInput(Unit) {
         awaitPointerEventScope {
+            val gesture = ViewGesture()
             while (true) {
                 val ev = awaitPointerEvent()
                 val d = density
+                if (ScriptView.enabled && !ScriptHost.privateMode &&
+                    !gesture.onEvent(ev.changes, d, 0f, 0f) { position, id ->
+                        ScriptHost.touch("cancel", position.x, position.y, id)
+                    }) {
+                    ev.changes.forEach { it.consume() }
+                    continue
+                }
                 for (c in ev.changes) {
                     val type = when {
                         c.pressed && !c.previousPressed -> "down"
@@ -288,9 +327,10 @@ internal fun BoxScope.ScriptOverlayLayer() {
             }
         }
     } else Modifier
+    GlItems(items)
     ScriptCanvas(items, Modifier.matchParentSize().then(touch))
     // выход всегда есть: клавиши под слоем мода не нажимаются, а мод может и не убрать перехват сам
-    if (capture) {
+    if (capture && ScriptHost.modScreen == null) {
         Box(
             Modifier.align(Alignment.TopEnd).padding(6.dp).size(34.dp).clip(CircleShape).background(Color(0x99000000))
                 .clickable { ScriptHost.releaseTouches() },
@@ -305,6 +345,7 @@ internal fun BoxScope.ScriptBackgroundLayer() {
     val items = ScriptHost.backgroundItems
     ModParticleLayer(overlay = false)
     if (items.isEmpty()) return
+    GlItems(items)
     ScriptCanvas(items, Modifier.matchParentSize())
 }
 
@@ -363,11 +404,37 @@ internal fun ScriptCanvas(items: List<OverlayItem>, modifier: Modifier) {
 
 /** Элементы kb.overlay (и холста на панели мода): координаты — в dp от угла области рисования. */
 private fun DrawScope.drawOverlayItems(
-    items: List<OverlayItem>, measurer: TextMeasurer, path: Path, frames: Map<Int, GlFrame>
+    items: List<OverlayItem>, measurer: TextMeasurer, path: Path, frames: Map<Int, GlFrame>, depth: Int = 0,
+    budget: IntArray = intArrayOf(8000)
 ) {
         val d = density
         for ((index, it) in items.withIndex()) {
+            if (budget[0]-- <= 0) return
             when (it) {
+                is OverlayItem.GlSurface -> Unit
+                is OverlayItem.Group -> {
+                    if (depth >= 4 || OverlayGroups.version < 0) continue
+                    val contents = OverlayGroups.get(it.pluginId, it.key) ?: continue
+                    val translucent = it.alpha < 0.999f
+                    if (translucent) drawContext.canvas.saveLayer(
+                        androidx.compose.ui.geometry.Rect(Offset.Zero, size),
+                        androidx.compose.ui.graphics.Paint().apply { alpha = it.alpha })
+                    try {
+                        withTransform({
+                            if (it.world) {
+                                translate(ScriptView.panX * d, ScriptView.panY * d)
+                                scale(ScriptView.zoom, ScriptView.zoom, Offset.Zero)
+                            }
+                            translate(it.x * d, it.y * d)
+                            rotate(it.rotation, Offset.Zero)
+                            scale(it.scale, it.scale, Offset.Zero)
+                        }) {
+                            drawOverlayItems(contents, measurer, path, emptyMap(), depth + 1, budget)
+                        }
+                    } finally {
+                        if (translucent) drawContext.canvas.restore()
+                    }
+                }
                 is OverlayItem.Shape -> {
                     val tl = Offset(it.x * d, it.y * d)
                     val sz = Size(it.w * d, it.h * d)

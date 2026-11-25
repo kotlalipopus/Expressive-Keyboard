@@ -243,6 +243,7 @@ internal fun KeyView(
     holdSymbol: String? = null,
     translatorSpace: Boolean = false,
     editorEnter: Boolean = false,
+    interactive: Boolean = true,
     liveUpper: () -> Boolean = { upper },
     /** Промежутки между клавишами (по горизонтали и между рядами): касание в половине промежутка — тоже эта клавиша. */
     gapX: Dp = 0.dp,
@@ -301,7 +302,7 @@ internal fun KeyView(
     val skinCache = remember { SkinKeyCache() }
     // слияние с соседними клавишами: только у стекла, и только пока идёт анимация нажатия
     val merges = settings.glassMerge && style?.material == SkinMaterial.GLASS && Build.VERSION.SDK_INT >= 33
-    if (merges) {
+    if (merges && interactive) {
         LaunchedEffect(holder) { snapshotFlow { anim.value }.collect { GlassMerge.update(holder, it) } }
         DisposableEffect(holder) { onDispose { GlassMerge.remove(holder) } }
     }
@@ -333,7 +334,7 @@ internal fun KeyView(
     // анимация нажатия: выбранная в настройках «Анимации» или из темы
     val pressAnim = remember(settings.animPress, settings.customAnims, style?.press, style?.pressScale) { Anims.forKey(settings, style) }
     val cPressAnim by rememberUpdatedState(pressAnim)
-    val speed2 = settings.animSpeed * settings.animSpeed
+    val speed2 = settings.pressAnimSpeed * settings.pressAnimSpeed
     val cSpeed2 by rememberUpdatedState(speed2)
     val weight = LocalKeyWeight.current
     val hint = if (isChar && settings.showHints && !numberRow && style?.hideHint != true) upHint else null
@@ -348,13 +349,15 @@ internal fun KeyView(
             }
         }
     }
-    DisposableEffect(handle) {
-        KeyboardGeometry.register(handle)
-        onDispose { KeyboardGeometry.unregister(handle) }
+    if (interactive) {
+        DisposableEffect(handle) {
+            KeyboardGeometry.register(handle)
+            onDispose { KeyboardGeometry.unregister(handle) }
+        }
     }
 
     // буквы регистрируются для печати свайпом
-    if (isChar && label.length == 1 && label[0].isLetter()) {
+    if (interactive && isChar && label.length == 1 && label[0].isLetter()) {
         DisposableEffect(label, glide) {
             val l = label.lowercase()
             glide.register(l, holder)
@@ -387,7 +390,8 @@ internal fun KeyView(
                 layout(c.maxWidth, c.maxHeight) { pl.place(-gx / 2, -gy / 2) }
             }
             .onGloballyPositioned { cell.coords = it }
-            .pointerInput(Unit) {
+            .pointerInput(interactive) {
+                if (!interactive) return@pointerInput
                 val slop = 12.dp.toPx()
                 val step = 44.dp.toPx()
                 val swipe = 56.dp.toPx()

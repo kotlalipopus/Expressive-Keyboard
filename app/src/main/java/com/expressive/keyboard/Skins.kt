@@ -785,15 +785,16 @@ internal fun DrawScope.drawSkinKey(
     val shadowColor = st.shadowColor ?: if (material == SkinMaterial.NEUMORPH) Color.Black.copy(alpha = if (dark) 0.55f else 0.22f)
     else Color.Black.copy(alpha = 0.3f)
     val lightColor = Color.White.copy(alpha = if (dark) 0.11f else 0.75f)
+    val tilt = if ((part and SKIN_SHADOW) != 0 && shadow > 0f) ModSensors.shadowOffset else Offset.Zero
     fun shadows(cv: android.graphics.Canvas, p: Float) {
         if (shadow > 0f) {
             val blur = shadow.dp.toPx() * (1f - 0.5f * p)
             val off = (st.shadowY ?: shadow * 0.45f).dp.toPx() * (1f - 0.7f * p)
             if (material == SkinMaterial.NEUMORPH) {
-                shadowOn(cv, c, blur, off, off, shadowColor)
-                shadowOn(cv, c, blur, -off, -off, lightColor)
+                shadowOn(cv, c, blur, off + tilt.x.dp.toPx(), off + tilt.y.dp.toPx(), shadowColor)
+                shadowOn(cv, c, blur, -off - tilt.x.dp.toPx(), -off - tilt.y.dp.toPx(), lightColor)
             } else {
-                shadowOn(cv, c, blur, 0f, off, shadowColor)
+                shadowOn(cv, c, blur, tilt.x.dp.toPx(), off + tilt.y.dp.toPx(), shadowColor)
             }
         }
         st.glow?.let { g ->
@@ -805,8 +806,8 @@ internal fun DrawScope.drawSkinKey(
         val draw: DrawScope.() -> Unit = {
             if (p < 0.01f) {
                 // в покое — готовая картинка теней; живые тени — только у нажатой клавиши
-                val pad = (shadow.dp.toPx() * 2.5f + glowPx * 2f).coerceAtLeast(1f)
-                restShadows(c, listOf(size.width, size.height, r, st, dark), pad) { shadows(it, 0f) }
+                val pad = (shadow.dp.toPx() * 2.5f + glowPx * 2f + tilt.getDistance().dp.toPx()).coerceAtLeast(1f)
+                restShadows(c, listOf(size.width, size.height, r, st, dark, tilt), pad) { shadows(it, 0f) }
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 drawIntoCanvas { shadows(it.nativeCanvas, p) }
             }

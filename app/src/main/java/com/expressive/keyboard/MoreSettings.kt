@@ -509,6 +509,7 @@ internal fun ToolbarPage(settings: KeyboardSettings) {
     val catalog = Toolbar.catalog()
     val byId = catalog.associateBy { it.id }
     val hidden = settings.toolbarHiddenSet
+    val arranger = PluginRepository.toolbarArranger
     val order = remember(catalog, settings.toolbarOrder) {
         Toolbar.arrange(catalog.map { it.id }, settings.toolbarOrderList, hidden, includeHidden = true)
     }
@@ -536,6 +537,10 @@ internal fun ToolbarPage(settings: KeyboardSettings) {
             else "Скрыта: подсказки выключены, поэтому панель функций видна всегда",
             settings.toolsButton
         ) { KeyboardPrefs.edit(context) { putBoolean("tools_button", it) } }
+    }
+    if (arranger != null) SettingsSection(null) {
+        ActionItem(Icons.Rounded.Extension, "Вернуть обычный порядок панели", arranger.name,
+            onClick = { PluginRepository.setToolbarLayoutOwner(context, null) })
     }
     SettingsSection("Кнопки") {
         order.forEachIndexed { i, id ->

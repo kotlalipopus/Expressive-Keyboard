@@ -209,13 +209,13 @@ fun rememberKeyPalette(settings: KeyboardSettings): KeyPalette {
 
 /** Фоновая картинка декодируется в фоне один раз на версию файла. */
 @Composable
-fun rememberBackgroundBitmap(version: Long, video: Boolean = false): ImageBitmap? {
+fun rememberBackgroundBitmap(version: Long, video: Boolean = false, fileName: String = KeyboardPrefs.BG_IMAGE_FILENAME): ImageBitmap? {
     val context = LocalContext.current
-    val state = androidx.compose.runtime.key(version, video) { produceState<ImageBitmap?>(null) {
+    val state = androidx.compose.runtime.key(version, video, fileName) { produceState<ImageBitmap?>(null) {
         value = if (version == 0L) null else withContext(Dispatchers.IO) {
             runCatching {
                 if (video) return@runCatching readBackgroundVideoFrame(context)
-                val f = File(context.filesDir, KeyboardPrefs.BG_IMAGE_FILENAME)
+                val f = File(context.filesDir, fileName)
                 if (!f.exists()) null else {
                     // файл уже уменьшен при выборе, но на всякий случай — не больше ~2000 px по стороне
                     val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }

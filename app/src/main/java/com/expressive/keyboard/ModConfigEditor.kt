@@ -202,6 +202,7 @@ private fun ModOptionRow(p: KeyboardPlugin, o: ModOption, value: Any?, rev: Int)
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         when (o.type) {
+            "image" -> ModImageOption(p, o, value as? String ?: "", ::set)
             "toggle" -> Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(tr(o.title), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                 Switch(checked = value == true, onCheckedChange = { set(it) })

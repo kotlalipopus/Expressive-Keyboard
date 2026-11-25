@@ -4,7 +4,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.LayoutCoordinates
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.max
@@ -20,7 +23,8 @@ object DynamicZones {
     @Volatile var model: Map<Char, Float>? = null
         private set
 
-    @Volatile private var wanted = ""
+    private var pendingKey: Pair<String, String>? = null
+    private var pendingJob: Job? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + BackgroundErrors)
 
     /** Разброс касаний вокруг центра клавиши — в шагах клавиш. */
@@ -35,24 +39,38 @@ object DynamicZones {
     /** Середина клавиши (доля шага от центра) — здесь клавиша срабатывает всегда. */
     private const val CORE = 0.3f
 
+    @Synchronized
     fun disable() {
-        wanted = ""
+        pendingJob?.cancel()
+        pendingJob = null
+        pendingKey = null
         model = null
     }
 
     /** Новое начало слова: модель из кэша сразу, иначе считается в фоне (пока считается — зон нет). */
+    @Synchronized
     fun update(lang: KeyboardLanguage, prefix: String) {
-        val key = lang.id + ":" + prefix
-        wanted = key
+        val key = lang.id to prefix
+        if (pendingKey == key) return
+        disable()
         val cached = WordPredictorEngine.cachedNextLetters(lang, prefix)
         if (cached != null) {
             model = cached
             return
         }
-        model = null
-        scope.launch {
-            val m = WordPredictorEngine.nextLetters(lang, prefix)
-            if (wanted == key) model = m
+        pendingKey = key
+        pendingJob = scope.launch {
+            // Rapid typing supersedes intermediate prefixes before they reach the dictionary.
+            delay(12L)
+            val job = coroutineContext[Job]!!
+            val next = WordPredictorEngine.nextLetters(lang, prefix, job::ensureActive)
+            synchronized(this@DynamicZones) {
+                if (pendingJob === job) {
+                    model = next
+                    pendingJob = null
+                    pendingKey = null
+                }
+            }
         }
     }
 
@@ -67,7 +85,7 @@ object DynamicZones {
         if (m.isEmpty()) return null
         val (keys, keyW) = glide.snapshot(layer) ?: return null
         val own = keys[typed] ?: return null
-        val (px, py) = GlideDecoder.pitch(keys, keyW)
+        val (px, py) = glide.pitch(keys, keyW)
         val ox = (p.x - own.x) / px
         val oy = (p.y - own.y) / py
         if (abs(ox) < CORE && abs(oy) < CORE) return null

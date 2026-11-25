@@ -25,6 +25,9 @@ import kotlin.math.sqrt
 @Stable
 class GlideController {
     private val keys = HashMap<String, CoordsHolder>()
+    private var lastPitchKeys: Map<Char, Offset> = emptyMap()
+    private var lastPitchWidth = 0f
+    private var lastPitch = 0f to 0f
     /** След пальца в координатах слоя клавиатуры; читается только при отрисовке. */
     val trail = mutableStateListOf<Offset>()
 
@@ -34,6 +37,17 @@ class GlideController {
 
     fun unregister(label: String, holder: CoordsHolder) {
         if (keys[label] === holder) keys.remove(label)
+    }
+
+    // Compare the measured key centers so floating, split and animated layouts
+    // recalculate the pitch only while their geometry is changing.
+    internal fun pitch(centers: Map<Char, Offset>, keyWidth: Float): Pair<Float, Float> {
+        if (lastPitchWidth != keyWidth || lastPitchKeys != centers) {
+            lastPitch = GlideDecoder.pitch(centers, keyWidth)
+            lastPitchKeys = centers
+            lastPitchWidth = keyWidth
+        }
+        return lastPitch
     }
 
     /** Центры буквенных клавиш и типичная ширина клавиши. */

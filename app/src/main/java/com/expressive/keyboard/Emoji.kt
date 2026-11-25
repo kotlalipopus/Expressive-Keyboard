@@ -37,7 +37,7 @@ import java.util.BitSet
 import java.util.concurrent.ConcurrentHashMap
 
 // ============================================================================
-// ЭМОДЗИ: ПОЛНЫЙ КАТАЛОГ UNICODE 16, ПОИСК, ТОНА КОЖИ И ВСТРОЕННЫЕ СТИЛИ
+// ЭМОДЗИ: КАТАЛОГ UNICODE 18, ПОИСК, ТОНА КОЖИ И ВСТРОЕННЫЕ СТИЛИ
 // Каталог и листы стилей собираются скриптом tools/emoji/build_emoji.py.
 // ============================================================================
 
@@ -141,15 +141,21 @@ object EmojiCatalog {
                 val variants = if (p[1].isEmpty()) emptyList() else p[1].split(' ')
                 val hay = " " + (p[2] + " " + p[3] + " " + p[4]).lowercase().replace(" | ", " ") + " "
                 val ok = runCatching { paint.hasGlyph(emoji) }.getOrDefault(true)
-                val item = EmojiItem(emoji, n, variants, p[2], p[3], hay, ok)
+                // Optional field: number of original sprite slots for tones, or -1
+                // if the base was also added after the sprite sheets were built.
+                val spriteVariants = p.getOrNull(5)?.toIntOrNull() ?: variants.size
+                val item = EmojiItem(emoji, if (spriteVariants >= 0) n else -1, variants, p[2], p[3], hay, ok)
                 groupItems += item
                 flat += item
                 byEmoji[emoji] = item
-                idx[emoji] = n
-                idx.putIfAbsent(emoji.replace("️", ""), n)
-                n++
-                for (v in variants) {
+                if (spriteVariants >= 0) {
+                    idx[emoji] = n
+                    idx.putIfAbsent(emoji.replace("️", ""), n)
+                    n++
+                }
+                for ((i, v) in variants.withIndex()) {
                     byEmoji[v] = item
+                    if (i >= spriteVariants) continue
                     idx[v] = n
                     idx.putIfAbsent(v.replace("️", ""), n)
                     n++

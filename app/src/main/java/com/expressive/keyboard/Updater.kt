@@ -2,6 +2,7 @@ package com.expressive.keyboard
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -21,10 +22,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import androidx.core.content.pm.PackageInfoCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import org.json.JSONArray
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -36,7 +39,8 @@ import java.net.URL
 // системную установку. Обновление встанет поверх, только если APK подписан тем же ключом.
 // ============================================================================
 
-data class UpdateInfo(val version: String, val notes: String, val apkUrl: String, val size: Long, val page: String)
+data class UpdateInfo(val version: String, val notes: String, val apkUrl: String, val size: Long, val page: String,
+    val digest: String = "")
 
 object Updater {
     private const val REPO = "kotlalipopus/Expressive-Keyboard"
@@ -101,7 +105,7 @@ object Updater {
     }
 
     private fun fetchLatest(): UpdateInfo? {
-        val conn = (URL("https://api.github.com/repos/$REPO/releases/latest").openConnection() as HttpURLConnection).apply {
+        val conn = (URL("https://api.github.com/repos/$REPO/releases?per_page=20").openConnection() as HttpURLConnection).apply {
             connectTimeout = 8000
             readTimeout = 10000
             setRequestProperty("Accept", "application/vnd.github+json")
@@ -114,24 +118,37 @@ object Updater {
         } finally {
             conn.disconnect()
         }
-        val o = JSONObject(body)
-        val tag = o.optString("tag_name").ifEmpty { return null }
-        val assets = o.optJSONArray("assets") ?: return null
+        val releases = JSONArray(body)
+        var newest: UpdateInfo? = null
+        for (index in 0 until releases.length()) {
+            val release = releases.optJSONObject(index) ?: continue
+            if (release.optBoolean("draft")) continue
+            val candidate = readRelease(release) ?: continue
+            if (newest == null || newer(candidate.version, newest.version)) newest = candidate
+        }
+        return newest
+    }
+
+    private fun readRelease(release: JSONObject): UpdateInfo? {
+        val tag = release.optString("tag_name").takeIf { Regex("^v?\\d+(\\.\\d+)+(?:-[A-Za-z0-9.-]+)?$").matches(it) } ?: return null
+        val assets = release.optJSONArray("assets") ?: return null
         var best: JSONObject? = null
         for (i in 0 until assets.length()) {
             val a = assets.optJSONObject(i) ?: continue
             val name = a.optString("name")
             if (!name.endsWith(".apk", ignoreCase = true) || name.contains("debug", ignoreCase = true)) continue
+            if (!a.optString("browser_download_url").startsWith("https://github.com/$REPO/releases/download/")) continue
             // APK с понятным именем — в приоритете; остальные — если другого нет
             if (best == null || name.startsWith("ExpressiveKeyboard-")) best = a
         }
         val apk = best ?: return null
         return UpdateInfo(
             version = tag.removePrefix("v"),
-            notes = o.optString("body").trim(),
+            notes = release.optString("body").trim(),
             apkUrl = apk.optString("browser_download_url"),
             size = apk.optLong("size"),
-            page = o.optString("html_url")
+            page = release.optString("html_url"),
+            digest = apk.optString("digest")
         )
     }
 
@@ -151,7 +168,16 @@ object Updater {
         error = null
         progress = 0f
         try {
-            val file = withContext(Dispatchers.IO) { download(context, info) }
+            val file = withContext(Dispatchers.IO) {
+                download(context, info).also { apk ->
+                    try {
+                        verifyPackage(context, apk, info.digest)
+                    } catch (failure: Exception) {
+                        apk.delete()
+                        throw failure
+                    }
+                }
+            }
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
             context.startActivity(
                 Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
@@ -173,6 +199,7 @@ object Updater {
         var conn: HttpURLConnection
         var hops = 0
         while (true) {
+            require(url.protocol == "https")
             conn = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 10000
                 readTimeout = 20000
@@ -200,6 +227,7 @@ object Updater {
                         if (n < 0) break
                         output.write(buf, 0, n)
                         done += n
+                        require(done <= 256L * 1024 * 1024)
                         if (total > 0) progress = (done.toFloat() / total).coerceIn(0f, 1f)
                     }
                 }
@@ -209,6 +237,40 @@ object Updater {
         }
         if (info.size > 0 && out.length() != info.size) throw java.io.IOException("incomplete download")
         return out
+    }
+
+    @Suppress("DEPRECATION")
+    private fun verifyPackage(context: Context, apk: File, remoteDigest: String) {
+        if (remoteDigest.matches(Regex("sha256:[a-fA-F0-9]{64}"))) {
+            val sha = java.security.MessageDigest.getInstance("SHA-256")
+            apk.inputStream().use { input ->
+                val buffer = ByteArray(65536)
+                var count = input.read(buffer)
+                while (count > 0) {
+                    sha.update(buffer, 0, count)
+                    count = input.read(buffer)
+                }
+            }
+            val hex = sha.digest().joinToString("") { "%02x".format(it) }
+            require(remoteDigest.substringAfter(':').equals(hex, ignoreCase = true))
+        }
+        val pm = context.packageManager
+        val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
+        val archive = requireNotNull(pm.getPackageArchiveInfo(apk.absolutePath, flags))
+        val installed = pm.getPackageInfo(context.packageName, flags)
+        require(archive.packageName == installed.packageName &&
+            PackageInfoCompat.getLongVersionCode(archive) > PackageInfoCompat.getLongVersionCode(installed))
+        if (Build.VERSION.SDK_INT >= 28) {
+            val next = requireNotNull(archive.signingInfo)
+            val current = requireNotNull(installed.signingInfo)
+            val apkSigners = next.apkContentsSigners.toSet()
+            val installedSigners = current.apkContentsSigners.toSet()
+            require(apkSigners == installedSigners ||
+                (!next.hasMultipleSigners() && !current.hasMultipleSigners() &&
+                    next.signingCertificateHistory.orEmpty().toSet().containsAll(installedSigners)))
+        } else {
+            require(archive.signatures.orEmpty().toSet() == installed.signatures.orEmpty().toSet())
+        }
     }
 }
 

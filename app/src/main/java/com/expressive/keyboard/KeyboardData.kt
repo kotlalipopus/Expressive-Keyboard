@@ -255,7 +255,7 @@ object KeyboardLayouts {
         return listOf(
             KeyRow(listOf(c("1"), c("2"), c("3"), back)),
             KeyRow(listOf(c("4"), c("5"), c("6"), enter)),
-            KeyRow(listOf(c("7"), c("8"), c("9"), if (phone) c("*") else gap(1f))),
+            KeyRow(listOf(c("7"), c("8"), c("9"), if (phone) c("*") else c(".", ","))),
             KeyRow(
                 if (phone) listOf(c("+", "-", "+", "±"), c("0"), c("#"), space)
                 else listOf(c("-"), c("0"), c("+"), space)

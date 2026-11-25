@@ -209,7 +209,7 @@ class KeyboardState {
     /** Закреплённые записи буфера: хранятся на диске и не стираются кнопкой «Очистить». */
     val pinnedClips = mutableStateListOf<String>()
     /** Окно клавиатуры только что появилось: панели и строка подсказок встают на место без анимаций. */
-    var instantUi by mutableStateOf(false)
+    var instantUi by mutableStateOf(true)
 }
 
 @Stable

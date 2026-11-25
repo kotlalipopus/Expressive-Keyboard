@@ -1309,7 +1309,7 @@ object WordPredictorEngine {
      * ln P(следующая буква | начало слова) по частотному словарю и вашим словам — для динамических зон клавиш.
      * Пусто — такого начала в словаре нет (имя, сленг): тогда зоны ничего не сдвигают.
      */
-    fun nextLetters(lang: KeyboardLanguage, prefix: String): Map<Char, Float> {
+    fun nextLetters(lang: KeyboardLanguage, prefix: String, checkActive: (() -> Unit)? = null): Map<Char, Float> {
         val p = prefix.lowercase()
         val key = "${lang.id}:$p"
         cachedNextLetters(lang, p)?.let { return it }
@@ -1324,6 +1324,7 @@ object WordPredictorEngine {
         }
         var i = lo
         while (i < d.sorted.size && d.sorted[i].startsWith(p)) {
+            if (i and 255 == 0) checkActive?.invoke()
             val w = d.sorted[i]
             if (w.length > p.length) {
                 val r = d.rank[w] ?: Int.MAX_VALUE / 2
@@ -1334,13 +1335,16 @@ object WordPredictorEngine {
             i++
         }
         val prefixKey = "${lang.id}:$p"
+        var checked = 0
         for ((k, n) in userWords) {
+            if (checked++ and 255 == 0) checkActive?.invoke()
             if (n < LEARNED || k.length <= prefixKey.length || !k.startsWith(prefixKey)) continue
             val c = k[prefixKey.length]
             weights[c] = (weights[c] ?: 0f) + 0.01f * n
         }
         val total = weights.values.sum()
         val out = if (total <= 0f) emptyMap() else weights.mapValues { (_, v) -> kotlin.math.ln(v / total) }
+        checkActive?.invoke()
         synchronized(nextCache) { nextCache[key] = out }
         return out
     }

@@ -161,7 +161,7 @@ internal fun HeaderBar(
 ) {
     val panel = state.panel
     val candidates = state.candidates
-    val showCandidates = candidates.isNotEmpty() && (panel == ActivePanel.KEYBOARD)
+    val showCandidates = candidates.isNotEmpty() && panel == ActivePanel.KEYBOARD && !state.toolbarOpen
     // пароли и логины от службы автозаполнения — пока ничего не набрано; потом уступают подсказкам слов
     val inline = state.inlineSuggestions.takeIf {
         it.isNotEmpty() && panel == ActivePanel.KEYBOARD && !state.toolbarOpen && !showCandidates &&
@@ -271,7 +271,8 @@ internal fun HeaderBar(
                     transitionSpec = {
                         // окно только появилось — без анимации; иначе короткое проявление
                         if (state.instantUi) EnterTransition.None togetherWith ExitTransition.None
-                        else fadeIn(tween(120)) togetherWith fadeOut(tween(70))
+                        else fadeIn(tween((120 / settings.panelAnimSpeed).roundToInt())) togetherWith
+                            fadeOut(tween((70 / settings.panelAnimSpeed).roundToInt()))
                     },
                     label = "headerSwap"
                 ) { m -> content(m) }
@@ -696,12 +697,16 @@ internal fun ToolbarPill(state: KeyboardState, actions: KeyboardActions, setting
     val fg = chipStyle?.text ?: palette.onFunc
     val catalog = Toolbar.catalog()
     val byId = remember(catalog) { catalog.associateBy { it.id } }
-    val ids = remember(catalog, settings.toolbarOrder, settings.toolbarHidden) {
-        Toolbar.arrange(catalog.map { it.id }, settings.toolbarOrderList, settings.toolbarHiddenSet)
+    val toolbarLayout = PluginRepository.toolbarArranger?.toolbarLayout
+    val ids = remember(catalog, settings.toolbarOrder, settings.toolbarHidden, toolbarLayout) {
+        val available = catalog.map { it.id }
+        val hidden = settings.toolbarHiddenSet
+        toolbarLayout?.arrange(available, settings.toolbarOrderList, hidden)
+            ?: Toolbar.arrange(available, settings.toolbarOrderList, hidden)
     }
     var order by remember(ids) { mutableStateOf(ids) }
-    var dragging by remember { mutableStateOf<String?>(null) }
-    var dragDx by remember { mutableFloatStateOf(0f) }
+    var dragging by remember(ids, toolbarLayout) { mutableStateOf<String?>(null) }
+    var dragDx by remember(ids, toolbarLayout) { mutableFloatStateOf(0f) }
     // отпускание после долгого нажатия/перетаскивания не считается нажатием
     var dragEndedAt by remember { mutableLongStateOf(0L) }
     val step = with(LocalDensity.current) { 42.dp.toPx() }
@@ -742,7 +747,8 @@ internal fun ToolbarPill(state: KeyboardState, actions: KeyboardActions, setting
     Row(
         // кнопок мало — они стоят по центру; много — ряд прокручивается
         modifier = Modifier.fillMaxHeight().horizontalScroll(rememberScrollState()).widthIn(min = minWidth).padding(horizontal = 4.dp)
-            .pointerInput(ids) {
+            .pointerInput(ids, toolbarLayout) {
+                if (toolbarLayout != null) return@pointerInput
                 detectDragGesturesAfterLongPress(
                     onDragStart = start@{ at ->
                         val used = order.size * step - gapPx
