@@ -882,7 +882,9 @@ object Telex {
             if (onset == "k" && f !in "eêiy") return false
             if (onset == "c" && f in "eêiy") return false
             if ((onset == "gh" || onset == "ngh") && f !in "eêi") return false
-            if ((onset == "g" || onset == "ng") && f in "eêi") return false
+            // «gì», «gìn»: i ở đây thuộc vần «gi» nên g + i là hợp lệ; còn ge, gê, ngi, nge… thì không
+            if (onset == "g" && f in "eê") return false
+            if (onset == "ng" && f in "eêi") return false
         }
         return true
     }
@@ -922,7 +924,7 @@ object Telex {
         return sb.toString()
     }
 
-    private fun build(raw: String): Built {
+    private fun build(raw: String, fix: Boolean = true): Built {
         val w = ArrayList<Lt>()
         var tone = 0
         // phím đã hoàn tác bằng gõ đúp: các lần bấm sau là chữ thường
@@ -1064,7 +1066,67 @@ object Telex {
             }
             w.add(Lt(low, 0, up))
         }
+        if (fix) fixOpenUo(w, tone)
         return Built(w, tone)
+    }
+
+    /**
+     * «thuở» (thuowr): th + «uơ» + dấu hỏi, không có âm cuối, không phải «ươ» như trong thường, thưởng. Âm cuối hoặc
+     * nguyên âm thứ ba đến sau (thuowngr → thưởng) thì dựng lại từ phím thô nên vẫn ra «ươ».
+     * Chỉ áp cho đúng tổ hợp này để gõ hương, thương không bị nháy u ↔ ư giữa chừng.
+     */
+    private fun fixOpenUo(w: List<Lt>, tone: Int) {
+        if (tone != 3) return
+        val r = nucleus(w) ?: return
+        if (r[1] != w.size || r[1] - r[0] != 2) return
+        val u = w[r[0]]
+        val o = w[r[0] + 1]
+        if (u.base != 'u' || u.mark != 3 || o.base != 'o' || o.mark != 3) return
+        if (part(w, 0, r[0]) == "th") u.mark = 0
+    }
+
+    /**
+     * Phím ⌫: xóa đúng chữ cuối đang thấy, giữ nguyên dấu thanh — tiếng → tiến → tiế (không phải tiếng → tiêng).
+     * Trả về chuỗi phím thô mới sao cho [compose] ra đúng chữ hiện tại bớt chữ cuối. Chữ có mũ/râu/đ (aa, ow, dd)
+     * hay cặp ass → as bị xóa cùng lúc hai phím, chữ có cả mũ/râu lẫn dấu thanh (ự) — ba phím. Không tìm được thì
+     * bỏ phím cuối như trước.
+     */
+    fun backspace(raw: String): String {
+        if (raw.isEmpty()) return raw
+        val full = build(raw)
+        if (full.w.isEmpty()) return raw.dropLast(1)
+        val keep = full.w.size - 1
+        val syms = CharArray(keep) { full.w[it].sym() }
+        val ups = BooleanArray(keep) { full.w[it].upper }
+        fun fits(b: Built): Boolean {
+            if (b.w.size != keep) return false
+            for (i in 0 until keep) if (b.w[i].sym() != syms[i] || b.w[i].upper != ups[i]) return false
+            return b.tone == (if (nucleus(b.w) != null) full.tone else 0)
+        }
+        // «thưởn» → bỏ n: phím thô còn lại hiện «thuở», nhưng chữ cần giữ là «thưở» — nhận cả hai dạng
+        fun matches(cand: String): Boolean = fits(build(cand)) || fits(build(cand, false))
+        for (i in raw.length - 1 downTo 0) {
+            val cand = StringBuilder(raw).deleteCharAt(i).toString()
+            if (matches(cand)) return cand
+        }
+        for (j in raw.length - 1 downTo 1) {
+            for (i in j - 1 downTo 0) {
+                val cand = StringBuilder(raw).deleteCharAt(j).deleteCharAt(i).toString()
+                if (matches(cand)) return cand
+            }
+        }
+        // chữ có cả mũ/râu lẫn dấu thanh (ự = u + w + j) cần ba phím
+        if (raw.length <= 24) {
+            for (k in raw.length - 1 downTo 2) {
+                for (j in k - 1 downTo 1) {
+                    for (i in j - 1 downTo 0) {
+                        val cand = StringBuilder(raw).deleteCharAt(k).deleteCharAt(j).deleteCharAt(i).toString()
+                        if (matches(cand)) return cand
+                    }
+                }
+            }
+        }
+        return raw.dropLast(1)
     }
 
     fun compose(raw: String): String {

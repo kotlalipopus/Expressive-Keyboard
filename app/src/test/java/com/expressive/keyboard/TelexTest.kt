@@ -84,7 +84,14 @@ class TelexTest {
             "ViEetj" to "ViỆt",
             "TIEENGS" to "TIẾNG",
             "chaof" to "chào",
-            "nhaats" to "nhất"
+            "nhaats" to "nhất",
+            "gif" to "gì",
+            "ginf" to "gìn",
+            "thuowr" to "thuở",
+            "quowr" to "quở",
+            "thuowngr" to "thưởng",
+            "huowng" to "hương",
+            "thuowngf" to "thường"
         )
     }
 
@@ -114,8 +121,59 @@ class TelexTest {
             "tieengs" to "tiếng",
             "hello" to "hello",
             "Vieetj" to "Việt",
-            "dduwowcj" to "được"
+            "dduwowcj" to "được",
+            "gif" to "gì",
+            "Gif" to "Gì",
+            "ginf" to "gìn",
+            "gis" to "gí",
+            "thuowr" to "thuở",
+            "boss" to "boss",
+            "gift" to "gift"
         )
         for ((raw, expected) in cases) assertEquals("finalize(\"$raw\")", expected, Telex.finalize(raw))
+    }
+
+    /** Từ [raw] bấm ⌫ liên tục, ghi lại chữ hiện ra sau mỗi lần (kể cả lúc đầu và lúc hết). */
+    private fun backspaceSteps(raw: String): List<String> {
+        var r = raw
+        val out = mutableListOf(Telex.compose(r))
+        var guard = 0
+        while (r.isNotEmpty() && guard++ < 50) {
+            r = Telex.backspace(r)
+            out.add(Telex.compose(r))
+        }
+        return out
+    }
+
+    @Test
+    fun backspaceDeletesLastVisibleLetterKeepingTone() {
+        Telex.modernTone = false
+        assertEquals(listOf("tiếng", "tiến", "tiế", "tí", "t", ""), backspaceSteps("tieengs"))
+        assertEquals(listOf("toán", "tóa", "tó", "t", ""), backspaceSteps("toasn"))
+        assertEquals(listOf("được", "đượ", "đự", "đ", ""), backspaceSteps("dduwowcj"))
+        assertEquals(listOf("người", "ngườ", "ngừ", "ng", "n", ""), backspaceSteps("nguoiwf"))
+        assertEquals(listOf("thường", "thườn", "thườ", "thừ", "th", "t", ""), backspaceSteps("thuowngf"))
+        assertEquals(listOf("Việt", "Việ", "Vị", "V", ""), backspaceSteps("Vieetj"))
+        assertEquals(listOf("ĐƯỢC", "ĐƯỢ", "ĐỰ", "Đ", ""), backspaceSteps("DDUWOWCJ"))
+        // chữ gõ bằng hai phím (aa, dd) mất cả hai; gõ đúp hoàn tác (ass → as) cũng vậy
+        assertEquals(listOf("â", ""), backspaceSteps("aa"))
+        assertEquals(listOf("đi", "đ", ""), backspaceSteps("ddi"))
+        assertEquals(listOf("as", "a", ""), backspaceSteps("ass"))
+    }
+
+    @Test
+    fun backspaceRemovesExactlyOneLetterEachTime() {
+        Telex.modernTone = false
+        val words = listOf(
+            "tieengs", "Vieetj", "nguoiwf", "dduwowcj", "huowngs", "truwowngf", "chuyeenr", "nghieemj", "khuyeens",
+            "quynhf", "hoafn", "thuys", "gif", "ginf", "thuowr", "thuowngr", "ddaay", "yeeus", "tuooir", "xoawn"
+        )
+        for (raw in words) {
+            val steps = backspaceSteps(raw)
+            for (i in 1 until steps.size) {
+                assertEquals("$raw: ${steps[i - 1]} → ${steps[i]}", steps[i - 1].length - 1, steps[i].length)
+            }
+            assertEquals("$raw ends empty", "", steps.last())
+        }
     }
 }

@@ -1864,8 +1864,8 @@ class ComposeKeyboardService : InputMethodService(),
         if (composing.isNotEmpty()) {
             val comp = kb.language.composer
             if (comp != Composer.NONE && rawComposing.isNotEmpty() && composeRaw(comp, rawComposing) == composing) {
-                // стираем последнюю нажатую клавишу: 한 → 하
-                rawComposing = rawComposing.dropLast(1)
+                // стираем последнюю нажатую клавишу: 한 → 하; в Telex — последнюю видимую букву с сохранением тона: tiếng → tiến
+                rawComposing = if (comp == Composer.TELEX) Telex.backspace(rawComposing) else rawComposing.dropLast(1)
                 val c = composeRaw(comp, rawComposing)
                 if (c.isEmpty()) icCommit(ic, "") else icSetComposing(ic, c)
                 schedulePredictions()
@@ -2056,9 +2056,11 @@ class ComposeKeyboardService : InputMethodService(),
     private fun setLanguage(lang: KeyboardLanguage, syncSubtype: Boolean = true) {
         currentInputConnection?.let { ic ->
             if (composing.isNotEmpty()) {
-                learn(lastCommittedWord, composing)
-                lastCommittedWord = composing
-                ic.finishComposingText()
+                // язык ещё прежний: для Telex слово, не ставшее слогом, возвращается как набрано
+                val word = committedWord(composing)
+                learn(lastCommittedWord, word)
+                lastCommittedWord = word
+                if (word != composing) icCommit(ic, word) else ic.finishComposingText()
                 composing = ""
                 composingStart = -1
             }
@@ -2239,10 +2241,13 @@ class ComposeKeyboardService : InputMethodService(),
 
     private fun finishComposing(ic: InputConnection) {
         if (composing.isEmpty()) return
-        learn(lastCommittedWord, composing)
-        ic.finishComposingText()
+        // Telex: windows, fix… не должны остаться как «ưindôws» — как при пробеле, возвращаем набранные клавиши
+        val word = committedWord(composing)
+        learn(lastCommittedWord, word)
+        if (word != composing) icCommit(ic, word) else ic.finishComposingText()
         composing = ""
         composingStart = -1
+        rawComposing = ""
     }
 
     private fun moveCursor(direction: Int) {
