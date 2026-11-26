@@ -759,6 +759,7 @@ object Hangul {
  *  - s f r x j là dấu sắc/huyền/hỏi/ngã/nặng, z xóa dấu;
  *  - bỏ dấu/mũ muộn: toanf → toàn, nguoiwf → người, duocw → dược, tiene → tiên;
  *  - dấu tự dời đúng chỗ khi gõ thêm chữ: toas → tóa, toasn → toán;
+ *  - dấu ở cuối từ khi chưa bỏ mũ: tiengs → tiếng, viets → viết, nhieuf → nhiều; uwo + âm cuối → ươ: duwocj → dược;
  *  - gõ đúp để hoàn tác: aaa → aa, ass → as, ww → w, ddd → dd;
  *  - kiểu bỏ dấu cũ (hòa, thúy) hoặc mới (hoà, thuý) — xem [modernTone];
  *  - khi chốt từ, nếu không phải âm tiết tiếng Việt (windows, fix, next) thì trả lại đúng phím đã gõ ([finalize]).
@@ -791,7 +792,7 @@ object Telex {
     private val NEED_CODA = setOf("ă", "oă", "iê", "uô", "ươ", "yê", "uyê")
 
     /** Một chữ cái: base thường; mark: 0 không, 1 mũ (â ê ô), 2 trăng (ă), 3 râu (ơ ư), 4 gạch (đ). */
-    private class Lt(var base: Char, var mark: Int = 0, var upper: Boolean = false, var fromW: Boolean = false) {
+    private class Lt(var base: Char, var mark: Int = 0, var upper: Boolean = false, var fromW: Boolean = false, var auto: Boolean = false) {
         fun sym(): Char = when (mark) {
             1 -> when (base) {
                 'a' -> 'â'
@@ -962,6 +963,7 @@ object Telex {
                     lock.add(low)
                     w.add(Lt(low, 0, up))
                 } else if (valid(w, t, false)) tone = t
+                else if (autoCircumflex(w, t)) tone = t
                 else w.add(Lt(low, 0, up))
                 continue
             }
@@ -987,6 +989,14 @@ object Telex {
                             w[tgt].mark = 1
                             if (valid(w, tone, false)) done = true else w[tgt].mark = 0
                         }
+                    }
+                }
+                // «uw» + «o» → «ươ» ngay (duwocj → dược, nguwoif → người, huwong → hương)
+                if (!done && low == 'o') {
+                    val prev = w.lastOrNull()
+                    if (prev != null && prev.base == 'u' && prev.mark == 3) {
+                        w.add(Lt('o', 3, up, false, true))
+                        if (valid(w, tone, false)) done = true else w.removeAt(w.size - 1)
                     }
                 }
                 if (!done) w.add(Lt(low, 0, up))
@@ -1017,6 +1027,10 @@ object Telex {
                 val ne = r[1]
                 var applied = false
                 val nuc = part(w, ns, ne)
+                // ơ vừa được tự thêm sau «uw» (duwowcj): w gõ thừa ngay sau đó chỉ bị nuốt, không hoàn tác
+                var swallowed = false
+                for (i in ns until ne) if (w[i].auto && w[i].mark == 3) { w[i].auto = false; swallowed = true }
+                if (swallowed) continue
                 if (nuc == "uo" || nuc == "uoi" || nuc == "uou" || nuc == "ưo" || nuc == "uơ" || nuc == "uô") {
                     val u = w[ns]
                     val o = w[ns + 1]
@@ -1068,6 +1082,30 @@ object Telex {
         }
         if (fix) fixOpenUo(w, tone)
         return Built(w, tone)
+    }
+
+    /**
+     * Dấu thanh gõ ở cuối từ khi chưa bỏ mũ: tiengs → tiếng, viets → viết, nhieuf → nhiều, yeus → yếu.
+     * Chỉ áp cho ie/ye + âm cuối và ieu/yeu — tiếng Việt không có vần «ie», «ye», «ieu», «yeu» không mũ.
+     * Trả về false (và không đổi gì) nếu thêm mũ không ra âm tiết hợp lệ.
+     */
+    private fun autoCircumflex(w: ArrayList<Lt>, tone: Int): Boolean {
+        val r = nucleus(w) ?: return false
+        val n = r[1] - r[0]
+        if (n < 2) return false
+        val ei = when {
+            n == 3 && w[r[1] - 1].base == 'u' -> r[1] - 2
+            r[1] < w.size -> r[1] - 1
+            else -> return false
+        }
+        val e = w[ei]
+        if (e.base != 'e' || e.mark != 0 || ei < 1 || w[ei - 1].base !in "iy") return false
+        e.mark = 1
+        e.auto = true
+        if (valid(w, tone, false)) return true
+        e.mark = 0
+        e.auto = false
+        return false
     }
 
     /**

@@ -176,4 +176,34 @@ class TelexTest {
             assertEquals("$raw ends empty", "", steps.last())
         }
     }
+
+    @Test
+    fun toneAtEndOfWordAndLateHorn() {
+        Telex.modernTone = false
+        check(
+            "tiengs" to "tiếng",
+            "tienf" to "tiền",
+            "viets" to "viết",
+            "vietsj" to "việt",
+            "nhieuf" to "nhiều",
+            "yeus" to "yếu",
+            "khuyens" to "khuyến",
+            "duwocj" to "dược",
+            "dduwocj" to "được",
+            "nguwoif" to "người",
+            "huwong" to "hương",
+            "luwongj" to "lượng",
+            "tuwoi" to "tươi",
+            "thuwongr" to "thưởng",
+            // gõ đủ phím như cũ vẫn ra đúng
+            "tieengs" to "tiếng",
+            "duwowcj" to "dược",
+            "nguwowif" to "người",
+            // không phải vần tiếng Việt thì giữ nguyên
+            "muonsj" to "muonsj",
+            "hocf" to "hocf"
+        )
+        assertEquals("tiếng", Telex.finalize("tiengs"))
+        assertEquals("dược", Telex.finalize("duwocj"))
+    }
 }
