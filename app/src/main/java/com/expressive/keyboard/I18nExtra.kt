@@ -134,7 +134,9 @@ internal val EN_EXTRA: Map<String, String> = hashMapOf(
     "Загрузить" to "Download",
     "Установить" to "Install",
     "Размер" to "Size",
-    "Очистить диктовку" to "Clean up dictation"
+    "Очистить диктовку" to "Clean up dictation",
+    "Предпросмотр клавиатуры" to "Keyboard preview",
+    "Показывать мини-клавиатуру в разделах оформления" to "Show mini keyboard in Appearance sections"
 )
 
 internal val ES_EXTRA: Map<String, String> = hashMapOf(
@@ -249,5 +251,7 @@ internal val ES_EXTRA: Map<String, String> = hashMapOf(
     "Загрузить" to "Descargar",
     "Установить" to "Instalar",
     "Размер" to "Tamaño",
-    "Очистить диктовку" to "Limpiar dictado"
+    "Очистить диктовку" to "Limpiar dictado",
+    "Предпросмотр клавиатуры" to "Vista previa del teclado",
+    "Показывать мини-клавиатуру в разделах оформления" to "Mostrar miniteclado en las secciones de apariencia"
 )

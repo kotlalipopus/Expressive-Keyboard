@@ -248,6 +248,7 @@ internal fun ColorsPage(settings: KeyboardSettings) {
     val auto = remember(cs) { buildKeyPalette(cs, KeyboardSettings()) }
     val monet = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
 
+    if (settings.showKeyboardPreview) PreviewSection(settings)
     // акцент — главный цвет клавиатуры: вверху и в одном месте (раньше он терялся среди цветов клавиш)
     val themeColors = PluginRepository.skinPlugin(settings)?.skin?.forMode(keyboardIsDark(settings))?.colors
     val themeAccent = themeColors?.get("accent")?.let { Color(it) }
@@ -393,6 +394,7 @@ internal fun BackgroundPage(settings: KeyboardSettings) {
             }
         }
     }
+    if (settings.showKeyboardPreview) PreviewSection(settings)
     SettingsSection("Размытие") {
         ToggleItem(Icons.Rounded.LightMode, "Тени реагируют на наклон", "Для тем с тенями на клавишах", settings.dynamicShadows) {
             KeyboardPrefs.edit(context) { putBoolean("dynamic_shadows", it) }

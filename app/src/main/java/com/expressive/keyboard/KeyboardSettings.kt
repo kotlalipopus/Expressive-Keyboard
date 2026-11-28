@@ -305,6 +305,7 @@ data class KeyboardSettings(
     val clipboardPinnedTop: Boolean = true,
     val clipboardHideOnType: Boolean = false,
     val classicSettingsUi: Boolean = false,
+    val showKeyboardPreview: Boolean = false,
     /** Новые скриншоты сами попадают в буфер (нужен доступ к фото). */
     val clipScreenshots: Boolean = true,
     val soundVolume: Float = 0.6f,
@@ -655,6 +656,7 @@ object KeyboardPrefs {
             clipboardPinnedTop = p.getBoolean("clipboard_pinned_top", true),
             clipboardHideOnType = p.getBoolean("clipboard_hide_on_type", false),
             classicSettingsUi = p.getBoolean("classic_settings_ui", false),
+            showKeyboardPreview = p.getBoolean("show_keyboard_preview", false),
             clipScreenshots = p.getBoolean("clip_screenshots", true),
             soundVolume = p.getFloat("sound_volume", 0.6f).coerceIn(0.05f, 1f),
             giphyKey = SecretBox.decrypt(p.getString("giphy_key", "") ?: ""),
@@ -749,7 +751,7 @@ object KeyboardPrefs {
             "show_number_row", "show_key_borders", "key_preview", "key_background", "emoji_return_keyboard", "auto_capitalize", "auto_correct_enabled",
             "double_space_period", "haptics_enabled", "vibrate_on_release", "strong_special_keys", "sound_enabled",
             "show_hints", "show_header", "number_pad", "floating_keyboard", "liquid_glass", "glass_merge", "myanmar_visual", "show_suggestions", "inline_calculator", "enter_hold_send", "show_mic_button", "suggestions_full_width", "show_emoji_key", "show_globe_key", "panel_animations",
-            "backspace_swipe", "fast_backspace_repeat", "swipe_down_hide", "clipboard_history", "clipboard_space_after_paste", "clipboard_pinned_top", "clipboard_hide_on_type", "classic_settings_ui", "instant_input", "glide_typing", "glide_trail", "swipe_up_hint",
+            "backspace_swipe", "fast_backspace_repeat", "swipe_down_hide", "clipboard_history", "clipboard_space_after_paste", "clipboard_pinned_top", "clipboard_hide_on_type", "classic_settings_ui", "show_keyboard_preview", "instant_input", "glide_typing", "glide_trail", "swipe_up_hint",
             "space_long_press", "auto_pair", "incognito", "dict_auto_download", "punctuation_keys", "smart_punctuation", "static_photo_blur", "dynamic_shadows",
             "system_spellcheck", "edit_bar", "auto_space_punct", "eco_mode", "eco_press", "eco_panels", "eco_blur", "eco_trail", "eco_preview", "eco_haptics", "eco_sound", "eco_suggestions", "dash_merge", "clip_screenshots", "correct_everywhere", "dynamic_zones", "ai_voice_cleanup", "tools_button", "pinned_tools", "landscape_split"
         ).forEach { put(it, 'b') }

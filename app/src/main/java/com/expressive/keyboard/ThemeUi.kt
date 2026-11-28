@@ -675,6 +675,26 @@ private fun ThemeOptionsSections(plugin: KeyboardPlugin, settings: KeyboardSetti
     val skin = remember(plugin, live, settings.userAccent, settings.colorAccentText, settings.keyOpacity, dark) {
         runCatching { ThemeOptions.build(plugin, plugin.skin!!, live, settings, dark) }.getOrNull()
     }
+    if (settings.showKeyboardPreview) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            tonalElevation = 1.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            SkinMiniPreview(
+                skin = skin ?: plugin.skin,
+                settings = settings,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(176.dp)
+                    .padding(8.dp),
+                interactive = true,
+                showHeader = settings.showHeader,
+                clipShape = RoundedCornerShape(18.dp)
+            )
+        }
+    }
     SettingsSection(tr("Настройки темы «{0}»", tr(plugin.name))) {
         declared.forEach { OptionItem(plugin.id, it, values, settings) { id, v -> dragging = id to v } }
         if (declared.isEmpty()) {

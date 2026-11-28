@@ -551,6 +551,7 @@ private fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> U
         onMic = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }
     )
     if (settings.classicSettingsUi) {
+        if (settings.showKeyboardPreview) PreviewSection(settings)
         if (arranger != null && layout != null) {
             SettingsSection(tr("Закреплённые разделы")) {
                 for (p in layout.pinned) {
@@ -597,6 +598,9 @@ private fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> U
         AboutContent(settings = settings, onNavigate = onNavigate, selected = selected, expressive = expressive)
         return
     }
+    if (section == SettingsTab.APPEARANCE && settings.showKeyboardPreview) {
+        PreviewSection(settings)
+    }
     val pages = layout?.arrange(section.pages) ?: section.pages
     if (pages.isNotEmpty()) {
         SettingsSection(null) {
@@ -613,6 +617,29 @@ private fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> U
                     onClick = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) })
             }
         }
+    }
+}
+
+@Composable
+internal fun PreviewSection(settings: KeyboardSettings) {
+    val skin = PluginRepository.skinPlugin(settings)?.skin
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        tonalElevation = 1.dp,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        SkinMiniPreview(
+            skin = skin,
+            settings = settings,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(176.dp)
+                .padding(8.dp),
+            interactive = true,
+            showHeader = settings.showHeader,
+            clipShape = RoundedCornerShape(18.dp)
+        )
     }
 }
 
@@ -971,6 +998,12 @@ internal fun AboutContent(
             "Без нижней панели — все разделы одним списком",
             settings.classicSettingsUi
         ) { KeyboardPrefs.edit(context) { putBoolean("classic_settings_ui", it) } }
+        ToggleItem(
+            Icons.Rounded.Visibility,
+            "Предпросмотр клавиатуры",
+            "Показывать мини-клавиатуру в разделах оформления",
+            settings.showKeyboardPreview
+        ) { KeyboardPrefs.edit(context) { putBoolean("show_keyboard_preview", it) } }
     }
     var crash by remember { mutableStateOf(CrashLog.read(context)) }
     crash?.let { report ->

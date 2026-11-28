@@ -1408,6 +1408,11 @@ object WordPredictorEngine {
      * отвечает на всё подряд — после трёх таких ответов её мнение для языка не учитывается до перезапуска.
      */
     private val systemMisses = ConcurrentHashMap<String, MutableSet<String>>()
+    /**
+     * Сколько раз системная проверка пометила как «опечатку» частое правильное слово из нашего словаря.
+     * Бывает, когда системный спеллчекер (Samsung/MIUI/Gboard) настроен на другую локаль или без словаря языка.
+     */
+    private val systemFalsePositives = ConcurrentHashMap<String, MutableSet<String>>()
 
     fun rejectCorrection(lang: KeyboardLanguage, word: String) {
         rejectedUntil[uKey(lang, word.trim().lowercase())] = System.currentTimeMillis() + REJECT_MS
@@ -2093,6 +2098,7 @@ object WordPredictorEngine {
         if (isRejected(uKey(lang, lower)) || learned(lang, lower) || isPersonal(lang, lower)) return own
         if (typoFix(lang, lower) != null) return own
         if ((systemMisses[lang.id]?.size ?: 0) >= 3) return own
+        if ((systemFalsePositives[lang.id]?.size ?: 0) >= 3) return own
         if (!sys.typo) {
             if (own != null && confident[uKey(lang, lower)] == true) {
                 systemMisses.getOrPut(lang.id) { ConcurrentHashMap.newKeySet() } += lower
@@ -2100,14 +2106,21 @@ object WordPredictorEngine {
             }
             return null
         }
+        val wordKnown = isKnown(lower, lang)
+        if (wordKnown) {
+            if (own == null && (dictFor(lang)?.rankOf(lower) ?: Int.MAX_VALUE) < 20_000) {
+                systemFalsePositives.getOrPut(lang.id) { ConcurrentHashMap.newKeySet() } += lower
+            }
+            return own
+        }
         val first = sys.suggestions.firstOrNull { sameScript(lang, it) } ?: return own
         val cap = clean.first().isUpperCase()
         val allCaps = clean.length > 1 && clean.all { it.isUpperCase() }
         if (own != null && sys.suggestions.take(3).any { it.equals(own, ignoreCase = true) }) return own
         if (sys.recommended) return applyCase(first, cap, allCaps)
         if (own != null) return own
-        // слово из своего словаря без уверенной рекомендации не трогаем
-        if (strength != "NORMAL" || lower.length < 3 || isKnown(lower, lang)) return null
+        // короткие слова без уверенной рекомендации не трогаем
+        if (strength != "NORMAL" || lower.length < 3) return null
         // без рекомендации первый вариант берём, только если это действительно близкая опечатка
         val limit = when {
             lower.length <= 4 -> 4.5f
@@ -2236,8 +2249,9 @@ object WordPredictorEngine {
         val known = isKnown(lower, lang) || sysOk
         val own = if (autoCorrect) autoCorrectionFor(clean, lang, strength, previous, touches) else null
         val fix = if (autoCorrect) mergeSystem(clean, own, sys, lang, strength) else null
-        // варианты системной проверки — когда она считает слово опечаткой
-        val sysAlt = if (sys != null && sys.typo) {
+        val sysTrusted = sys != null && (systemFalsePositives[lang.id]?.size ?: 0) < 3
+        // варианты системной проверки — только для неизвестного слова, когда системный спеллчекер не ошибается на частых словах
+        val sysAlt = if (!known && sysTrusted && sys.typo) {
             sys.suggestions.filter { sameScript(lang, it) }.map { applyCase(it, cap, allCaps) }.filter { it != clean && it != fix }
         } else emptyList()
         // слово уже набрано целиком (курсор поставили на него): дописывать нечего, нужны исправления
