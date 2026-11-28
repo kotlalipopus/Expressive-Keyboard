@@ -192,6 +192,9 @@ class ComposeKeyboardService : InputMethodService(),
     private var clipboardManager: ClipboardManager? = null
     /** Время копирования последней записи буфера, которую уже видели. */
     private var lastClipStamp = -1L
+    private var dismissedClipText: String? = null
+    private val removedClipsInSession = HashSet<String>()
+    private var clipClearedInSession = false
     private var clipOfferAt = 0L
     /** Слово, на которое нажали: его варианты в строке подсказок, выбор заменяет слово целиком. */
     private data class TapWord(val start: Int, val end: Int, val word: String)
@@ -445,7 +448,10 @@ class ComposeKeyboardService : InputMethodService(),
         WordPredictorEngine.prepare(this, kb.language)
         Cjk.prepare(this, kb.language)
         runCatching {
-            val arr = JSONArray(dataPrefs().getString("pinned_clips", "[]"))
+            val dp = dataPrefs()
+            lastClipStamp = dp.getLong("last_clip_stamp", -1L)
+            dismissedClipText = dp.getString("dismissed_clip_text", null)
+            val arr = JSONArray(dp.getString("pinned_clips", "[]"))
             for (i in 0 until arr.length()) kb.pinnedClips += arr.getString(i)
         }
         // история буфера переживает закрытие клавиатуры системой. Диск и JSON-разбор уводим в фон:
@@ -456,11 +462,13 @@ class ComposeKeyboardService : InputMethodService(),
             serviceScope.launch(Dispatchers.IO) {
                 val loaded = ClipStore.load(this@ComposeKeyboardService, bootSettings).take(bootSettings.clipboardSize)
                 val keep = withContext(Dispatchers.Main.immediate) {
-                    // скопированное уже после запуска остаётся сверху и не дублируется
-                    val fresh = kb.clipboard.filter { it !in loaded }
-                    val older = loaded.filter { it !in fresh }
-                    kb.clipboard.clear()
-                    kb.clipboard.addAll(fresh + older)
+                    if (!clipClearedInSession) {
+                        // скопированное уже после запуска остаётся сверху и не дублируется; удалённое пользователем не возвращаем
+                        val fresh = kb.clipboard.filter { it !in loaded }
+                        val older = loaded.filter { it !in fresh && it !in removedClipsInSession }
+                        kb.clipboard.clear()
+                        kb.clipboard.addAll(fresh + older)
+                    }
                     kb.pinnedClips + kb.clipboard
                 }
                 ClipImages.cleanup(this@ComposeKeyboardService, keep)
@@ -1438,7 +1446,10 @@ class ComposeKeyboardService : InputMethodService(),
     private fun learn(previous: String, word: String, boost: Int = 1) {
         // латиница пиньиня/ромадзи — не слова языка
         if (Cjk.isCjk(kb.language.composer)) return
-        if (!flags.isPassword && flags.suggestions && !settings.incognito) WordPredictorEngine.learn(kb.language, previous, word, boost)
+        if (!flags.isPassword && flags.suggestions && !settings.incognito) {
+            val prev2 = if (previous.isNotEmpty()) wordBeforePrevious(previous) else ""
+            WordPredictorEngine.learn(kb.language, previous, word, boost, prev2)
+        }
         if (ScriptHost.has("word") && !flags.isPassword && !settings.incognito) ScriptHost.emit("word", mapOf("word" to word, "previous" to previous))
     }
 
@@ -2171,9 +2182,17 @@ class ComposeKeyboardService : InputMethodService(),
             kb.toolbarOpen = false
         }
         if (kb.fieldEmpty && panelInput == null && (key.type == KeyType.CHARACTER || key.type == KeyType.SPACE)) kb.fieldEmpty = false
-        if (key.type in OFFER_BREAKERS && panelInput == null &&
-            kb.clipOffer?.let { isTemporaryClipOffer(it) } == true
-        ) clearClipOffer()
+        if (key.type in OFFER_BREAKERS && panelInput == null && kb.clipOffer != null) {
+            if (settings.clipboardHideOnType) {
+                clearClipOffer()
+            } else if (key.type == KeyType.CHARACTER && text.any { it.isLetterOrDigit() } &&
+                settings.clipboardCompactOffer != "OFF" && !kb.clipOfferSecret
+            ) {
+                kb.clipOfferCollapsed = true
+            } else if (kb.clipOffer?.let { isTemporaryClipOffer(it) } == true) {
+                clearClipOffer()
+            }
+        }
         when (key.type) {
             KeyType.CHARACTER -> {
                 // клавиша-команда из раскладки плагина
@@ -2270,18 +2289,53 @@ class ComposeKeyboardService : InputMethodService(),
         }
     }
 
+    private var lastCursorTickAt = 0L
+
     override fun spaceCursor(direction: Int) {
+        if (direction == 0) return
         if (kb.panel == ActivePanel.TRANSLATE) {
             val text = kb.translatorInput
-            val cursor = translatorCursor()
+            var cursor = translatorCursor()
             val boundaries = android.icu.text.BreakIterator.getCharacterInstance().apply { setText(text) }
-            val next = if (direction > 0) boundaries.following(cursor) else boundaries.preceding(cursor)
-            if (next != android.icu.text.BreakIterator.DONE) {
-                setTranslatorCursor(next)
-                keyTick()
+            var moved = false
+            repeat(abs(direction)) {
+                val next = if (direction > 0) boundaries.following(cursor) else boundaries.preceding(cursor)
+                if (next != android.icu.text.BreakIterator.DONE) {
+                    cursor = next
+                    moved = true
+                }
+            }
+            if (moved) {
+                setTranslatorCursor(cursor)
+                val now = SystemClock.uptimeMillis()
+                if (now - lastCursorTickAt >= 32L) {
+                    lastCursorTickAt = now
+                    keyTick()
+                }
             }
         } else if (panelInput == null) moveCursor(direction)
     }
+
+    override fun spaceCursorVertical(direction: Int) {
+        if (direction == 0 || kb.panel == ActivePanel.TRANSLATE || panelInput != null) return
+        val ic = currentInputConnection ?: return
+        finishComposing(ic)
+        undo = null
+        autoSpace = false
+        lastActionWasSpace = false
+        lastCommittedWord = ""
+        expectUnknown()
+        val keyCode = if (direction > 0) KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_UP
+        repeat(abs(direction).coerceAtMost(12)) { sendDownUpKeyEvents(keyCode) }
+        val now = SystemClock.uptimeMillis()
+        if (now - lastCursorTickAt >= 32L) {
+            lastCursorTickAt = now
+            HapticsEngine.tick(this, inputView, settings)
+        }
+        schedulePredictions()
+    }
+
+    override fun swipeSpaceVertical(direction: Int) = toggleLanguage(direction)
 
     private fun finishComposing(ic: InputConnection) {
         if (composing.isEmpty()) return
@@ -2291,7 +2345,8 @@ class ComposeKeyboardService : InputMethodService(),
         composingStart = -1
     }
 
-    private fun moveCursor(direction: Int) {
+    private fun moveCursor(steps: Int) {
+        if (steps == 0) return
         val ic = currentInputConnection ?: return
         finishComposing(ic)
         undo = null
@@ -2299,8 +2354,22 @@ class ComposeKeyboardService : InputMethodService(),
         lastActionWasSpace = false
         lastCommittedWord = ""
         expectUnknown()
-        sendDownUpKeyEvents(if (direction > 0) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT)
-        HapticsEngine.tick(this, inputView, settings)
+        val movedDirect = runCatching {
+            val et = ic.getExtractedText(android.view.inputmethod.ExtractedTextRequest(), 0)
+            if (et != null && et.text != null && et.selectionEnd >= 0) {
+                val target = (et.selectionEnd + steps).coerceIn(0, et.text.length)
+                ic.setSelection(target, target)
+            } else false
+        }.getOrDefault(false)
+        if (!movedDirect) {
+            val keyCode = if (steps > 0) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT
+            repeat(abs(steps).coerceAtMost(24)) { sendDownUpKeyEvents(keyCode) }
+        }
+        val now = SystemClock.uptimeMillis()
+        if (now - lastCursorTickAt >= 32L) {
+            lastCursorTickAt = now
+            HapticsEngine.tick(this, inputView, settings)
+        }
         schedulePredictions()
     }
 
@@ -2558,6 +2627,7 @@ class ComposeKeyboardService : InputMethodService(),
 
     override fun commitEmoji(emoji: String) {
         deletedText = null
+        if (settings.clipboardHideOnType && kb.clipOffer != null) clearClipOffer()
         HapticsEngine.keyPress(this, inputView, settings, false)
         EmojiRecents.add(this, emoji)
         commitText(emoji)
@@ -2758,24 +2828,53 @@ class ComposeKeyboardService : InputMethodService(),
     }
 
     override fun clearClipboard() {
+        clipClearedInSession = true
         val keep = kb.pinnedClips.toSet()
         kb.clipboard.filter { it !in keep }.forEach {
+            removedClipsInSession += it
             ClipImages.delete(it)
             ClipStore.forget(it)
         }
         kb.clipboard.retainAll(keep)
-        if (kb.clipOffer?.let { it !in keep } == true) kb.clipOffer = null
-        ClipStore.save(this, kb.clipboard)
+        if (kb.clipOffer?.let { it !in keep } == true) clearClipOffer()
+        markCurrentSystemClipDismissed()
+        ClipStore.save(this, kb.clipboard, immediate = true)
     }
 
     override fun removeClip(text: String) {
         HapticsEngine.tick(this, inputView, settings)
+        removedClipsInSession += text
         kb.clipboard.remove(text)
         if (kb.pinnedClips.remove(text)) savePinned()
-        if (kb.clipOffer == text) kb.clipOffer = null
+        if (kb.clipOffer == text) clearClipOffer()
+        if (!ClipImages.isImage(text)) {
+            dismissedClipText = text
+            dataPrefs().edit().putString("dismissed_clip_text", text).apply()
+        }
+        markCurrentSystemClipDismissed()
         ClipImages.delete(text)
         ClipStore.forget(text)
-        ClipStore.save(this, kb.clipboard)
+        ClipStore.save(this, kb.clipboard, immediate = true)
+    }
+
+    private fun markCurrentSystemClipDismissed() {
+        runCatching {
+            val clip = clipboardManager?.primaryClip ?: return
+            if (clip.itemCount == 0) return
+            val desc = clip.description
+            val stamp = if (Build.VERSION.SDK_INT >= 26) desc?.timestamp ?: 0L else 0L
+            val currentText = clip.getItemAt(0)?.coerceToText(this)?.toString()?.trim()
+            val ed = dataPrefs().edit()
+            if (stamp != 0L) {
+                lastClipStamp = stamp
+                ed.putLong("last_clip_stamp", stamp)
+            }
+            if (!currentText.isNullOrEmpty()) {
+                dismissedClipText = currentText
+                ed.putString("dismissed_clip_text", currentText)
+            }
+            ed.apply()
+        }
     }
 
     /** Вставленная запись поднимается наверх — последние использованные всегда под рукой. */
@@ -2830,7 +2929,7 @@ class ComposeKeyboardService : InputMethodService(),
 
     private fun commitPastedText(text: String): Boolean {
         if (text.isEmpty()) return false
-        val suffix = if (flags.suggestions && !text.last().isWhitespace()) " " else ""
+        val suffix = if (settings.clipboardSpaceAfterPaste && flags.suggestions && !text.last().isWhitespace()) " " else ""
         return commitEditorText(text + suffix)
     }
 
@@ -3088,6 +3187,7 @@ class ComposeKeyboardService : InputMethodService(),
     private fun clearClipOffer() {
         kb.clipOffer = null
         kb.clipOfferSecret = false
+        kb.clipOfferCollapsed = false
     }
 
     /** Первая текстовая запись буфера — для шаблонов {clipboard}. */
@@ -3111,6 +3211,7 @@ class ComposeKeyboardService : InputMethodService(),
         if (!flags.isPassword && (!ClipImages.isImage(entry) || stamp > 0 && now - stamp in 0..CLIP_OFFER_MS)) {
             kb.clipOffer = entry
             kb.clipOfferSecret = false
+            kb.clipOfferCollapsed = false
             clipOfferAt = stamp
         }
     }
@@ -3189,6 +3290,7 @@ class ComposeKeyboardService : InputMethodService(),
             val imageMime = desc?.let { d -> (0 until d.mimeTypeCount).map { d.getMimeType(it) }.firstOrNull { it.startsWith("image/") } }
             if (uri != null && imageMime != null) {
                 lastClipStamp = stamp
+                if (stamp != 0L) dataPrefs().edit().putLong("last_clip_stamp", stamp).apply()
                 serviceScope.launch {
                     val entry = ClipImages.save(this@ComposeKeyboardService, uri, imageMime, if (stamp > 0) stamp else System.currentTimeMillis())
                     if (entry != null) addClip(entry, stamp)
@@ -3198,8 +3300,14 @@ class ComposeKeyboardService : InputMethodService(),
             val text = item.coerceToText(this)?.toString()?.trim()
             // пока клавиатура скрыта, система может отдать пустую запись — перечитаем, когда она появится
             if (text.isNullOrEmpty()) return
+            if (stamp == 0L && (kb.clipboard.firstOrNull() == text || dismissedClipText == text)) return
             lastClipStamp = stamp
-            if (stamp == 0L && kb.clipboard.firstOrNull() == text) return
+            removedClipsInSession.remove(text)
+            dismissedClipText = null
+            dataPrefs().edit()
+                .putLong("last_clip_stamp", stamp)
+                .remove("dismissed_clip_text")
+                .apply()
             addClip(text, stamp)
             val entry = text
             if (!ScriptHost.privateMode) ScriptHost.emit("clipboard", entry)
@@ -3219,6 +3327,7 @@ class ComposeKeyboardService : InputMethodService(),
         if (!text.isNullOrEmpty() && stamp > 0 && now - stamp in 0..CLIP_OFFER_MS) {
             kb.clipOffer = text
             kb.clipOfferSecret = true
+            kb.clipOfferCollapsed = false
             clipOfferAt = stamp
         }
         true
@@ -3246,8 +3355,8 @@ class ComposeKeyboardService : InputMethodService(),
             return
         }
         val ic = currentInputConnection ?: return
-        // бирманская буква могла уйти внутрь слога: конец текста уже не она, и стирать там нечего
-        if (kb.language.id == "my" && ic.getTextBeforeCursor(old.length, 0)?.toString() != old) return
+        // Другая клавиша могла сработать до окончания жеста: не заменяем чужую букву.
+        if (old.isEmpty() || ic.getTextBeforeCursor(old.length, 0)?.toString() != old) return
         ic.beginBatchEdit()
         if (composing.isNotEmpty() && composing.endsWith(old)) {
             val rest = composing.dropLast(old.length)
@@ -3264,6 +3373,7 @@ class ComposeKeyboardService : InputMethodService(),
     }
 
     override fun commitGlide(path: List<Offset>, keys: Map<Char, Offset>, keyWidth: Float, tapLetter: String?) {
+        if (settings.clipboardHideOnType && kb.clipOffer != null) clearClipOffer()
         val lang = kb.language
         // буква с первой клавиши уже сняла одиночный Shift — слово берёт регистр, каким он был до неё
         val shift = if (tapLetter != null) shiftBeforeKey else kb.shift

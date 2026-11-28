@@ -55,6 +55,8 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -75,11 +77,13 @@ import androidx.compose.ui.draw.*
 import androidx.compose.ui.geometry.*
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.*
+import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.*
 import androidx.compose.ui.platform.*
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.*
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -175,13 +179,17 @@ enum class SettingsPage(val title: String, val subtitle: String, val icon: Image
     WHATS_NEW("Новое", "Всё, что появилось в этом обновлении, можно настроить прямо здесь", Icons.Rounded.NewReleases, ExpressiveShapePreset.SUNNY_8),
     THEMES("Темы", "Светлая или тёмная; Minecraft, Samsung, Nothing, стекло; настройки темы и свои темы", Icons.Rounded.Style, ExpressiveShapePreset.FLOWER_6),
     THEME_EDITOR("Редактор темы", "Всё оформление: фон, клавиши, форма, тени, шрифт", Icons.Rounded.Brush, ExpressiveShapePreset.SUNNY_8),
-    COLORS("Цвета и фон", "Акцентный цвет, палитра Material You, цвета клавиш, картинка и размытие", Icons.Rounded.ColorLens, ExpressiveShapePreset.FLOWER_6),
+    COLORS("Цвета", "Палитра Material You и цвета клавиш", Icons.Rounded.ColorLens, ExpressiveShapePreset.FLOWER_6),
+    BACKGROUND("Фон клавиатуры", "Фото или видео из галереи", Icons.Rounded.Image, ExpressiveShapePreset.FLOWER_6),
+    EMOJI_STYLE("Эмодзи и иконки", "Стиль и размер эмодзи, свои иконки", Icons.Rounded.EmojiEmotions, ExpressiveShapePreset.SUNNY_8),
+    FONT("Шрифт", "Начертание, толщина, размер букв и свой шрифт", Icons.Rounded.TextFields, ExpressiveShapePreset.SUNNY_8),
+    BUTTON_SHAPES("Форма кнопок", "«Печеньки», цветы, волны и готовые фигуры", Icons.Rounded.Interests, ExpressiveShapePreset.COOKIE_12),
     SIZE("Размер и положение", "Высота, ширина, плавающий режим и режим одной руки", Icons.Rounded.Straighten, ExpressiveShapePreset.CLOVER_4),
-    KEYS("Клавиши и шрифт", "Ряд цифр, кнопки у пробела, символы при удержании и шрифт", Icons.Rounded.Keyboard, ExpressiveShapePreset.CLOVER_4),
+    KEYS("Клавиши и кнопки", "Ряд цифр, кнопки у пробела, символы при удержании", Icons.Rounded.Keyboard, ExpressiveShapePreset.CLOVER_4),
     LAYOUT("Свои места клавиш", "Поменяйте местами любые клавиши: буквы, цифры, пробел, запятую, эмодзи…", Icons.Rounded.SwapHoriz, ExpressiveShapePreset.SUNNY_8),
     LONG_PRESS("Символы при удержании", "Свои символы на любой клавише: ғ на «г», $ на «d»", Icons.Rounded.TouchApp, ExpressiveShapePreset.FLOWER_6),
     ANIMATIONS("Анимации", "Нажатие клавиш, свои анимации, скорость, подсказки и панели", Icons.Rounded.Animation, ExpressiveShapePreset.CLOVER_4),
-    TOOLBAR("Панель, эмодзи и иконки", "Кнопки панели инструментов, стиль эмодзи, свои иконки", Icons.Rounded.DragIndicator, ExpressiveShapePreset.FLOWER_6),
+    TOOLBAR("Панель инструментов", "Порядок и видимость кнопок", Icons.Rounded.DragIndicator, ExpressiveShapePreset.FLOWER_6),
     LANGUAGES("Языки", "Раскладки, китайский и японский ввод, словари подсказок", Icons.Rounded.Language, ExpressiveShapePreset.COOKIE_12),
     MY_WORDS("Мой словарь", "Добавьте свои слова: с диакритикой, имена, термины", Icons.Rounded.MenuBook, ExpressiveShapePreset.SUNNY_8),
     TYPING("Подсказки и исправления", "Автоисправление, тире, заглавные буквы, ИИ-исправление, инкогнито", Icons.Rounded.Spellcheck, ExpressiveShapePreset.SUNNY_8),
@@ -197,7 +205,6 @@ enum class SettingsPage(val title: String, val subtitle: String, val icon: Image
     val parent: SettingsPage
         get() = when (this) {
             THEME_EDITOR -> THEMES
-            LONG_PRESS -> KEYS
             else -> HOME
         }
 }
@@ -287,16 +294,28 @@ fun SettingsScreen(settings: KeyboardSettings) {
 
 @Composable
 private fun SettingsNavigation(settings: KeyboardSettings) {
-    var page by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(SettingsPage.HOME) }
+    var history by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(arrayListOf<SettingsPage>()) }
+    val page = history.lastOrNull() ?: SettingsPage.HOME
+    var section by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(SettingsTab.APPEARANCE) }
+    val back: () -> Unit = { history = ArrayList(history.dropLast(1)) }
+    val navigate: (SettingsPage) -> Unit = { next ->
+        if (next == SettingsPage.HOME) history = arrayListOf()
+        else if (next != page) history = ArrayList(history + next)
+    }
+    val selectSection: (SettingsTab) -> Unit = {
+        section = it
+        history = arrayListOf()
+    }
     // M3, классы размера окна: от 840 dp (expanded) — две панели «список — подробности»,
     // слева разделы, справа выбранный; на 600–839 dp — одна панель, но не шире 720 dp (строки не растягиваются)
     val widthDp = LocalConfiguration.current.screenWidthDp
     if (widthDp >= 840) {
-        val detail = if (page == SettingsPage.HOME) SettingsPage.THEMES else page
-        androidx.activity.compose.BackHandler(enabled = detail.parent != SettingsPage.HOME) { page = detail.parent }
+        val detail = if (page == SettingsPage.HOME) section.pages.firstOrNull() ?: SettingsPage.THEMES else page
+        androidx.activity.compose.BackHandler(enabled = history.isNotEmpty(), onBack = back)
         Row(Modifier.fillMaxSize()) {
             Box(Modifier.width(if (widthDp >= 1200) 420.dp else 360.dp).fillMaxHeight()) {
-                SettingsPageScaffold(SettingsPage.HOME, settings, onNavigate = { page = it }, selected = detail)
+                SettingsPageScaffold(SettingsPage.HOME, settings, onNavigate = navigate, selected = detail,
+                    section = section, onSection = selectSection)
             }
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 AnimatedContent(
@@ -304,19 +323,20 @@ private fun SettingsNavigation(settings: KeyboardSettings) {
                     transitionSpec = { (fadeIn(tween(220)) + scaleIn(spring(dampingRatio = 0.85f, stiffness = 380f), 0.96f)) togetherWith fadeOut(tween(120)) },
                     label = "detailPane"
                 ) { p ->
-                    SettingsPageScaffold(p, settings, onNavigate = { page = it }, showBack = p.parent != SettingsPage.HOME)
+                    SettingsPageScaffold(p, settings, onNavigate = {
+                        if (history.isEmpty() && it != SettingsPage.HOME) history = arrayListOf(p, it)
+                        else navigate(it)
+                    }, showBack = history.isNotEmpty(), onBack = back)
                 }
             }
         }
         return
     }
-    androidx.activity.compose.BackHandler(enabled = page != SettingsPage.HOME) {
-        page = page.parent
-    }
+    androidx.activity.compose.BackHandler(enabled = history.isNotEmpty(), onBack = back)
     AnimatedContent(
         targetState = page,
         transitionSpec = {
-            val forward = initialState == targetState.parent || initialState == SettingsPage.HOME
+            val forward = initialState == SettingsPage.HOME || initialState in history.dropLast(1)
             val enterSpring = spring<IntOffset>(dampingRatio = 0.85f, stiffness = 380f)
             if (forward) {
                 (slideInHorizontally(enterSpring) { it / 3 } + fadeIn(tween(220))) togetherWith
@@ -329,77 +349,108 @@ private fun SettingsNavigation(settings: KeyboardSettings) {
         label = "settingsPage"
     ) { p ->
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-            Box(Modifier.widthIn(max = 720.dp)) { SettingsPageScaffold(p, settings, onNavigate = { page = it }) }
+            Box(Modifier.widthIn(max = 720.dp)) {
+                SettingsPageScaffold(p, settings, onNavigate = navigate, section = section, onSection = selectSection, onBack = back)
+            }
         }
     }
 }
 
 @Composable
-internal fun SettingsPageScaffold(
+private fun SettingsPageScaffold(
     page: SettingsPage, settings: KeyboardSettings, onNavigate: (SettingsPage) -> Unit,
-    selected: SettingsPage? = null, showBack: Boolean = page != SettingsPage.HOME
+    selected: SettingsPage? = null, showBack: Boolean = page != SettingsPage.HOME,
+    section: SettingsTab = SettingsTab.APPEARANCE, onSection: (SettingsTab) -> Unit = {},
+    onBack: () -> Unit = { onNavigate(page.parent) }
 ) {
     val home = page == SettingsPage.HOME
-    // на главной — компактная панель с названием по центру, без большого пустого заголовка
-    val scrollBehavior =
-        if (home) TopAppBarDefaults.pinnedScrollBehavior() else TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val showBottomBar = home && !settings.classicSettingsUi
+    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val cs = MaterialTheme.colorScheme
     var testText by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
-    val showTest = page in setOf(SettingsPage.SIZE, SettingsPage.KEYS, SettingsPage.LAYOUT, SettingsPage.LANGUAGES,
+    val showTest = page in setOf(SettingsPage.SIZE, SettingsPage.KEYS, SettingsPage.FONT, SettingsPage.BUTTON_SHAPES, SettingsPage.LAYOUT, SettingsPage.LANGUAGES,
         SettingsPage.GESTURES, SettingsPage.TYPING, SettingsPage.FEEDBACK, SettingsPage.ANIMATIONS)
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         containerColor = cs.surfaceContainer,
+        bottomBar = { if (showBottomBar) SettingsTabBar(section, settings, onSection) },
         topBar = {
-            if (home) {
-                CenterAlignedTopAppBar(
-                    title = { Text(tr(page.title), fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = cs.surfaceContainer, scrolledContainerColor = cs.surfaceContainer),
-                    scrollBehavior = scrollBehavior
-                )
-            } else LargeTopAppBar(
-                title = { Text(tr(page.title), fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            TopAppBar(
+                title = {
+                    Text(
+                        tr(page.title),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
                 navigationIcon = {
-                    if (showBack) {
-                        FilledTonalIconButton(onClick = { onNavigate(page.parent) }, modifier = Modifier.padding(start = 8.dp)) {
-                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, tr("Назад"))
+                    if (showBack) SettingsBackButton(onBack)
+                },
+                actions = {
+                    if (home) {
+                        Row(
+                            Modifier.padding(end = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            FilledTonalIconButton(onClick = { onNavigate(SettingsPage.PLUGINS) }) {
+                                Icon(Icons.Rounded.Extension, tr("Плагины и моды"))
+                            }
+                            FilledTonalIconButton(onClick = { onNavigate(SettingsPage.WHATS_NEW) }) {
+                                Icon(Icons.Rounded.NewReleases, tr("Новое"))
+                            }
                         }
                     }
                 },
-                colors = TopAppBarDefaults.largeTopAppBarColors(containerColor = cs.surfaceContainer, scrolledContainerColor = cs.surfaceContainer),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent
+                ),
                 scrollBehavior = scrollBehavior
             )
         }
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
-            if (showTest) {
-                PillField(
-                    testText, { testText = it }, "Проверьте клавиатуру здесь…", Icons.Rounded.Keyboard,
-                    Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                    singleLine = false,
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
-                )
-            }
+        val topBarPad = padding.calculateTopPadding()
+        val topBlur = if (showTest) topBarPad + 64.dp else topBarPad
+        val bottomBlur = if (showBottomBar) padding.calculateBottomPadding() else WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+        Box(Modifier.fillMaxSize()) {
             Column(
-                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).navigationBarsPadding(),
+                modifier = Modifier.fillMaxSize()
+                    .settingsEdgeBlur(top = topBlur, bottom = bottomBlur, tint = cs.surfaceContainer)
+                    .verticalScroll(androidx.compose.runtime.key(if (home) (if (settings.classicSettingsUi) "classic" else section) else page) { rememberScrollState() })
+                    .padding(top = if (showTest) topBarPad + 72.dp else topBarPad)
+                    .then(if (showBottomBar) Modifier.padding(bottom = padding.calculateBottomPadding()) else Modifier.navigationBarsPadding())
+                    .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
                 Spacer(Modifier.height(4.dp))
                 when (page) {
-                    SettingsPage.HOME -> HomePage(settings, onNavigate, selected)
+                    SettingsPage.HOME -> HomePage(settings, onNavigate, selected, section)
                     SettingsPage.WHATS_NEW -> WhatsNewPage(onNavigate)
                     SettingsPage.POWER -> PowerPage(settings)
                     SettingsPage.THEMES -> ThemesPage(settings, onNavigate)
                     SettingsPage.THEME_EDITOR -> ThemeEditorPage(settings, onNavigate)
                     SettingsPage.ANIMATIONS -> AnimationsPage(settings)
                     SettingsPage.COLORS -> ColorsPage(settings)
+                    SettingsPage.BACKGROUND -> BackgroundPage(settings)
+                    SettingsPage.EMOJI_STYLE -> {
+                        EmojiSettings(settings)
+                        IconsPage(settings)
+                    }
+                    SettingsPage.FONT -> FontPage(settings)
+                    SettingsPage.BUTTON_SHAPES -> ButtonShapesPage(settings)
                     SettingsPage.SIZE -> KeyboardSizePage(settings)
                     SettingsPage.KEYS -> KeysPage(settings, onNavigate)
                     SettingsPage.LAYOUT -> LayoutEditorPage(settings)
                     SettingsPage.LONG_PRESS -> LongPressPage(settings)
                     SettingsPage.TOOLBAR -> {
                         ToolbarPage(settings)
-                        IconsPage(settings)
+                        SettingsSection(null) {
+                            ActionItem(Icons.Rounded.EmojiEmotions, "Эмодзи и иконки", null,
+                                onClick = { onNavigate(SettingsPage.EMOJI_STYLE) })
+                        }
                     }
                     SettingsPage.LANGUAGES -> LanguagesPage(settings)
                     SettingsPage.MY_WORDS -> MyWordsPage(settings)
@@ -409,9 +460,27 @@ internal fun SettingsPageScaffold(
                     SettingsPage.FEEDBACK -> FeedbackPage(settings)
                     SettingsPage.PLUGINS -> PluginsPage()
                     SettingsPage.BACKUP -> BackupPage()
-                    SettingsPage.ABOUT -> AboutPage()
+                    SettingsPage.ABOUT -> AboutPage(settings, onNavigate)
                 }
                 Spacer(Modifier.height(24.dp))
+            }
+            if (showTest) {
+                Surface(
+                    modifier = Modifier.align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .padding(top = topBarPad + 4.dp, start = 16.dp, end = 16.dp),
+                    shape = RoundedCornerShape(28.dp),
+                    color = cs.surfaceContainerHighest,
+                    shadowElevation = 6.dp,
+                    tonalElevation = 2.dp,
+                    border = BorderStroke(1.dp, cs.outlineVariant.copy(alpha = 0.24f))
+                ) {
+                    PillField(
+                        testText, { testText = it }, "Проверьте клавиатуру здесь…", Icons.Rounded.Keyboard,
+                        singleLine = false,
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
+                    )
+                }
             }
         }
     }
@@ -421,28 +490,10 @@ internal fun SettingsPageScaffold(
 internal fun rememberSpec(settings: KeyboardSettings) =
     remember(settings.shapePreset, settings.waveCount, settings.waveAmplitudePercent, settings.shapeAmount) { settings.accentSpec().accent(settings) }
 
-/** Предпросмотр клавиатуры: с выбранной темой — её настоящие клавиши (раньше всегда показывалась стандартная). */
-@Composable
-internal fun PreviewSection(settings: KeyboardSettings) {
-    val dark = keyboardIsDark(settings)
-    val plugin = PluginRepository.skinPlugin(settings)
-    SettingsSection("Предпросмотр") {
-        GroupItem {
-            val base = plugin?.skin
-            if (plugin != null && base != null) {
-                val skin = remember(plugin, settings.skinOptions, settings.userAccent, settings.colorAccentText, settings.keyOpacity, dark) {
-                    runCatching { ThemeOptions.build(plugin, base, ThemeOptions.values(settings, plugin.id), settings, dark) }.getOrNull()
-                }
-                SkinMiniPreview(skin, settings, Modifier.fillMaxWidth().height(170.dp).padding(12.dp), interactive = true)
-            } else StylePreview(settings, rememberSpec(settings))
-        }
-    }
-}
-
 // ----------------------------------------------------------------------- главная
 
 @Composable
-internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> Unit, selected: SettingsPage? = null) {
+private fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> Unit, selected: SettingsPage?, section: SettingsTab) {
     val context = LocalContext.current
     val focused = LocalWindowInfo.current.isWindowFocused
     var imeEnabled by remember { mutableStateOf(isImeEnabled(context)) }
@@ -471,7 +522,6 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     var query by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
-    AuthorLine()
     PillField(query, { query = it }, "Найти настройку: вибрация, шрифт, свайп…", Icons.Rounded.Search, tonal = true)
     if (query.isNotBlank()) {
         val found = SettingsSearch.find(query)
@@ -489,13 +539,6 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
     val arranger = PluginRepository.active.firstOrNull { it.id == layoutOwner && it.settingsLayout != null }
     val layout = arranger?.settingsLayout
     val expressive = settings.designStyle == DesignStyle.EXPRESSIVE.id && settings.shapeAmount == ShapeAmount.FULL
-    SettingsSection(null) {
-        AppLanguageItem(settings)
-        val p = SettingsPage.WHATS_NEW
-        if (layout == null || layout.arrange(listOf(p)).isNotEmpty()) {
-            CategoryTile(p, i++, selected = p == selected, expressive = expressive) { onNavigate(p) }
-        }
-    }
     if (!imeEnabled || !imeSelected) HeroCard(
         spec = rememberSpec(settings),
         imeEnabled = imeEnabled,
@@ -507,28 +550,63 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         onSelect = { (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker() },
         onMic = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }
     )
-    if (arranger != null && layout != null) {
-        SettingsSection(tr("Закреплённые разделы")) {
-            for (p in layout.pinned) {
+    if (settings.classicSettingsUi) {
+        if (arranger != null && layout != null) {
+            SettingsSection(tr("Закреплённые разделы")) {
+                for (p in layout.pinned) {
+                    CategoryTile(p, i++, selected = p == selected || p == selected?.parent, expressive = expressive) { onNavigate(p) }
+                }
+                ActionItem(Icons.Rounded.Extension, "Вернуть обычный порядок", arranger.name,
+                    onClick = { PluginRepository.setSettingsLayoutOwner(context, null) })
+            }
+        }
+        SettingsSection("Внешний вид") {
+            val appearancePages = layout?.arrange(SettingsTab.APPEARANCE.pages) ?: SettingsTab.APPEARANCE.pages
+            for (p in appearancePages) {
+                val idx = i++
+                val subtitle = if (p == SettingsPage.THEMES) {
+                    PluginRepository.skinPlugin(settings)?.name ?: DesignStyle.fromId(settings.designStyle).title
+                } else p.subtitle
+                CategoryTile(p, idx, selected = p == selected || p == selected?.parent, expressive = expressive,
+                    subtitle = subtitle) { onNavigate(p) }
+            }
+        }
+        SettingsSection("Клавиатура") {
+            val keyboardPages = layout?.arrange(SettingsTab.KEYBOARD.pages) ?: SettingsTab.KEYBOARD.pages
+            for (p in keyboardPages) {
                 CategoryTile(p, i++, selected = p == selected || p == selected?.parent, expressive = expressive) { onNavigate(p) }
             }
-            ActionItem(Icons.Rounded.Extension, "Вернуть обычный порядок", arranger.name,
-                onClick = { PluginRepository.setSettingsLayoutOwner(context, null) })
+            if (imeSelected && !micGranted) {
+                ActionItem(Icons.Rounded.Mic, "Микрофон для голосового ввода", null,
+                    onClick = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) })
+            }
         }
+        AboutContent(settings = settings, onNavigate = onNavigate, selected = selected, expressive = expressive)
+        return
     }
-    val groups = listOf(
-        "Внешний вид" to listOf(SettingsPage.SIZE, SettingsPage.KEYS, SettingsPage.THEMES, SettingsPage.COLORS, SettingsPage.ANIMATIONS),
-        "Ввод" to listOf(SettingsPage.LANGUAGES, SettingsPage.GESTURES, SettingsPage.TYPING, SettingsPage.MY_WORDS, SettingsPage.FEEDBACK),
-        "Инструменты" to listOf(SettingsPage.LAYOUT, SettingsPage.TOOLBAR, SettingsPage.CLIPBOARD, SettingsPage.PLUGINS),
-        "Приложение" to listOf(SettingsPage.POWER, SettingsPage.BACKUP, SettingsPage.ABOUT)
-    )
-    for ((title, defaultPages) in groups) {
-        val pages = layout?.arrange(defaultPages) ?: defaultPages
-        if (pages.isEmpty()) continue
-        SettingsSection(title) {
+    if (section == SettingsTab.APP) {
+        if (arranger != null && layout != null) {
+            SettingsSection(tr("Закреплённые разделы")) {
+                for (p in layout.pinned) {
+                    CategoryTile(p, i++, selected = p == selected || p == selected?.parent, expressive = expressive) { onNavigate(p) }
+                }
+                ActionItem(Icons.Rounded.Extension, "Вернуть обычный порядок", arranger.name,
+                    onClick = { PluginRepository.setSettingsLayoutOwner(context, null) })
+            }
+        }
+        AboutContent(settings = settings, onNavigate = onNavigate, selected = selected, expressive = expressive)
+        return
+    }
+    val pages = layout?.arrange(section.pages) ?: section.pages
+    if (pages.isNotEmpty()) {
+        SettingsSection(null) {
             for (p in pages) {
                 val idx = i++
-                CategoryTile(p, idx, selected = p == selected || p == selected?.parent, expressive = expressive) { onNavigate(p) }
+                val subtitle = if (p == SettingsPage.THEMES) {
+                    PluginRepository.skinPlugin(settings)?.name ?: DesignStyle.fromId(settings.designStyle).title
+                } else p.subtitle
+                CategoryTile(p, idx, selected = p == selected || p == selected?.parent, expressive = expressive,
+                    subtitle = subtitle) { onNavigate(p) }
             }
             if (SettingsPage.TOOLBAR in pages && imeSelected && !micGranted) {
                 ActionItem(Icons.Rounded.Mic, "Микрофон для голосового ввода", null,
@@ -536,7 +614,213 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
             }
         }
     }
-    UpdateCard()
+}
+
+private enum class SettingsTab(val title: String, val icon: ImageVector, val pages: List<SettingsPage>) {
+    APPEARANCE("Внешний вид", Icons.Rounded.Palette, listOf(
+        SettingsPage.THEMES, SettingsPage.COLORS, SettingsPage.BACKGROUND,
+        SettingsPage.FONT, SettingsPage.BUTTON_SHAPES, SettingsPage.ANIMATIONS, SettingsPage.EMOJI_STYLE
+    )),
+    KEYBOARD("Клавиатура", Icons.Rounded.Keyboard, listOf(
+        SettingsPage.KEYS, SettingsPage.SIZE, SettingsPage.LAYOUT, SettingsPage.LONG_PRESS, SettingsPage.TOOLBAR,
+        SettingsPage.LANGUAGES, SettingsPage.GESTURES, SettingsPage.TYPING,
+        SettingsPage.CLIPBOARD, SettingsPage.FEEDBACK, SettingsPage.MY_WORDS, SettingsPage.POWER
+    )),
+    APP("Настройки", Icons.Rounded.Settings, listOf(
+        SettingsPage.BACKUP
+    ))
+}
+
+@Composable
+private fun SettingsBackButton(onBack: () -> Unit) {
+    FilledTonalIconButton(onClick = onBack, modifier = Modifier.padding(start = 8.dp)) {
+        Icon(Icons.AutoMirrored.Rounded.ArrowBack, tr("Назад"))
+    }
+}
+
+@Composable
+private fun Modifier.settingsEdgeBlur(top: Dp, bottom: Dp, tint: Color): Modifier = drawWithContent {
+    drawContent()
+    val topPx = top.toPx().coerceIn(0f, size.height)
+    val bottomPx = bottom.toPx().coerceIn(0f, size.height)
+    val topFade = if (topPx > 0f) (topPx + 28.dp.toPx()).coerceAtMost(size.height * 0.42f) else 0f
+    val bottomFade = if (bottomPx > 0f) (bottomPx + 34.dp.toPx()).coerceAtMost(size.height * 0.42f) else 0f
+    if (topFade > 0f) {
+        drawRect(
+            Brush.verticalGradient(
+                0.00f to tint.copy(alpha = 0.98f),
+                0.22f to tint.copy(alpha = 0.92f),
+                0.44f to tint.copy(alpha = 0.76f),
+                0.64f to tint.copy(alpha = 0.48f),
+                0.80f to tint.copy(alpha = 0.22f),
+                0.92f to tint.copy(alpha = 0.06f),
+                1.00f to Color.Transparent,
+                startY = 0f,
+                endY = topFade
+            ),
+            size = Size(size.width, topFade)
+        )
+    }
+    if (bottomFade > 0f) {
+        val bStart = size.height - bottomFade
+        drawRect(
+            Brush.verticalGradient(
+                0.00f to Color.Transparent,
+                0.08f to tint.copy(alpha = 0.06f),
+                0.20f to tint.copy(alpha = 0.22f),
+                0.36f to tint.copy(alpha = 0.48f),
+                0.56f to tint.copy(alpha = 0.76f),
+                0.78f to tint.copy(alpha = 0.92f),
+                1.00f to tint.copy(alpha = 0.98f),
+                startY = bStart,
+                endY = size.height
+            ),
+            topLeft = Offset(0f, bStart),
+            size = Size(size.width, bottomFade)
+        )
+    }
+}
+
+@Composable
+private fun SettingsTabBar(section: SettingsTab, settings: KeyboardSettings, onSection: (SettingsTab) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val view = LocalView.current
+    val context = LocalContext.current
+    val select: (SettingsTab) -> Unit = {
+        if (it != section) {
+            HapticsEngine.tick(context, view, settings)
+            onSection(it)
+        }
+    }
+    val pillBg = lerp(colors.surfaceContainerHigh, colors.secondaryContainer, 0.28f)
+    val pillBorder = BorderStroke(1.dp, colors.outlineVariant.copy(alpha = 0.24f))
+    Box(
+        Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            Modifier.selectableGroup(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = pillBg,
+                shadowElevation = 8.dp,
+                tonalElevation = 2.dp,
+                border = pillBorder
+            ) {
+                Row(
+                    Modifier.padding(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SettingsTabButton(SettingsTab.APPEARANCE, section, select)
+                    SettingsTabButton(SettingsTab.KEYBOARD, section, select)
+                }
+            }
+            val appSelected = section == SettingsTab.APP
+            val appInteraction = remember { MutableInteractionSource() }
+            val appPressed by appInteraction.collectIsPressedAsState()
+            val settingsCorner by animateDpAsState(
+                targetValue = when {
+                    appPressed -> 14.dp
+                    appSelected -> 24.dp
+                    else -> 18.dp
+                },
+                animationSpec = spring(dampingRatio = 0.65f, stiffness = 500f),
+                label = "settingsCorner"
+            )
+            val appBg by animateColorAsState(
+                targetValue = if (appSelected) colors.primary else colors.secondaryContainer,
+                animationSpec = spring(dampingRatio = 0.8f, stiffness = 400f),
+                label = "settingsBg"
+            )
+            val appFg by animateColorAsState(
+                targetValue = if (appSelected) colors.onPrimary else colors.onSecondaryContainer,
+                animationSpec = spring(dampingRatio = 0.8f, stiffness = 400f),
+                label = "settingsFg"
+            )
+            Surface(
+                shape = RoundedCornerShape(settingsCorner),
+                color = appBg,
+                shadowElevation = 8.dp,
+                border = if (appSelected) null else pillBorder
+            ) {
+                Box(
+                    Modifier.size(64.dp)
+                        .selectable(
+                            selected = appSelected,
+                            interactionSource = appInteraction,
+                            indication = LocalIndication.current,
+                            role = Role.Tab
+                        ) { select(SettingsTab.APP) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        SettingsTab.APP.icon,
+                        contentDescription = tr(SettingsTab.APP.title),
+                        tint = appFg,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsTabButton(
+    tab: SettingsTab, section: SettingsTab, onSelect: (SettingsTab) -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    val selected = tab == section
+    val bg by animateColorAsState(
+        targetValue = if (selected) colors.primary else Color.Transparent,
+        animationSpec = spring(dampingRatio = 0.8f, stiffness = 420f),
+        label = "tabBg"
+    )
+    val fg by animateColorAsState(
+        targetValue = if (selected) colors.onPrimary else colors.onSurfaceVariant,
+        animationSpec = spring(dampingRatio = 0.8f, stiffness = 420f),
+        label = "tabFg"
+    )
+    val hPad by animateDpAsState(
+        targetValue = if (selected) 18.dp else 14.dp,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 420f),
+        label = "tabPad"
+    )
+    Row(
+        Modifier.height(52.dp).widthIn(min = 52.dp)
+            .clip(CircleShape)
+            .background(bg)
+            .selectable(selected, role = Role.Tab) { onSelect(tab) }
+            .padding(horizontal = hPad.coerceAtLeast(0.dp)),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            tab.icon,
+            contentDescription = if (selected) null else tr(tab.title),
+            tint = fg,
+            modifier = Modifier.size(22.dp)
+        )
+        AnimatedVisibility(
+            visible = selected,
+            enter = expandHorizontally(spring(dampingRatio = 0.72f, stiffness = 420f)) + fadeIn(tween(180)),
+            exit = shrinkHorizontally(spring(dampingRatio = 0.82f, stiffness = 480f)) + fadeOut(tween(120))
+        ) {
+            Text(
+                tr(tab.title),
+                Modifier.padding(start = 8.dp).widthIn(max = 132.dp),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = fg,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
 }
 
 @Composable
@@ -582,25 +866,112 @@ internal fun AuthorLine() {
 }
 
 @Composable
-internal fun AboutPage() {
+internal fun AboutPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> Unit) {
+    AboutContent(settings = settings, onNavigate = onNavigate)
+}
+
+@Composable
+internal fun AboutContent(
+    settings: KeyboardSettings,
+    onNavigate: (SettingsPage) -> Unit,
+    selected: SettingsPage? = null,
+    expressive: Boolean = true
+) {
     val context = LocalContext.current
     val cs = MaterialTheme.colorScheme
     val version = remember {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
     }
-    val spec = remember { WavySpec(ShapeProfile.LOBES, 6, 0.1f) }
-    Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(32.dp)).background(cs.primaryContainer).padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Box(Modifier.size(96.dp).wavyBackground(spec, cs.primary), contentAlignment = Alignment.Center) {
-            Icon(Icons.Rounded.Keyboard, null, tint = cs.onPrimary, modifier = Modifier.size(44.dp))
-        }
-        Text("Expressive Keyboard", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, color = cs.onPrimaryContainer)
-        Text(tr("Версия {0}", version) + " · Material 3 Expressive", style = MaterialTheme.typography.bodyMedium, color = cs.onPrimaryContainer.copy(alpha = 0.8f))
+    fun openUrl(url: String) {
+        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
     }
-    AuthorLine()
+    // Аккуратная карточка приложения и автора в стиле M3 Expressive (без «нейрослопных» заглушек)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        color = cs.surfaceBright,
+        border = BorderStroke(1.dp, cs.outlineVariant.copy(alpha = 0.24f))
+    ) {
+        Column(
+            Modifier.fillMaxWidth().padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Box(
+                    Modifier.size(52.dp).clip(RoundedCornerShape(16.dp)).background(cs.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.Keyboard, null, tint = cs.onPrimaryContainer, modifier = Modifier.size(28.dp))
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        "Expressive Keyboard",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = cs.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Surface(
+                        shape = CircleShape,
+                        color = cs.secondaryContainer
+                    ) {
+                        Text(
+                            "v$version",
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = cs.onSecondaryContainer
+                        )
+                    }
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                FilledTonalButton(
+                    onClick = { openUrl("https://t.me/Shahedeer") },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(16.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Icon(Icons.Rounded.Person, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("@Shahedeer", maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                }
+                FilledTonalButton(
+                    onClick = { openUrl("https://t.me/materialyouboss") },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(16.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Icon(Icons.AutoMirrored.Rounded.Send, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("@materialyouboss", maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+    }
+    // Резервная копия сразу после плашки автора
+    SettingsSection("Приложение") {
+        CategoryTile(
+            SettingsPage.BACKUP,
+            index = 0,
+            selected = selected == SettingsPage.BACKUP,
+            expressive = expressive
+        ) { onNavigate(SettingsPage.BACKUP) }
+        AppLanguageItem(settings)
+        ToggleItem(
+            Icons.Rounded.ViewAgenda,
+            "Классический вид настроек",
+            "Без нижней панели — все разделы одним списком",
+            settings.classicSettingsUi
+        ) { KeyboardPrefs.edit(context) { putBoolean("classic_settings_ui", it) } }
+    }
     var crash by remember { mutableStateOf(CrashLog.read(context)) }
     crash?.let { report ->
         SettingsSection("Последний сбой") {

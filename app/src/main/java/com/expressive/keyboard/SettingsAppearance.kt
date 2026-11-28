@@ -149,9 +149,9 @@ internal fun ThemeModeItem(settings: KeyboardSettings) {
     ) { mode -> KeyboardPrefs.edit(context) { putString("theme_mode", mode) } }
 }
 
-/** Шрифт клавиш и форма кнопок-«печенек» — часть раздела «Клавиши и шрифт». */
+/** Раздел «Шрифт». */
 @Composable
-internal fun FontSections(settings: KeyboardSettings) {
+internal fun FontPage(settings: KeyboardSettings) {
     val context = LocalContext.current
     val cs = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
@@ -210,6 +210,12 @@ internal fun FontSections(settings: KeyboardSettings) {
             } else null
         )
     }
+}
+
+/** Раздел «Форма кнопок». */
+@Composable
+internal fun ButtonShapesPage(settings: KeyboardSettings) {
+    val context = LocalContext.current
     // волнистая форма «печенек»: кнопки меню и микрофона, подсказка над клавишей (если у темы нет своих)
     SettingsSection("Форма кнопок") {
         GroupItem { Column(Modifier.padding(vertical = 16.dp)) { ShapePicker(settings) } }
@@ -238,37 +244,10 @@ private data class ColorTarget(val key: String, val title: String)
 internal fun ColorsPage(settings: KeyboardSettings) {
     val context = LocalContext.current
     val cs = MaterialTheme.colorScheme
-    val scope = rememberCoroutineScope()
     var picker by remember { mutableStateOf<ColorTarget?>(null) }
     val auto = remember(cs) { buildKeyPalette(cs, KeyboardSettings()) }
-    var importing by remember { mutableStateOf(false) }
-    val bgLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        if (uri != null) scope.launch {
-            importing = true
-            try {
-                val ok = withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
-                    val type = runCatching { context.contentResolver.getType(uri) }.getOrNull()
-                    when {
-                        type?.startsWith("video/") != true && importBackground(context, uri) -> {
-                            KeyboardPrefs.setBackgroundImage(context, video = false)
-                            true
-                        }
-                        type?.startsWith("image/") != true && importBackgroundVideo(context, uri) -> {
-                            KeyboardPrefs.setBackgroundImage(context, video = true)
-                            true
-                        }
-                        else -> false
-                    }
-                }
-                if (!ok) Toast.makeText(context, tr("Не удалось открыть фото или видео"), Toast.LENGTH_LONG).show()
-            } finally {
-                importing = false
-            }
-        }
-    }
     val monet = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
 
-    PreviewSection(settings)
     // акцент — главный цвет клавиатуры: вверху и в одном месте (раньше он терялся среди цветов клавиш)
     val themeColors = PluginRepository.skinPlugin(settings)?.skin?.forMode(keyboardIsDark(settings))?.colors
     val themeAccent = themeColors?.get("accent")?.let { Color(it) }
@@ -362,8 +341,58 @@ internal fun ColorsPage(settings: KeyboardSettings) {
         )
         ActionItem(Icons.Rounded.RestartAlt, "Вернуть цвета темы", "Сбросить акцент, ручные цвета и прозрачность", onClick = { KeyboardPrefs.resetColors(context) })
     }
-    // система может запретить размытие окон: экономия заряда, «Уменьшить прозрачность», слабая видеокарта
+    picker?.let { t ->
+        val current = when (t.key) {
+            "seed_color" -> settings.seedColor
+            "color_background" -> settings.colorBackground
+            "color_key" -> settings.colorKey
+            "color_key_text" -> settings.colorKeyText
+            "color_func" -> settings.colorFunc
+            "color_func_text" -> settings.colorFuncText
+            "color_accent" -> settings.colorAccent
+            else -> settings.colorAccentText
+        }
+        ColorPickerDialog(t.title, current, allowAuto = t.key != "seed_color", onDismiss = { picker = null }) { c ->
+            KeyboardPrefs.edit(context) {
+                putInt(t.key, c)
+                if (t.key == "seed_color") putString("color_source", "SEED")
+            }
+            picker = null
+        }
+    }
+}
+
+@Composable
+internal fun BackgroundPage(settings: KeyboardSettings) {
+    val context = LocalContext.current
+    val cs = MaterialTheme.colorScheme
     val blurAllowed = rememberWindowBlurSupported()
+    val scope = rememberCoroutineScope()
+    var importing by remember { mutableStateOf(false) }
+    val bgLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) scope.launch {
+            importing = true
+            try {
+                val ok = withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+                    val type = runCatching { context.contentResolver.getType(uri) }.getOrNull()
+                    when {
+                        type?.startsWith("video/") != true && importBackground(context, uri) -> {
+                            KeyboardPrefs.setBackgroundImage(context, video = false)
+                            true
+                        }
+                        type?.startsWith("image/") != true && importBackgroundVideo(context, uri) -> {
+                            KeyboardPrefs.setBackgroundImage(context, video = true)
+                            true
+                        }
+                        else -> false
+                    }
+                }
+                if (!ok) Toast.makeText(context, tr("Не удалось открыть фото или видео"), Toast.LENGTH_LONG).show()
+            } finally {
+                importing = false
+            }
+        }
+    }
     SettingsSection("Размытие") {
         ToggleItem(Icons.Rounded.LightMode, "Тени реагируют на наклон", "Для тем с тенями на клавишах", settings.dynamicShadows) {
             KeyboardPrefs.edit(context) { putBoolean("dynamic_shadows", it) }
@@ -460,28 +489,20 @@ internal fun ColorsPage(settings: KeyboardSettings) {
         }
     }
 
-    picker?.let { t ->
-        val current = when (t.key) {
-            "seed_color" -> settings.seedColor
-            "color_background" -> settings.colorBackground
-            "color_key" -> settings.colorKey
-            "color_key_text" -> settings.colorKeyText
-            "color_func" -> settings.colorFunc
-            "color_func_text" -> settings.colorFuncText
-            "color_accent" -> settings.colorAccent
-            else -> settings.colorAccentText
-        }
-        ColorPickerDialog(t.title, current, allowAuto = t.key != "seed_color", onDismiss = { picker = null }) { c ->
-            KeyboardPrefs.edit(context) {
-                putInt(t.key, c)
-                if (t.key == "seed_color") putString("color_source", "SEED")
-            }
-            picker = null
-        }
-    }
 }
 
 // ----------------------------------------------------------------------- клавиши
+
+@Composable
+internal fun EmojiSizeItem(settings: KeyboardSettings) {
+    val context = LocalContext.current
+    SliderItem(
+        icon = Icons.Rounded.EmojiEmotions, title = "Размер эмодзи",
+        value = settings.emojiSizeDp, range = 24f..56f,
+        format = { "${it.roundToInt()} dp" },
+        onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("emoji_size_dp", v) } }
+    )
+}
 
 @Composable
 internal fun KeyboardSizePage(settings: KeyboardSettings) {
@@ -501,12 +522,7 @@ internal fun KeyboardSizePage(settings: KeyboardSettings) {
             onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("keyboard_width", if (v > 0.98f) 1f else v) } }
         )
         LandscapeScaleItem(settings)
-        SliderItem(
-            icon = Icons.Rounded.EmojiEmotions, title = "Размер эмодзи",
-            value = settings.emojiSizeDp, range = 24f..56f,
-            format = { "${it.roundToInt()} dp" },
-            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("emoji_size_dp", v) } }
-        )
+        EmojiSizeItem(settings)
         SliderItem(
             icon = Icons.Rounded.RoundedCorner, title = "Скругление клавиш",
             value = settings.cornerRadiusDp, range = 6f..30f,
@@ -696,7 +712,6 @@ internal fun KeysPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
             onNavigate(SettingsPage.LONG_PRESS)
         })
     }
-    FontSections(settings)
 }
 
 /** Своя клавиша у пробела на буквенной раскладке: нет, «,», «.» или любой символ (до 4 знаков). */

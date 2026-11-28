@@ -195,10 +195,12 @@ object WordPredictorEngine {
     const val DATA_PREFS = "expressive_keyboard_v8_data"
     private const val KEY_WORDS = "user_words"
     private const val KEY_BIGRAMS = "user_bigrams"
+    private const val KEY_TRIGRAMS = "user_trigrams"
 
     /** "ru:слово" → сколько раз набрано (см. LEARNED). */
     private val userWords = ConcurrentHashMap<String, Int>()
     private val userBigrams = ConcurrentHashMap<String, Int>()
+    private val userTrigrams = ConcurrentHashMap<String, Int>()
     private val dicts = ConcurrentHashMap<String, LangDict>()
     private val loading = ConcurrentHashMap.newKeySet<String>()
     /** Словарь изменили, пока он грузился: после загрузки прочитать заново, иначе правка «Моего словаря» теряется. */
@@ -369,25 +371,304 @@ object WordPredictorEngine {
     private val enBigrams: Map<String, List<String>> = mapOf(
         "hello" to listOf("how", "there", "everyone"),
         "hi" to listOf("how", "there", "guys"),
-        "how" to listOf("are", "is", "about"),
+        "hey" to listOf("how", "there", "what"),
+        "how" to listOf("are", "much", "was", "is", "did", "about"),
         "are" to listOf("you", "we", "they"),
-        "you" to listOf("are", "can", "know"),
+        "you" to listOf("are", "doing", "get", "know", "later", "so", "soon", "can", "want", "have"),
         "thank" to listOf("you", "goodness", "so"),
-        "thanks" to listOf("for", "a", "so"),
-        "i" to listOf("am", "have", "think"),
-        "what" to listOf("is", "are", "about"),
-        "good" to listOf("morning", "night", "idea"),
-        "see" to listOf("you", "what", "if")
+        "thanks" to listOf("for", "so", "a"),
+        "i" to listOf("am", "will", "have", "don't", "think", "love", "need", "hope", "miss", "forgot"),
+        "i'm" to listOf("on", "not", "so", "sorry", "going", "at"),
+        "it's" to listOf("going", "not", "a", "okay", "fine", "been"),
+        "don't" to listOf("know", "worry", "have", "think", "want"),
+        "can't" to listOf("wait", "believe", "make", "find"),
+        "won't" to listOf("be", "have", "work"),
+        "let's" to listOf("go", "order", "meet", "do", "see"),
+        "what" to listOf("are", "time", "do", "is", "about", "to"),
+        "good" to listOf("morning", "night", "idea", "time", "luck"),
+        "see" to listOf("you", "that", "what", "if"),
+        "on" to listOf("my", "the", "your", "time"),
+        "my" to listOf("way", "phone", "battery", "friend", "mom"),
+        "way" to listOf("home", "to", "back"),
+        "let" to listOf("me", "us", "you"),
+        "me" to listOf("know", "when", "with", "the", "at"),
+        "know" to listOf("when", "what", "if", "how"),
+        "when" to listOf("you", "we", "i", "is"),
+        "get" to listOf("there", "home", "back", "it"),
+        "call" to listOf("you", "me", "back"),
+        "back" to listOf("in", "next", "home", "to"),
+        "in" to listOf("a", "the", "ten", "five"),
+        "a" to listOf("good", "great", "little", "minute", "lot", "few"),
+        "can" to listOf("you", "i", "we"),
+        "do" to listOf("you", "it", "that", "this"),
+        "did" to listOf("you", "not", "that"),
+        "will" to listOf("be", "call", "pay", "see", "let"),
+        "have" to listOf("to", "a", "any", "you"),
+        "to" to listOf("go", "work", "do", "you", "eat", "be", "talk", "die"),
+        "go" to listOf("to", "out", "home", "back"),
+        "want" to listOf("to", "go", "some"),
+        "going" to listOf("to", "out", "home"),
+        "need" to listOf("to", "a", "some", "help"),
+        "sorry" to listOf("for", "about", "i", "to"),
+        "for" to listOf("the", "your", "me", "dinner", "a"),
+        "your" to listOf("help", "weekend", "mom", "time"),
+        "so" to listOf("much", "tired", "good", "sorry"),
+        "too" to listOf("much", "late", "bad"),
+        "at" to listOf("home", "the", "work"),
+        "right" to listOf("now", "here", "back"),
+        "next" to listOf("week", "time", "day"),
+        "last" to listOf("night", "week", "time"),
+        "this" to listOf("weekend", "afternoon", "morning", "week"),
+        "really" to listOf("good", "nice", "great", "sorry"),
+        "was" to listOf("really", "your", "a", "great"),
+        "is" to listOf("going", "really", "raining", "about", "it"),
+        "it" to listOf("is", "was", "cost", "will"),
+        "we" to listOf("should", "had", "are", "can", "will"),
+        "should" to listOf("hang", "be", "go", "do"),
+        "hang" to listOf("out"),
+        "pick" to listOf("up"),
+        "talk" to listOf("to"),
+        "take" to listOf("care", "a", "it"),
+        "care" to listOf("of"),
+        "feel" to listOf("better", "like", "good"),
+        "better" to listOf("soon", "now", "than"),
+        "happy" to listOf("birthday", "to", "new"),
+        "birthday" to listOf("to"),
+        "love" to listOf("you", "it", "this"),
+        "miss" to listOf("you"),
+        "sleep" to listOf("well"),
+        "wait" to listOf("for"),
+        "text" to listOf("me", "you"),
+        "please" to listOf("send", "let", "call", "help"),
+        "send" to listOf("me", "you", "it"),
+        "about" to listOf("it", "to", "something", "that"),
+        "worry" to listOf("about"),
+        "sounds" to listOf("like", "good", "great"),
+        "like" to listOf("a", "to", "it", "that"),
+        "tell" to listOf("your", "me", "him"),
+        "running" to listOf("a", "late"),
+        "little" to listOf("late", "bit"),
+        "late" to listOf("reply", "for", "tonight"),
+        "no" to listOf("problem", "worries", "way")
+    )
+
+    private val enTrigrams: Map<String, List<String>> = mapOf(
+        "how|are" to listOf("you"),
+        "are|you" to listOf("doing", "free", "up", "sure", "okay"),
+        "you|doing" to listOf("today", "now", "tonight"),
+        "i|am" to listOf("on", "so", "running", "not", "going", "sorry"),
+        "am|on" to listOf("my"),
+        "on|my" to listOf("way"),
+        "my|way" to listOf("home", "to", "back"),
+        "what|are" to listOf("you"),
+        "you|up" to listOf("to"),
+        "let|me" to listOf("know", "see", "check"),
+        "me|know" to listOf("when", "if", "what"),
+        "know|when" to listOf("you"),
+        "when|you" to listOf("get", "can", "are", "have"),
+        "you|get" to listOf("there", "home", "back"),
+        "see|you" to listOf("later", "next", "soon", "tomorrow", "there"),
+        "you|later" to listOf("tonight", "today"),
+        "i|will" to listOf("call", "be", "pay", "see", "let", "send"),
+        "will|call" to listOf("you"),
+        "call|you" to listOf("back", "later", "soon"),
+        "you|back" to listOf("in", "next", "soon", "later"),
+        "back|in" to listOf("a"),
+        "in|a" to listOf("minute", "few", "bit", "second"),
+        "can|you" to listOf("help", "pick", "send", "call", "let"),
+        "you|help" to listOf("me"),
+        "help|me" to listOf("with"),
+        "me|with" to listOf("this", "that", "it"),
+        "thank|you" to listOf("so", "very", "for"),
+        "you|so" to listOf("much"),
+        "so|much" to listOf("for"),
+        "much|for" to listOf("your", "the"),
+        "for|your" to listOf("help", "time", "reply"),
+        "i|don't" to listOf("know", "have", "think", "want", "mind"),
+        "don't|know" to listOf("what", "if", "how", "why"),
+        "know|what" to listOf("to"),
+        "what|to" to listOf("do", "say", "eat"),
+        "do|you" to listOf("want", "have", "know", "think"),
+        "you|want" to listOf("to"),
+        "want|to" to listOf("go", "eat", "see", "talk", "do"),
+        "to|go" to listOf("out", "to", "home"),
+        "go|out" to listOf("for", "tonight", "with"),
+        "out|for" to listOf("dinner", "lunch", "a"),
+        "what|time" to listOf("are", "is", "do"),
+        "time|are" to listOf("we"),
+        "are|we" to listOf("meeting", "going"),
+        "i|have" to listOf("to", "a", "no"),
+        "have|to" to listOf("go", "be", "work", "do"),
+        "go|to" to listOf("work", "sleep", "bed", "the"),
+        "to|work" to listOf("now", "today", "tomorrow"),
+        "am|running" to listOf("a", "late"),
+        "running|a" to listOf("little", "bit"),
+        "a|little" to listOf("late", "bit"),
+        "sorry|for" to listOf("the", "being"),
+        "for|the" to listOf("late", "delay", "help"),
+        "the|late" to listOf("reply", "response"),
+        "have|a" to listOf("good", "great", "nice", "safe"),
+        "a|good" to listOf("night", "day", "time", "idea"),
+        "good|night" to listOf("and", "sleep"),
+        "and|sleep" to listOf("well"),
+        "good|morning" to listOf("how", "everyone"),
+        "morning|how" to listOf("did", "are"),
+        "how|did" to listOf("you"),
+        "did|you" to listOf("sleep", "see", "get", "go"),
+        "happy|birthday" to listOf("to"),
+        "birthday|to" to listOf("you"),
+        "i|love" to listOf("you", "it", "this"),
+        "love|you" to listOf("so", "too"),
+        "i|miss" to listOf("you"),
+        "miss|you" to listOf("a", "so", "too"),
+        "you|a" to listOf("lot"),
+        "we|should" to listOf("hang", "go", "meet"),
+        "should|hang" to listOf("out"),
+        "hang|out" to listOf("this", "soon", "tomorrow"),
+        "out|this" to listOf("weekend", "week"),
+        "you|see" to listOf("that", "it", "the"),
+        "movie|last" to listOf("night"),
+        "it|was" to listOf("really", "so", "great", "good", "a"),
+        "was|really" to listOf("good", "nice", "great", "fun"),
+        "i|think" to listOf("you", "so", "it", "we"),
+        "think|you" to listOf("are", "should", "can"),
+        "you|are" to listOf("right", "welcome", "doing", "the"),
+        "that|sounds" to listOf("like", "great", "good"),
+        "sounds|like" to listOf("a"),
+        "like|a" to listOf("great", "good", "plan"),
+        "a|great" to listOf("idea", "time", "day", "weekend"),
+        "don't|worry" to listOf("about"),
+        "worry|about" to listOf("it", "that"),
+        "it|is" to listOf("going", "raining", "not", "a", "fine"),
+        "is|going" to listOf("to"),
+        "going|to" to listOf("be", "go", "get"),
+        "to|be" to listOf("fine", "okay", "there", "late"),
+        "please|send" to listOf("me"),
+        "send|me" to listOf("the", "a", "your"),
+        "forgot|my" to listOf("phone", "keys", "wallet"),
+        "phone|at" to listOf("home"),
+        "battery|is" to listOf("about", "low", "dying"),
+        "is|about" to listOf("to"),
+        "about|to" to listOf("die", "leave", "go"),
+        "text|me" to listOf("when"),
+        "me|when" to listOf("you"),
+        "free|this" to listOf("afternoon", "weekend", "evening"),
+        "i|need" to listOf("to"),
+        "need|to" to listOf("talk", "go", "get", "know"),
+        "to|talk" to listOf("to"),
+        "talk|to" to listOf("you"),
+        "to|you" to listOf("about", "soon", "later"),
+        "you|about" to listOf("something", "it", "that"),
+        "what|do" to listOf("you"),
+        "am|so" to listOf("tired", "sorry", "happy", "glad"),
+        "so|tired" to listOf("today", "now"),
+        "weather|is" to listOf("really", "so", "nice"),
+        "is|really" to listOf("nice", "good", "hot", "cold"),
+        "nice|today" to listOf("isn't"),
+        "raining|outside" to listOf("right"),
+        "outside|right" to listOf("now"),
+        "will|be" to listOf("there", "back", "home", "late"),
+        "be|there" to listOf("in", "soon"),
+        "there|in" to listOf("ten", "five", "a"),
+        "in|ten" to listOf("minutes"),
+        "wait|for" to listOf("me"),
+        "for|me" to listOf("at", "to"),
+        "me|at" to listOf("the"),
+        "at|the" to listOf("entrance", "moment", "office"),
+        "how|much" to listOf("does", "is"),
+        "much|does" to listOf("it"),
+        "does|it" to listOf("cost", "take", "work"),
+        "don't|have" to listOf("any", "to", "a", "time"),
+        "have|any" to listOf("money", "time", "idea"),
+        "will|pay" to listOf("you"),
+        "pay|you" to listOf("back"),
+        "back|next" to listOf("week"),
+        "you|pick" to listOf("up"),
+        "pick|up" to listOf("the"),
+        "kids|from" to listOf("school"),
+        "tell|your" to listOf("mom"),
+        "i|said" to listOf("hello", "hi"),
+        "how|was" to listOf("your"),
+        "was|your" to listOf("weekend", "day"),
+        "we|had" to listOf("a"),
+        "had|a" to listOf("great", "good", "nice"),
+        "i|hope" to listOf("you", "so", "it"),
+        "hope|you" to listOf("feel", "have", "are"),
+        "you|feel" to listOf("better"),
+        "feel|better" to listOf("soon"),
+        "take|care" to listOf("of"),
+        "care|of" to listOf("yourself"),
+        "you|next" to listOf("week", "time")
+    )
+
+    private val ruTrigrams: Map<String, List<String>> = mapOf(
+        "как|у" to listOf("тебя", "вас", "него"),
+        "у|тебя" to listOf("дела", "всё", "все", "есть"),
+        "у|меня" to listOf("всё", "все", "нет", "есть"),
+        "я|не" to listOf("знаю", "могу", "хочу", "буду", "понял"),
+        "не|знаю" to listOf("что", "как", "где", "когда", "почему"),
+        "не|могу" to listOf("сейчас", "понять", "сказать", "найти"),
+        "всё|будет" to listOf("хорошо", "отлично", "нормально"),
+        "все|будет" to listOf("хорошо", "отлично", "нормально"),
+        "спасибо|большое" to listOf("за", "тебе", "вам"),
+        "что|ты" to listOf("делаешь", "думаешь", "хочешь"),
+        "как|ты" to listOf("там", "себя", "думаешь"),
+        "где|ты" to listOf("сейчас", "был", "была"),
+        "когда|ты" to listOf("будешь", "придёшь", "освободишься"),
+        "я|уже" to listOf("иду", "еду", "дома", "на", "в"),
+        "я|сейчас" to listOf("на", "в", "не", "занят", "иду"),
+        "скоро|буду" to listOf("дома", "на", "у"),
+        "напиши|мне" to listOf("когда", "как", "потом"),
+        "позвони|мне" to listOf("когда", "как", "пожалуйста"),
+        "давай|завтра" to listOf("встретимся", "посмотрим", "созвонимся"),
+        "с|днём" to listOf("рождения"),
+        "с|днем" to listOf("рождения"),
+        "мне|кажется" to listOf("что", "это", "он"),
+        "я|думаю" to listOf("что", "да", "нет"),
+        "ничего|не" to listOf("понимаю", "знаю", "получается", "страшного"),
+        "на|самом" to listOf("деле"),
+        "самом|деле" to listOf("это", "я", "не"),
+        "в|любом" to listOf("случае"),
+        "тем|более" to listOf("что", "я", "не"),
+        "потому|что" to listOf("я", "не", "он", "это"),
+        "так|что" to listOf("я", "не", "давай", "всё"),
+        "если|что" to listOf("пиши", "звони", "напиши", "я"),
+        "если|честно" to listOf("я", "то", "не"),
+        "может|быть" to listOf("завтра", "потом", "я"),
+        "всё|равно" to listOf("не", "я", "буду"),
+        "все|равно" to listOf("не", "я", "буду"),
+        "как|раз" to listOf("сейчас", "в", "на"),
+        "только|что" to listOf("пришёл", "пришла", "увидел", "закончил"),
+        "в|общем" to listOf("я", "всё", "не", "да"),
+        "по|поводу" to listOf("работы", "встречи", "этого"),
+        "доброе|утро" to listOf("как", "всем"),
+        "спокойной|ночи" to listOf("сладких", "до")
     )
 
     private val ruTypos = mapOf(
         "привкт" to "привет", "првиет" to "привет", "привте" to "привет", "пирвет" to "привет",
         "превет" to "привет", "кка" to "как", "аак" to "как", "длеа" to "дела",
-        "спсибо" to "спасибо", "спаисбо" to "спасибо", "сапсибо" to "спасибо", "пожалуста" to "пожалуйста",
-        "пожалуйтса" to "пожалуйста", "хоршо" to "хорошо", "хрошо" to "хорошо", "хорощо" to "хорошо",
-        "сегодян" to "сегодня", "сегдня" to "сегодня", "сйечас" to "сейчас", "сейчса" to "сейчас",
+        "спсибо" to "спасибо", "спаисбо" to "спасибо", "сапсибо" to "спасибо", "спасбо" to "спасибо",
+        "пожалуста" to "пожалуйста", "пожалуйтса" to "пожалуйста", "пожлуйста" to "пожалуйста",
+        "хоршо" to "хорошо", "хрошо" to "хорошо", "хорощо" to "хорошо",
+        "сегодян" to "сегодня", "сегдня" to "сегодня", "сегодя" to "сегодня",
+        "сйечас" to "сейчас", "сейчса" to "сейчас", "сечас" to "сейчас",
         "потмо" to "потом", "чот" to "что", "чьо" to "что", "жто" to "это", "наврено" to "наверное",
-        "кнечно" to "конечно", "коненчо" to "конечно", "любюл" to "люблю", "тбея" to "тебя"
+        "кнечно" to "конечно", "коненчо" to "конечно", "конешно" to "конечно",
+        "любюл" to "люблю", "тбея" to "тебя", "извени" to "извини", "извените" to "извините",
+        "знаеш" to "знаешь", "можеш" to "можешь", "хочеш" to "хочешь", "будеш" to "будешь",
+        "делаеш" to "делаешь", "пишеш" to "пишешь", "видиш" to "видишь", "думаеш" to "думаешь",
+        "понимаеш" to "понимаешь", "слышиш" to "слышишь", "вобще" to "вообще", "вообше" to "вообще",
+        "сдесь" to "здесь", "зделать" to "сделать", "зделал" to "сделал", "зделаю" to "сделаю",
+        "черезчур" to "чересчур", "симпотичный" to "симпатичный", "девченка" to "девчонка",
+        "ничево" to "ничего", "нормално" to "нормально",
+        "впринципе" to "в принципе", "впринцепе" to "в принципе", "незнаю" to "не знаю",
+        "потомучто" to "потому что", "вообщем" to "в общем", "вобщем" to "в общем",
+        "помоему" to "по-моему", "ктото" to "кто-то", "чтото" to "что-то", "гдето" to "где-то",
+        "когдато" to "когда-то", "както" to "как-то", "какойто" to "какой-то",
+        "чтонибудь" to "что-нибудь", "ктонибудь" to "кто-нибудь", "какнибудь" to "как-нибудь",
+        "всетаки" to "всё-таки", "всётаки" to "всё-таки", "изза" to "из-за", "изпод" to "из-под",
+        "досихпор" to "до сих пор"
     )
 
     private val enTypos = mapOf(
@@ -395,8 +676,19 @@ object WordPredictorEngine {
         "tihs" to "this", "waht" to "what", "hwat" to "what", "hwo" to "how", "yuo" to "you",
         "uoy" to "you", "thnak" to "thank", "thnaks" to "thanks", "plaese" to "please",
         "plesae" to "please", "becuase" to "because", "awsome" to "awesome",
-        "tomorow" to "tomorrow", "freind" to "friend", "recieve" to "receive", "dont" to "don't",
-        "doesnt" to "doesn't", "didnt" to "didn't", "isnt" to "isn't", "cant" to "can't", "wont" to "won't", "im" to "I'm"
+        "tomorow" to "tomorrow", "freind" to "friend", "recieve" to "receive",
+        "dont" to "don't", "doesnt" to "doesn't", "didnt" to "didn't", "isnt" to "isn't",
+        "arent" to "aren't", "wasnt" to "wasn't", "werent" to "weren't",
+        "cant" to "can't", "wont" to "won't", "couldnt" to "couldn't", "shouldnt" to "shouldn't",
+        "wouldnt" to "wouldn't", "hasnt" to "hasn't", "havent" to "haven't", "hadnt" to "hadn't",
+        "im" to "I'm", "ive" to "I've", "youre" to "you're", "youve" to "you've",
+        "theyre" to "they're", "thats" to "that's", "whats" to "what's", "heres" to "here's",
+        "theres" to "there's", "lets" to "let's", "definately" to "definitely",
+        "seperate" to "separate", "occured" to "occurred", "untill" to "until",
+        "wierd" to "weird", "beleive" to "believe", "goverment" to "government",
+        "alot" to "a lot", "thankyou" to "thank you", "goodnight" to "good night",
+        "goodmorning" to "good morning", "ofcourse" to "of course", "rightnow" to "right now",
+        "atleast" to "at least", "aswell" to "as well", "incase" to "in case", "infront" to "in front"
     )
 
     private fun isCyrillic(c: Char): Boolean = c in 'а'..'я' || c == 'ё'
@@ -426,6 +718,7 @@ object WordPredictorEngine {
                 }
                 parseInto(wordsRaw, userWords)
                 parseInto(bigramsRaw, userBigrams)
+                parseInto(data.getString(KEY_TRIGRAMS, null), userTrigrams)
                 // привычки меняются: раз в 30 дней счётчики вдвое меньше, старое уступает недавнему
                 val day = System.currentTimeMillis() / 86_400_000L
                 val last = data.getLong(KEY_DECAY_DAY, 0L)
@@ -434,6 +727,7 @@ object WordPredictorEngine {
                 if (periods > 0) {
                     decayInto(userWords, periods, keepLearned = true)
                     decayInto(userBigrams, periods, keepLearned = false)
+                    decayInto(userTrigrams, periods, keepLearned = false)
                     scheduleSave(0L)
                 }
             }
@@ -628,7 +922,7 @@ object WordPredictorEngine {
 
     private const val KEY_MY_WORDS = "my_words"
     /** Предел «Моего словаря» на язык: больше подсказки только замедляют набор. */
-    const val MAX_MY_WORDS = 20_000
+    const val MAX_MY_WORDS = 100_000
 
     /** «Мой словарь»: слова, которые пользователь добавил сам (с диакритикой и т. п.). Ключ — код словаря языка. */
     fun readMyWords(context: Context): Map<String, List<String>> = runCatching {
@@ -931,7 +1225,7 @@ object WordPredictorEngine {
         return t == Character.NON_SPACING_MARK.toInt() || t == Character.COMBINING_SPACING_MARK.toInt()
     }
 
-    fun learn(lang: KeyboardLanguage, previous: String, word: String, boost: Int = 1) {
+    fun learn(lang: KeyboardLanguage, previous: String, word: String, boost: Int = 1, previous2: String = "") {
         val w = word.trim().lowercase()
         if (w.length < 2 || !w.all(::isWordChar)) return
         val k = uKey(lang, w)
@@ -940,6 +1234,11 @@ object WordPredictorEngine {
         if (p.isNotEmpty() && p.all(::isWordChar)) {
             val key = "${lang.id}:$p|$w"
             userBigrams[key] = (userBigrams[key] ?: 0) + 1
+            val p2 = previous2.trim().lowercase()
+            if (p2.isNotEmpty() && p2.all(::isWordChar)) {
+                val tKey = "${lang.id}:$p2|$p|$w"
+                userTrigrams[tKey] = (userTrigrams[tKey] ?: 0) + 1
+            }
         }
         scheduleSave(3000L)
     }
@@ -950,6 +1249,7 @@ object WordPredictorEngine {
         userWords.remove(uKey(lang, w))
         val suffix = "|$w"
         userBigrams.keys.filter { it.startsWith("${lang.id}:") && it.endsWith(suffix) }.forEach { userBigrams.remove(it) }
+        userTrigrams.keys.filter { it.startsWith("${lang.id}:") && it.endsWith(suffix) }.forEach { userTrigrams.remove(it) }
         scheduleSave(500L)
     }
 
@@ -958,6 +1258,7 @@ object WordPredictorEngine {
     fun clearUserData() {
         userWords.clear()
         userBigrams.clear()
+        userTrigrams.clear()
         glideCache.clear()
         scheduleSave(0L)
     }
@@ -973,9 +1274,12 @@ object WordPredictorEngine {
                     userWords.entries.sortedByDescending { it.value }.take(6000).forEach { wj.put(it.key, it.value) }
                     val bj = JSONObject()
                     userBigrams.entries.sortedByDescending { it.value }.take(6000).forEach { bj.put(it.key, it.value) }
+                    val tj = JSONObject()
+                    userTrigrams.entries.sortedByDescending { it.value }.take(4000).forEach { tj.put(it.key, it.value) }
                     app.getSharedPreferences(DATA_PREFS, Context.MODE_PRIVATE).edit()
                         .putString(KEY_WORDS, wj.toString())
                         .putString(KEY_BIGRAMS, bj.toString())
+                        .putString(KEY_TRIGRAMS, tj.toString())
                         .apply()
                 }
                 // копия в папку пользователя: переживает переустановку (не чаще раза в несколько минут)
@@ -1167,7 +1471,7 @@ object WordPredictorEngine {
         /** Слова частотнее этого места (предлоги, союзы) по контексту не меняются. */
         @JvmField var realWordMinRank = 300
         /** Сила контекста в продолжениях по префиксу. */
-        @JvmField var ctxCompletion = 2.4f
+        @JvmField var ctxCompletion = 2.9f
         /** Исправление в другое слово может быть на столько менее вероятным, чем лучшее продолжение набранного. */
         @JvmField var prefixSlack = 0.5f
         /** Два возможных дописывания ближе этого — не дописываем за человека. */
@@ -1177,7 +1481,7 @@ object WordPredictorEngine {
         @JvmField var fuzzyExtra = 0.5f
         @JvmField var fuzzyMargin = 1.0f
         /** Сколько самых частых слов с набранным началом сравниваются по контексту. */
-        @JvmField var completionPool = 24
+        @JvmField var completionPool = 48
     }
 
     /** −ln P(касание | клавиша target) с точностью до константы: касание по клавише typed со смещением touch. */
@@ -1274,27 +1578,41 @@ object WordPredictorEngine {
     /** Редкость слова: −ln частоты по закону Ципфа, с точностью до константы. */
     private fun freqCost(rank: Int): Float = Typo.lmScale * kotlin.math.ln(1f + rank / Typo.lmK)
 
-    /** Бонус за то, что слово часто идёт после предыдущего («доброе» → «утро»). */
+    /** Бонус за то, что слово часто идёт после предыдущего («доброе» → «утро») или пары слов («how are» → «you»). */
     private fun contextBonus(lang: KeyboardLanguage, prev: String, w: String): Float {
         if (prev.isEmpty()) return 0f
         var bonus = 0f
         val n = userBigrams["${lang.id}:$prev|$w"] ?: 0
-        if (n > 0) bonus += min(2.5f, 0.9f + 0.6f * kotlin.math.ln(1f + n))
+        if (n > 0) bonus += min(2.6f, 0.95f + 0.6f * kotlin.math.ln(1f + n))
+        val p2 = prev2Local.get().orEmpty()
+        if (p2.isNotEmpty()) {
+            val tn = userTrigrams["${lang.id}:$p2|$prev|$w"] ?: 0
+            if (tn > 0) bonus += min(3.4f, 1.4f + 0.8f * kotlin.math.ln(1f + tn))
+        }
+        val curatedTri = if (p2.isNotEmpty()) when (lang.baseId) {
+            "ru" -> ruTrigrams["$p2|$prev"]
+            "en" -> enTrigrams["$p2|$prev"]
+            else -> null
+        } else null
+        val triIdx = curatedTri?.indexOf(w) ?: -1
+        if (triIdx >= 0) bonus += (2.3f - triIdx * 0.25f).coerceAtLeast(1.1f)
         val builtin = when (lang.baseId) {
             "ru" -> ruBigrams[prev]
             "en" -> enBigrams[prev]
             else -> null
         }
-        if (builtin?.contains(w) == true) bonus += 1.2f
+        val biIdx = builtin?.indexOf(w) ?: -1
+        if (biIdx >= 0) bonus += (1.55f - biIdx * 0.14f).coerceAtLeast(0.75f)
         val d = dicts[lang.dict ?: lang.id]
-        var c = d?.bigrams?.cost(prev, w) ?: -1f
-        // два слова контекста точнее одного: «я не» → «знаю», а не просто «не» → «знаю»
-        val p2 = prev2Local.get().orEmpty()
-        if (p2.isNotEmpty()) {
-            val t = d?.trigrams?.cost("$p2|$prev", w) ?: -1f
-            if (t >= 0f && (c < 0f || t < c)) c = t
+        val biCost = d?.bigrams?.cost(prev, w) ?: -1f
+        val triCost = if (p2.isNotEmpty()) d?.trigrams?.cost("$p2|$prev", w) ?: -1f else -1f
+        val biBonus = if (biCost >= 0f) (Typo.ctxWeight * (Typo.ctxCap - biCost)).coerceAtLeast(0.2f) else 0f
+        val triBonus = if (triCost >= 0f) (Typo.ctxWeight * 1.32f * (Typo.ctxCap - triCost)).coerceAtLeast(0.35f) else 0f
+        bonus += when {
+            triBonus > 0f && biBonus > 0f -> 0.72f * triBonus + 0.28f * biBonus + 0.25f
+            triBonus > 0f -> triBonus
+            else -> biBonus
         }
-        if (c >= 0f) bonus += (Typo.ctxWeight * (Typo.ctxCap - c)).coerceAtLeast(0.2f)
         return bonus
     }
 
@@ -1716,9 +2034,22 @@ object WordPredictorEngine {
         if (strength != "NORMAL" || prev.isEmpty() || lower.length < 3 || touches == null || touches.none { it != null }) return null
         if (!lang.autoCorrect || userCount(lang, lower) > 0 || isPersonal(lang, lower) || userBigrams.containsKey("${lang.id}:$prev|$lower")) return null
         val d = dictFor(lang) ?: return null
+        if (d.rankOf(lower) in 0 until Typo.realWordMinRank) return null
+        val p2 = prev2Local.get().orEmpty()
+        val triModel = d.trigrams
+        if (p2.isNotEmpty() && triModel != null) {
+            val tk = "$p2|$prev"
+            if (triModel.known(tk) && triModel.cost(tk, lower) < 0f) {
+                for (w in triModel.next(tk)) {
+                    if (w == lower || kotlin.math.abs(w.length - lower.length) > 1) continue
+                    val c = triModel.cost(tk, w)
+                    if (c < 0f || c > Typo.realWordMaxCost + 0.4f) break
+                    if (editCost(lang, lower, w, Typo.realWordMaxEdit, touches) <= Typo.realWordMaxEdit) return w
+                }
+            }
+        }
         val model = d.bigrams ?: return null
         if (!model.known(prev) || model.cost(prev, lower) >= 0f) return null
-        if (d.rankOf(lower) in 0 until Typo.realWordMinRank) return null
         for (w in model.next(prev)) {
             if (w == lower || kotlin.math.abs(w.length - lower.length) > 1) continue
             val c = model.cost(prev, w)
@@ -1820,12 +2151,29 @@ object WordPredictorEngine {
                 val s = kotlin.math.ln(2f + r) - 0.7f * kotlin.math.ln(1f + userCount(lang, w))
                 scored[w] = min(scored[w] ?: Float.MAX_VALUE, s)
             }
-            // продолжения, обычные после предыдущего слова, — даже если само слово не из самых частых
+            // продолжения, обычные после предыдущего слова или пары слов, — даже если само слово не из самых частых
             if (prev.isNotEmpty()) {
                 val p2 = prev2Local.get().orEmpty()
-                val after = if (p2.isNotEmpty()) d.trigrams?.next("$p2|$prev").orEmpty() + d.bigrams?.next(prev).orEmpty() else d.bigrams?.next(prev).orEmpty()
+                val curatedTri = if (p2.isNotEmpty()) when (lang.baseId) {
+                    "ru" -> ruTrigrams["$p2|$prev"].orEmpty()
+                    "en" -> enTrigrams["$p2|$prev"].orEmpty()
+                    else -> emptyList()
+                } else emptyList()
+                val curatedBi = when (lang.baseId) {
+                    "ru" -> ruBigrams[prev].orEmpty()
+                    "en" -> enBigrams[prev].orEmpty()
+                    else -> emptyList()
+                }
+                val after = buildList {
+                    addAll(curatedTri)
+                    if (p2.isNotEmpty()) addAll(d.trigrams?.next("$p2|$prev").orEmpty())
+                    addAll(curatedBi)
+                    addAll(d.bigrams?.next(prev).orEmpty())
+                }
                 for (w in after) {
-                    if (w.length > lower.length && w.startsWith(lower)) scored.putIfAbsent(w, kotlin.math.ln(2f + (d.rankOf(w).takeIf { it >= 0 } ?: 100_000)))
+                    if (w.length > lower.length && w.startsWith(lower)) {
+                        scored.putIfAbsent(w, kotlin.math.ln(2f + (d.rankOf(w).takeIf { it >= 0 } ?: 100_000)))
+                    }
                 }
             }
             // частых продолжений не хватило — редкие формы: «респонд…» → «респондентов»
@@ -1980,43 +2328,86 @@ object WordPredictorEngine {
     ): PredictionSnapshot {
         val prev = previous.trim().lowercase()
         val set = LinkedHashSet<String>()
+        val d = dictFor(lang)
         if (prev.isNotEmpty()) {
             val prefix = "${lang.id}:$prev|"
-            // связка, набранная хотя бы дважды, — уже привычка, а не случайность
-            userBigrams.entries.asSequence()
-                .filter { it.key.startsWith(prefix) && it.value >= 2 }
-                .sortedByDescending { it.value }
-                .take(3)
-                .forEach { set.add(it.key.substringAfter('|')) }
-            // тройка слов: самое точное, что есть, — раньше разговорных пар и модели
             val p2 = prev2Local.get().orEmpty()
-            if (p2.isNotEmpty()) dictFor(lang)?.trigrams?.next("$p2|$prev")?.forEach { w ->
-                if (set.size < 3 && w != prev) set.add(properCase(lang, w))
+            val scored = LinkedHashMap<String, Float>()
+            fun addScore(raw: String, pts: Float) {
+                val w = raw.lowercase()
+                if (w.isBlank() || w == prev) return
+                scored[w] = (scored[w] ?: 0f) + pts
             }
-            // ручной список разговорных пар: для английского он точнее модели Норвига, для русского модель из корпусов
-            // точнее — от ручного списка там берётся только первое слово («доброе» → «утро»), остальное по модели
-            val handmade = when (lang.baseId) {
-                "ru" -> ruBigrams[prev]?.take(1)
-                "en" -> enBigrams[prev]
-                else -> null
+            // личные тройки пользователя: самые точные персональные фразы
+            if (p2.isNotEmpty()) {
+                val triPrefix = "${lang.id}:$p2|$prev|"
+                userTrigrams.entries.asSequence()
+                    .filter { it.key.startsWith(triPrefix) }
+                    .sortedByDescending { it.value }
+                    .take(6)
+                    .forEach { e ->
+                        val w = e.key.substringAfterLast('|')
+                        val pts = if (e.value >= 2) 15f + 2.5f * kotlin.math.ln(1f + e.value) else 5.5f
+                        addScore(w, pts)
+                    }
             }
-            handmade?.forEach { if (set.size < 3) set.add(it) }
-            if (set.size < 3) dictFor(lang)?.bigrams?.next(prev)?.forEach { w ->
-                if (set.size < 3 && w != prev) set.add(properCase(lang, w))
-            }
-            if (set.size < 3 && lang.baseId == "ru") ruBigrams[prev]?.forEach { if (set.size < 3) set.add(it) }
-            // связки, набранные хотя бы раз
-            if (set.size < 3) userBigrams.entries.asSequence()
+            // личные связки пользователя: набранные >= 2 раз имеют высокий приоритет
+            userBigrams.entries.asSequence()
                 .filter { it.key.startsWith(prefix) }
                 .sortedByDescending { it.value }
-                .take(3)
-                .forEach { set.add(it.key.substringAfter('|')) }
+                .take(8)
+                .forEach { e ->
+                    val w = e.key.substringAfter('|')
+                    val pts = if (e.value >= 2) 12f + 2.2f * kotlin.math.ln(1f + e.value) else 1.8f
+                    addScore(w, pts)
+                }
+            // разговорные тройки слов
+            val curatedTri = if (p2.isNotEmpty()) when (lang.baseId) {
+                "ru" -> ruTrigrams["$p2|$prev"].orEmpty()
+                "en" -> enTrigrams["$p2|$prev"].orEmpty()
+                else -> emptyList()
+            } else emptyList()
+            curatedTri.forEachIndexed { idx, w ->
+                addScore(w, (9.5f - idx * 1.1f).coerceAtLeast(5.0f))
+            }
+            // тройки из корпусной модели (учитываем реальную вероятность -ln P)
+            val triModel = d?.trigrams
+            if (p2.isNotEmpty() && triModel != null) {
+                val triKey = "$p2|$prev"
+                triModel.next(triKey).take(8).forEachIndexed { idx, w ->
+                    val c = triModel.cost(triKey, w).takeIf { it >= 0f } ?: (2.5f + idx * 0.5f)
+                    addScore(w, (Typo.ctxCap - c).coerceAtLeast(0.6f) * 2.1f + (1.6f - idx * 0.15f).coerceAtLeast(0f))
+                }
+            }
+            // разговорные пары слов: для английского компенсируют веб-корпус, для русского мягко дополняют модель
+            val curatedBi = when (lang.baseId) {
+                "ru" -> ruBigrams[prev].orEmpty()
+                "en" -> enBigrams[prev].orEmpty()
+                else -> emptyList()
+            }
+            val biModel = d?.bigrams
+            val hasBigModel = biModel != null && lang.baseId == "ru"
+            curatedBi.forEachIndexed { idx, w ->
+                val base = when {
+                    lang.baseId == "en" -> 6.4f
+                    hasBigModel -> if (idx == 0) 2.2f else 0.9f
+                    else -> if (idx == 0) 5.8f else 3.2f
+                }
+                addScore(w, (base - idx * 0.45f).coerceAtLeast(0.4f))
+            }
+            // пары из корпусной модели (учитываем -ln P)
+            biModel?.next(prev)?.take(10)?.forEachIndexed { idx, w ->
+                val c = biModel.cost(prev, w).takeIf { it >= 0f } ?: (3.0f + idx * 0.4f)
+                addScore(w, (Typo.ctxCap - c).coerceAtLeast(0.3f) * 1.15f + (0.7f - idx * 0.06f).coerceAtLeast(0f))
+            }
+            scored.entries.sortedByDescending { it.value }.take(3).forEach { (w, _) ->
+                set.add(properCase(lang, w))
+            }
         }
         // остальное — самые частые слова языка, чтобы строка подсказок не стояла пустой («…»)
         if (set.size < 3) {
             val starters = if (prev.isEmpty()) SENTENCE_STARTERS[lang.id].orEmpty() else emptyList()
             for (w in starters) if (set.size < 3) set.add(w)
-            val d = dictFor(lang)
             val top = d?.words
             if (top != null) {
                 // свои слова пользователя — не «самые частые слова языка» (если словарь не целиком из них)

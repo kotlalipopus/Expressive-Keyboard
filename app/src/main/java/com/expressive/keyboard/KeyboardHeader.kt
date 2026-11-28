@@ -171,13 +171,16 @@ internal fun HeaderBar(
         panel == ActivePanel.KEYBOARD && !settings.incognito &&
             (state.clipOfferSecret || settings.clipboardHistory && !state.passwordField)
     }
+    val compactOffer = visibleOffer != null && state.clipOfferCollapsed &&
+        !state.clipOfferSecret && settings.clipboardCompactOffer in setOf("LEFT", "RIGHT") && !state.toolbarOpen
     val showCalculation = panel == ActivePanel.KEYBOARD && !state.toolbarOpen &&
         settings.inlineCalculator && state.calculation != null
     val offer = visibleOffer.takeIf {
-        (state.clipOfferSecret || it?.let(ClipImages::isImage) == true) &&
+        !compactOffer &&
+        (settings.clipboardOfferPosition == "SUGGESTIONS" || state.clipOfferSecret || it?.let(ClipImages::isImage) == true) &&
             inline == null && !state.toolbarOpen && !showCandidates && !showCalculation
     }
-    if (visibleOffer != null && offer == null) {
+    if (visibleOffer != null && offer == null && !compactOffer && settings.clipboardOfferPosition != "SUGGESTIONS") {
         ClipOfferStrip(visibleOffer, actions, palette, font, secret = state.clipOfferSecret)
     }
     // пустое поле — меню функций вместо подсказок
@@ -217,6 +220,7 @@ internal fun HeaderBar(
                 SlotIcon("menu", btnFg, 22.dp) { GlyphIcon(Glyph.GRID, btnFg, 22.dp) }
             }
         }
+        if (compactOffer && settings.clipboardCompactOffer == "LEFT") CompactClipOffer(actions, palette, button)
         val hideOnSwipe = settings.swipeDownHide && panel == ActivePanel.KEYBOARD
         val cActionsHide by rememberUpdatedState(actions)
         Box(
@@ -278,6 +282,7 @@ internal fun HeaderBar(
                 ) { m -> content(m) }
             } else content(mode)
         }
+        if (compactOffer && settings.clipboardCompactOffer == "RIGHT") CompactClipOffer(actions, palette, button)
         if (settings.showMicButton && !sideHidden) {
             // правая кнопка: микрофон или другое действие из настроек («Кнопка справа»)
             val act = settings.micAction
@@ -314,6 +319,17 @@ internal fun HeaderBar(
             if (skinButtons != null) SkinButton(skinButtons, palette, button, onMic, onRambler, mic)
             else CookieButton(spec, palette.accent, button, onMic, onRambler, mic)
         }
+    }
+}
+
+@Composable
+private fun CompactClipOffer(actions: KeyboardActions, palette: KeyPalette, size: Dp) {
+    Box(
+        Modifier.size(size).clip(CircleShape).background(palette.accentSoft)
+            .combinedClickable(onClick = { actions.pasteClipOffer() }, onLongClick = { actions.dismissClipOffer() }),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(Icons.Rounded.ContentPaste, tr("Вставить из буфера"), tint = palette.onAccentSoft, modifier = Modifier.size(20.dp))
     }
 }
 
@@ -544,7 +560,7 @@ internal fun ClipOfferStrip(entry: String, actions: KeyboardActions, palette: Ke
     val image = !secret && ClipImages.isImage(entry)
     Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
         Row(
-            Modifier.weight(1f, fill = false).height(38.dp).clip(RoundedCornerShape(19.dp)).background(palette.accentSoft)
+            Modifier.weight(1f).height(38.dp).clip(RoundedCornerShape(19.dp)).background(palette.accentSoft)
                 .clickable { actions.pasteClipOffer() }.padding(start = 6.dp, end = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -559,7 +575,7 @@ internal fun ClipOfferStrip(entry: String, actions: KeyboardActions, palette: Ke
             Text(
                 if (image) tr("Вставить картинку") else if (secret) tr("Вставить пароль") + "  ••••••••" else entry.replace('\n', ' '),
                 color = palette.onAccentSoft, fontFamily = font, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
-                maxLines = 1, overflow = TextOverflow.Ellipsis
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f)
             )
         }
         Spacer(Modifier.width(6.dp))

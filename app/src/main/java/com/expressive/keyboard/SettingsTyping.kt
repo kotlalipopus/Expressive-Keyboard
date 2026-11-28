@@ -186,6 +186,9 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
         ToggleItem(Icons.AutoMirrored.Rounded.Backspace, "Свайп влево по ⌫", "Удаляет целые слова", settings.backspaceSwipe) {
             KeyboardPrefs.edit(context) { putBoolean("backspace_swipe", it) }
         }
+        ToggleItem(Icons.Rounded.FastRewind, "Ускорять удаление при удержании ⌫", "Сначала стирает по буквам быстрее, затем — целыми словами", settings.fastBackspaceRepeat) {
+            KeyboardPrefs.edit(context) { putBoolean("fast_backspace_repeat", it) }
+        }
     }
     if (part == SettingsPage.GESTURES) SettingsSection("Пробел") {
         ChoiceItem(
@@ -198,6 +201,27 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
             },
             listOf("CURSOR" to "Курсор", "LANGUAGE" to "Язык", "BOTH" to "Оба", "OFF" to "Выкл"), settings.spaceSwipe
         ) { v -> KeyboardPrefs.edit(context) { putString("space_swipe", v) } }
+        ChoiceItem(
+            Icons.Rounded.Swipe, "Свайп вверх / вниз по пробелу",
+            when (settings.spaceSwipeVertical) {
+                "CURSOR" -> "Курсор перемещается между строками"
+                "LANGUAGE" -> "Свайп меняет язык"
+                else -> "Жест выключен"
+            },
+            listOf("OFF" to "Выкл", "CURSOR" to "Курсор", "LANGUAGE" to "Язык"), settings.spaceSwipeVertical
+        ) { v -> KeyboardPrefs.edit(context) { putString("space_swipe_vertical", v) } }
+        SliderItem(
+            icon = Icons.Rounded.Swipe, title = "Скорость курсора по горизонтали",
+            value = settings.spaceCursorSpeed, range = 0.25f..4f,
+            format = { "${"%.1f".format(java.util.Locale.US, it)}×" },
+            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("space_cursor_speed", v) } }
+        )
+        SliderItem(
+            icon = Icons.Rounded.Swipe, title = "Скорость курсора вверх / вниз",
+            value = settings.spaceVerticalSpeed, range = 0.25f..4f,
+            format = { "${"%.1f".format(java.util.Locale.US, it)}×" },
+            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("space_vertical_speed", v) } }
+        )
         val spaceActions = listOf(
             "PICKER" to "Выбор клавиатуры", "LANGUAGE" to "Смена языка", "AI_FIX" to "Улучшить текст", "VOICE" to "Голосовой ввод", "EMOJI" to "Эмодзи",
             "CLIPBOARD" to "Буфер обмена", "TOOLBAR" to "Панель функций", "SETTINGS" to "Настройки", "OFF" to "Ничего"
@@ -436,6 +460,28 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
         }
     }
     if (part == SettingsPage.CLIPBOARD) SettingsSection("Буфер обмена") {
+        ToggleItem(Icons.Rounded.SpaceBar, "Пробел после вставки из буфера", "Добавлять пробел после вставленного текста", settings.clipboardSpaceAfterPaste) {
+            KeyboardPrefs.edit(context) { putBoolean("clipboard_space_after_paste", it) }
+        }
+        ToggleItem(
+            Icons.Rounded.KeyboardHide, "Скрывать при начале печати",
+            "Предложение вставить скопированное пропадает, как только вы начинаете печатать",
+            settings.clipboardHideOnType
+        ) { KeyboardPrefs.edit(context) { putBoolean("clipboard_hide_on_type", it) } }
+        ToggleItem(
+            Icons.Rounded.PushPin, "Закреплённые сверху",
+            "Закреплённые записи в начале списка; если выключить — внизу",
+            settings.clipboardPinnedTop
+        ) { KeyboardPrefs.edit(context) { putBoolean("clipboard_pinned_top", it) } }
+        ChoiceItem(
+            Icons.Rounded.ContentPaste, "Кнопка буфера после набора",
+            "После ввода буквы или цифры предложение сворачивается в кнопку. Нажмите, чтобы вставить; удерживайте, чтобы скрыть.",
+            listOf("OFF" to "Выкл", "LEFT" to "Слева", "RIGHT" to "Справа"), settings.clipboardCompactOffer
+        ) { v -> KeyboardPrefs.edit(context) { putString("clipboard_compact_offer", v) } }
+        ChoiceItem(
+            Icons.Rounded.ContentPaste, "Где показывать скопированное", null,
+            listOf("ABOVE" to "Над панелью", "SUGGESTIONS" to "В подсказках"), settings.clipboardOfferPosition
+        ) { v -> KeyboardPrefs.edit(context) { putString("clipboard_offer_position", v) } }
         ToggleItem(
             Icons.Rounded.ContentPaste, "История буфера",
             "Хранится только на телефоне и не пропадает, когда клавиатура закрывается. Пароли не сохраняются", settings.clipboardHistory

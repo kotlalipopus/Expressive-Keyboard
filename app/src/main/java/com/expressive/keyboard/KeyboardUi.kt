@@ -572,7 +572,7 @@ internal fun KeyboardScreen(
                             } else motion.exit()
                             (enter togetherWith exit).using(null)
                         },
-                        modifier = Modifier.fillMaxSize().clipToBounds(),
+                        modifier = Modifier.fillMaxSize(),
                         label = "Keyboard body"
                     ) { target ->
                         val active = target == targetBody
@@ -590,7 +590,6 @@ internal fun KeyboardScreen(
         GlideTrailLayer(glide, trailColor, settings.glideTrail)
         ScriptOverlayLayer()
         PopupLayer(popup, palette, font, spec.decor(settings), settings.animPopup, settings.pressAnimSpeed, settings.popupStyle)
-        PluginAccessIndicator(settings, palette)
         ScriptFrameTicker()
         ModFxTicker()
     }
@@ -726,7 +725,7 @@ private fun PanelBody(
     when (target.panel) {
         ActivePanel.EMOJI -> EmojiPanel(state.emojiRecents, actions, settings, palette, font)
         ActivePanel.GIF -> GifPanel(state, actions, settings, palette, font)
-        ActivePanel.CLIPBOARD -> ClipboardPanel(state, actions, palette, font)
+        ActivePanel.CLIPBOARD -> ClipboardPanel(state, actions, settings, palette, font)
         ActivePanel.VOICE -> VoicePanel(state, actions, voice, palette, font, spec)
         ActivePanel.PLUGINS -> PluginsPanel(state, actions, palette, font)
         else -> target.language?.let { lang ->

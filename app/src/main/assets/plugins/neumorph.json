@@ -1,69 +1,109 @@
 {
   "id": "builtin.neumorph",
   "name": "Неоморфизм",
-  "version": "3.0",
+  "version": "4.0",
   "author": "Expressive Keyboard",
-  "description": "Мягкие выпуклые клавиши из того же материала, что и фон: свет сверху слева, тень снизу справа, при нажатии клавиша вдавливается. Светлый и тёмный вариант.",
+  "description": "Мягкие скульптурные клавиши с деликатным светом, бархатными тенями и тактильным вдавливанием. Светлый и тёмный вариант.",
   "icon": "☁️",
   "skin": {
-    "keyboard": { "corner": 28 },
+    "keyboard": {
+      "background": {
+        "colors": ["#EEF2F8", "#E4EAF3"],
+        "angle": 160
+      },
+      "corner": 28
+    },
     "colors": {
-      "background": "#E6EAF1", "key": "#E6EAF1", "keyText": "#39404F",
-      "func": "#E6EAF1", "funcText": "#68718A", "accent": "#6B7FF0", "accentText": "#FFFFFF"
+      "background": "#E9EEF6", "key": "#EEF2F8", "keyText": "#2D3548",
+      "func": "#E2E8F2", "funcText": "#5B6682", "accent": "#5B6EF5", "accentText": "#FFFFFF"
     },
     "keys": {
       "*": {
         "material": "neumorph",
-        "background": { "colors": ["#EEF1F7", "#DFE4EC"], "angle": 135 },
-        "pressedBackground": { "colors": ["#D9DEE7", "#E9EDF3"], "angle": 135 },
-        "shadow": 8,
-        "shadowY": 4,
-        "shadowColor": "#73A6B3C9",
+        "background": { "colors": ["#F7F9FD", "#E2E8F2"], "angle": 135 },
+        "pressedBackground": { "colors": ["#DCE3EE", "#EEF2F8"], "angle": 135 },
+        "border": "#B3FFFFFF",
+        "borderWidth": 0.8,
+        "shadow": 7,
+        "shadowY": 3.5,
+        "shadowColor": "#66A3B2C8",
         "press": "sink",
-        "radius": 16,
-        "pressedRadius": 16,
-        "inset": 3.5,
+        "radius": 15,
+        "pressedRadius": 15,
+        "inset": 2.5,
         "hideHint": true
       },
-      "shift": { "text": "#6B7FF0" },
+      "func": {
+        "background": { "colors": ["#E8EEF7", "#D9E1EE"], "angle": 135 },
+        "pressedBackground": { "colors": ["#D2DBE9", "#E5ECF6"], "angle": 135 },
+        "border": "#80FFFFFF",
+        "text": "#5B6682"
+      },
+      "shift": { "text": "#5B6EF5" },
       "enter": {
-        "background": { "colors": ["#8396FF", "#5F73EA"], "angle": 135 },
-        "pressedBackground": "#5367DD",
+        "material": "neumorph",
+        "background": { "colors": ["#7D90FF", "#5265EC"], "angle": 135 },
+        "pressedBackground": "#4759DC",
+        "border": "#4DFFFFFF",
+        "borderWidth": 0.8,
         "text": "#FFFFFF",
-        "shadowColor": "#596B7FF0"
+        "shadow": 8,
+        "shadowY": 4,
+        "shadowColor": "#735265EC"
       }
     },
-    "popup": { "radius": 16, "background": "#F1F3F8", "text": "#39404F", "pressedBackground": "#6B7FF0", "pressedText": "#FFFFFF" },
-    "chips": { "material": "none", "text": "#39404F" },
+    "popup": { "radius": 16, "background": "#F4F7FC", "text": "#2D3548", "pressedBackground": "#5B6EF5", "pressedText": "#FFFFFF" },
+    "chips": { "material": "none", "text": "#2D3548" },
     "buttons": {
       "material": "neumorph",
-      "background": { "colors": ["#EEF1F7", "#DFE4EC"], "angle": 135 },
-      "shadow": 6, "shadowY": 3, "shadowColor": "#73A6B3C9", "text": "#68718A"
+      "background": { "colors": ["#F5F8FC", "#E1E7F1"], "angle": 135 },
+      "border": "#A6FFFFFF", "borderWidth": 0.8,
+      "shadow": 6, "shadowY": 3, "shadowColor": "#66A3B2C8", "text": "#5B6682"
     },
     "panel": {
       "material": "neumorph",
-      "background": "#E6EAF1",
-      "shadow": 10, "shadowY": 5, "shadowColor": "#66A6B3C9",
+      "background": "#E9EEF6",
+      "shadow": 9, "shadowY": 4, "shadowColor": "#66A3B2C8",
       "radius": 24, "inset": 4
     },
     "dark": {
+      "keyboard": {
+        "background": {
+          "colors": ["#1E222B", "#181B23"],
+          "angle": 160
+        }
+      },
       "colors": {
-        "background": "#262A32", "key": "#262A32", "keyText": "#DDE2EC",
-        "func": "#262A32", "funcText": "#A0A8BA", "accent": "#7C8EFF", "accentText": "#FFFFFF"
+        "background": "#1C2029", "key": "#232833", "keyText": "#E6EBF5",
+        "func": "#1E232D", "funcText": "#9BA5BC", "accent": "#7689FF", "accentText": "#FFFFFF"
       },
       "keys": {
         "*": {
-          "background": { "colors": ["#2C3039", "#22262D"], "angle": 135 },
-          "pressedBackground": { "colors": ["#1F2329", "#2A2E36"], "angle": 135 },
-          "shadowColor": "#E6131519"
+          "background": { "colors": ["#282E3A", "#1C2029"], "angle": 135 },
+          "pressedBackground": { "colors": ["#171A22", "#242934"], "angle": 135 },
+          "border": "#1AFFFFFF",
+          "borderWidth": 0.8,
+          "shadow": 7,
+          "shadowY": 3.5,
+          "shadowColor": "#E60C0E14"
         },
-        "shift": { "text": "#7C8EFF" },
-        "enter": { "background": { "colors": ["#8B9BFF", "#6576F0"], "angle": 135 }, "shadowColor": "#661C1F26" }
+        "func": {
+          "background": { "colors": ["#222732", "#181C24"], "angle": 135 },
+          "border": "#12FFFFFF",
+          "text": "#9BA5BC"
+        },
+        "shift": { "text": "#7689FF" },
+        "enter": {
+          "background": { "colors": ["#8597FF", "#586CF0"], "angle": 135 },
+          "pressedBackground": "#4B5EE2",
+          "border": "#33FFFFFF",
+          "shadowColor": "#80586CF0"
+        }
       },
-      "popup": { "background": "#30353F", "text": "#E6E9F0", "pressedBackground": "#7C8EFF" },
-      "chips": { "text": "#DDE2EC" },
-      "buttons": { "background": { "colors": ["#2C3039", "#22262D"], "angle": 135 }, "shadowColor": "#E6131519", "text": "#A0A8BA" },
-      "panel": { "background": "#262A32", "shadowColor": "#CC131519" }
+      "popup": { "background": "#2A303D", "text": "#EEF2FA", "pressedBackground": "#7689FF" },
+      "chips": { "text": "#E6EBF5" },
+      "buttons": { "background": { "colors": ["#282E3A", "#1C2029"], "angle": 135 }, "border": "#1AFFFFFF", "shadowColor": "#E60C0E14", "text": "#9BA5BC" },
+      "panel": { "background": "#1C2029", "shadowColor": "#D90C0E14" }
     }
   }
 }

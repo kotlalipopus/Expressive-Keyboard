@@ -23,11 +23,37 @@ internal fun LandscapeScaleItem(settings: KeyboardSettings) {
 @Composable
 internal fun WhatsNewPage(onNavigate: (SettingsPage) -> Unit) {
     InfoCard(Icons.Rounded.NewReleases, tr("В версии {0}", BuildConfig.VERSION_NAME.substringBefore('-')))
-    SettingsSection("Внешний вид") {
-        ActionItem(Icons.Rounded.Videocam, "Видео на фоне клавиатуры", "Выберите видео из галереи в разделе «Цвета и фон».",
-            onClick = { onNavigate(SettingsPage.COLORS) })
-        ActionItem(Icons.Rounded.EmojiEmotions, "Размер эмодзи", "Чем крупнее эмодзи, тем меньше их помещается в ряду.",
-            onClick = { onNavigate(SettingsPage.SIZE) })
+    SettingsSection("В этом обновлении") {
+        ActionItem(
+            Icons.Rounded.Palette,
+            "Обновлённый Material 3 Expressive",
+            "Плавное затухание панелей, новая нижняя навигация (можно вернуть классический список), плавающее поле проверки и 2-колоночная галерея тем.",
+            onClick = { onNavigate(SettingsPage.THEMES) }
+        )
+        ActionItem(
+            Icons.Rounded.TextFields,
+            "Отдельные разделы «Шрифт» и «Форма кнопок»",
+            "Шрифт и форма кнопок вынесены в «Внешний вид», «Плагины и моды» — рядом с «Новое», а «Энергосбережение» — в «Клавиатура».",
+            onClick = { onNavigate(SettingsPage.FONT) }
+        )
+        ActionItem(
+            Icons.Rounded.Spellcheck,
+            "Улучшенный Т9 и языковая модель",
+            "Персональное обучение триграммам, точнее подсказки для русского и английского и исправление слитных написаний.",
+            onClick = { onNavigate(SettingsPage.TYPING) }
+        )
+        ActionItem(
+            Icons.Rounded.ContentPaste,
+            "Буфер обмена",
+            "Фильтр закреплённых в панели, скрытие скопированного при начале печати и надёжное удаление записей.",
+            onClick = { onNavigate(SettingsPage.CLIPBOARD) }
+        )
+        ActionItem(
+            Icons.Rounded.Swipe,
+            "Курсор по пробелу и быстрый ⌫",
+            "Исправлена скорость курсора по пробелу, добавлено ускоренное удаление по словам при долгом удержании ⌫.",
+            onClick = { onNavigate(SettingsPage.GESTURES) }
+        )
     }
 }
 

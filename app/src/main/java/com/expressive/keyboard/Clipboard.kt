@@ -154,14 +154,14 @@ object ClipStore {
         return list.filter { now - (times[it] ?: now) > keep }
     }
 
-    /** Сохранить в фоне (несколько изменений подряд — одна запись на диск). */
-    fun save(context: Context, list: List<String>) {
+    /** Сохранить в фоне (несколько изменений подряд — одна запись на диск; при удалении — сразу). */
+    fun save(context: Context, list: List<String>, immediate: Boolean = false) {
         val app = context.applicationContext
         val snapshot = list.toList()
         synchronized(this) {
             saveJob?.cancel()
             saveJob = saver.launch {
-                delay(400L)
+                if (!immediate) delay(400L)
                 val arr = JSONArray()
                 val now = System.currentTimeMillis()
                 for (t in snapshot) arr.put(JSONObject().put("t", t).put("at", times[t] ?: now))

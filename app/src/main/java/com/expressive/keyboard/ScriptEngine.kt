@@ -415,6 +415,10 @@ object ScriptHost {
         mods = next
         lastApp = ""
         publish()
+        if (shown) {
+            bridge?.let { b -> if (has("start")) emit("start", b.scriptField()) }
+            emit("show")
+        }
         renderTick++
     }
 

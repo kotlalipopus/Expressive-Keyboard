@@ -109,33 +109,40 @@ internal fun DesignPicker(settings: KeyboardSettings) {
             // выбрана та, чьё оформление стоит сейчас (своя тема — ни одна из этих)
             val sel = settings.skinPlugin == d.skin
             val plugin = PluginRepository.plugins.firstOrNull { it.id == d.skin }
-            val corner by animateDpAsState(if (sel) 28.dp else 18.dp, spring(dampingRatio = 0.6f, stiffness = 500f), label = "designCorner")
-            val bg by animateColorAsState(if (sel) cs.primaryContainer else cs.surfaceContainerHigh, label = "designBg")
-            Column(
-                Modifier.width(156.dp).clip(RoundedCornerShape(corner)).background(bg)
-                    .then(if (sel) Modifier.border(2.dp, cs.primary, RoundedCornerShape(corner)) else Modifier)
-                    .clickable { d.apply(context) }.padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                if (plugin?.skin != null) {
-                    val skin = remember(plugin, settings.skinOptions, settings.userAccent, settings.colorAccentText, settings.keyOpacity, settings.liquidGlass, dark) {
-                        runCatching { ThemeOptions.build(plugin, plugin.skin, ThemeOptions.values(settings, plugin.id), settings, dark) }.getOrNull()
-                    }
-                    SkinMiniPreview(skin, settings, Modifier.fillMaxWidth().height(78.dp))
-                } else {
-                    Canvas(Modifier.fillMaxWidth().height(78.dp).clip(RoundedCornerShape(14.dp))) {
-                        drawMiniKeyboard(d, dark, cs.primary, cs.surfaceContainer, cs.surfaceBright, cs.secondaryContainer)
-                    }
+            val corner by animateDpAsState(if (sel) 24.dp else 18.dp, spring(dampingRatio = 0.65f, stiffness = 500f), label = "designCorner")
+            val bg by animateColorAsState(if (sel) cs.primaryContainer.copy(alpha = 0.55f) else cs.surfaceContainerHigh, label = "designBg")
+            val previewSettings = remember(settings, d) {
+                settings.copy(skinPlugin = d.skin, designStyle = d.id, shapePreset = d.shape.id, cornerRadiusDp = d.corner)
+            }
+            val skin = remember(plugin, previewSettings, dark) {
+                plugin?.skin?.let { s ->
+                    runCatching { ThemeOptions.build(plugin, s, ThemeOptions.values(previewSettings, plugin.id), previewSettings, dark) }.getOrNull()
                 }
-                Text(
-                    tr(d.title), style = MaterialTheme.typography.titleSmall,
-                    color = if (sel) cs.onPrimaryContainer else cs.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis
+            }
+            Column(
+                Modifier.width(168.dp).clip(RoundedCornerShape(corner)).background(bg)
+                    .border(if (sel) 2.dp else 1.dp, if (sel) cs.primary else cs.outlineVariant.copy(alpha = 0.25f), RoundedCornerShape(corner))
+                    .clickable { d.apply(context) }
+            ) {
+                SkinMiniPreview(
+                    skin = skin,
+                    settings = previewSettings,
+                    modifier = Modifier.fillMaxWidth().height(92.dp),
+                    compact = true,
+                    showLabels = false,
+                    clipShape = androidx.compose.ui.graphics.RectangleShape
                 )
-                Text(
-                    tr(d.subtitle), style = MaterialTheme.typography.bodySmall,
-                    color = if (sel) cs.onPrimaryContainer.copy(alpha = 0.8f) else cs.onSurfaceVariant, maxLines = 3, minLines = 3,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        tr(d.title), style = MaterialTheme.typography.titleSmall,
+                        color = if (sel) cs.onPrimaryContainer else cs.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        tr(d.subtitle), style = MaterialTheme.typography.bodySmall,
+                        color = if (sel) cs.onPrimaryContainer.copy(alpha = 0.78f) else cs.onSurfaceVariant, maxLines = 2, minLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     }

@@ -203,6 +203,7 @@ class KeyboardState {
     val clipboard = mutableStateListOf<String>()
     /** Только что скопированное: предлагается вставить одним нажатием над клавиатурой. */
     var clipOffer by mutableStateOf<String?>(null)
+    var clipOfferCollapsed by mutableStateOf(false)
     /** Предложенная вставка — пароль (IS_SENSITIVE): показывается точками, не сохраняется. */
     var clipOfferSecret by mutableStateOf(false)
     var passwordField by mutableStateOf(false)
@@ -273,6 +274,8 @@ interface KeyboardActions {
     fun backspaceSelect(words: Int) {}
     /** Курсор на шаг влево/вправо (удержание пробела в режиме «свайп — язык, удержание — курсор»). */
     fun spaceCursor(direction: Int) {}
+    fun spaceCursorVertical(direction: Int) {}
+    fun swipeSpaceVertical(direction: Int) {}
     /** Свайп по ⌫ закончился: delete — стереть выделенное, иначе оставить текст как был. */
     fun backspaceSelectDone(delete: Boolean) {}
     /** Удержание микрофона: Rambler — диктовка без спешки, ИИ убирает «э-э», повторы и оговорки. */
@@ -305,6 +308,8 @@ internal class SafeActions(private val a: KeyboardActions, private val onError: 
     override fun keyTouch(fx: Float, fy: Float) = guard { a.keyTouch(fx, fy) }
     override fun swipeSpace(direction: Int) = guard { a.swipeSpace(direction) }
     override fun spaceCursor(direction: Int) = guard { a.spaceCursor(direction) }
+    override fun spaceCursorVertical(direction: Int) = guard { a.spaceCursorVertical(direction) }
+    override fun swipeSpaceVertical(direction: Int) = guard { a.swipeSpaceVertical(direction) }
     override fun pickSuggestion(chip: SuggestionChipModel) = guard { a.pickSuggestion(chip) }
     override fun commitText(text: String) = guard { a.commitText(text) }
     override fun commitEmoji(emoji: String) = guard { a.commitEmoji(emoji) }

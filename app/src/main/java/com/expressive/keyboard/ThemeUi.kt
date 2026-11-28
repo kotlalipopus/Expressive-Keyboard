@@ -143,21 +143,22 @@ import kotlinx.coroutines.CoroutineStart
 
 private data class MiniKey(val label: String, val type: KeyType, val w: Float)
 
-private fun miniRows(english: Boolean): List<List<MiniKey>> {
-    fun letters(s: String) = s.map { MiniKey(it.toString(), KeyType.CHARACTER, 1f) }
-    val r1 = if (english) "qwertyuiop" else "йцукенгшщз"
-    val r2 = if (english) "asdfghjkl" else "фывапролд"
-    val r3 = if (english) "zxcvbnm" else "ячсмитьб"
-    return listOf(
-        letters(r1),
-        listOf(MiniKey("", KeyType.SPACER, 0.5f)) + letters(r2) + MiniKey("", KeyType.SPACER, 0.5f),
-        listOf(MiniKey("⇧", KeyType.SHIFT, 1.4f)) + letters(r3).take(if (english) 7 else 7) + MiniKey("⌫", KeyType.BACKSPACE, 1.6f),
-        listOf(
-            MiniKey("?123", KeyType.MODE_SYMBOLS, 1.5f), MiniKey("☺", KeyType.STICKERS, 1.1f),
-            MiniKey(if (english) "English" else "Русский", KeyType.SPACE, 4.6f), MiniKey(".", KeyType.CHARACTER, 1f),
-            MiniKey("↵", KeyType.ENTER, 1.6f)
-        )
-    )
+private fun miniRows(settings: KeyboardSettings): List<List<MiniKey>> {
+    val languages = Languages.enabled(settings)
+    val language = languages.first()
+    return KeyboardLayouts.rows(language, 0, settings.showNumberRow, settings.showGlobeKey,
+        settings.showEmojiKey, settings.punctuationKeys, languages.map { it.label },
+        settings.spaceLeftKey, settings.spaceRightKey, settings.userLayoutMap).map { row ->
+        row.keys.map { key ->
+            val label = when (key.type) {
+                KeyType.ENTER -> "↵"
+                KeyType.STICKERS -> "☺"
+                KeyType.GLOBE -> language.label
+                else -> key.label
+            }
+            MiniKey(label, key.type, key.weight)
+        }
+    }
 }
 
 /** Тёмная ли сейчас клавиатура: по режиму темы из настроек. */
@@ -171,25 +172,65 @@ internal fun keyboardIsDark(settings: KeyboardSettings): Boolean {
     }
 }
 
-/** Мини-клавиатура в стиле оформления. interactive — клавиши можно нажимать, чтобы увидеть анимацию. */
+private fun compactRows(english: Boolean): List<List<MiniKey>> = if (english) listOf(
+    listOf("q", "w", "e", "r", "t").map { MiniKey(it, KeyType.CHARACTER, 1f) },
+    listOf(MiniKey("⇧", KeyType.SHIFT, 1.35f), MiniKey("a", KeyType.CHARACTER, 1f), MiniKey("s", KeyType.CHARACTER, 1f), MiniKey("d", KeyType.CHARACTER, 1f), MiniKey("⌫", KeyType.BACKSPACE, 1.35f)),
+    listOf(MiniKey("?123", KeyType.MODE_SYMBOLS, 1.35f), MiniKey(" ", KeyType.SPACE, 2.7f), MiniKey("↵", KeyType.ENTER, 1.55f))
+) else listOf(
+    listOf("й", "ц", "у", "к", "е").map { MiniKey(it, KeyType.CHARACTER, 1f) },
+    listOf(MiniKey("⇧", KeyType.SHIFT, 1.35f), MiniKey("ф", KeyType.CHARACTER, 1f), MiniKey("ы", KeyType.CHARACTER, 1f), MiniKey("в", KeyType.CHARACTER, 1f), MiniKey("⌫", KeyType.BACKSPACE, 1.35f)),
+    listOf(MiniKey("?123", KeyType.MODE_SYMBOLS, 1.35f), MiniKey(" ", KeyType.SPACE, 2.7f), MiniKey("↵", KeyType.ENTER, 1.55f))
+)
+
+/** Мини-клавиатура в стиле оформления. interactive — клавиши можно нажимать; compact — крупные клавиши; showLabels — подписи. */
 @Composable
-internal fun SkinMiniPreview(skin: KeyboardSkin?, settings: KeyboardSettings, modifier: Modifier, interactive: Boolean = false) {
+internal fun SkinMiniPreview(
+    skin: KeyboardSkin?,
+    settings: KeyboardSettings,
+    modifier: Modifier,
+    interactive: Boolean = false,
+    showHeader: Boolean = false,
+    compact: Boolean = false,
+    showLabels: Boolean = true,
+    clipShape: Shape = RoundedCornerShape(20.dp),
+    media: ImageBitmap? = rememberBackgroundBitmap(settings.bgImageVersion, settings.hasBackgroundVideo)
+) {
     val shown = remember(skin, settings) { skin?.applyColors(settings) ?: settings }
     val palette = rememberKeyPalette(shown)
     val baseFont = LocalKeyFont.current
     val font = remember(skin, baseFont) { skin?.fontFamily(baseFont) ?: baseFont }
-    val measurer = rememberTextMeasurer(cacheSize = 64)
+    val measurer = rememberTextMeasurer(cacheSize = 96)
     val density = LocalDensity.current
     SideEffect { PatternTiles.density = density.density }
-    val rows = remember(I18n.isEnglish) { miniRows(I18n.isEnglish) }
+    val rows = remember(compact, I18n.isEnglish, settings, PluginRepository.active, ScriptHost.layoutOverrides) {
+        if (compact) compactRows(I18n.isEnglish) else miniRows(settings)
+    }
+    var previewSize by remember { mutableStateOf(IntSize.Zero) }
+    val backdrop = remember(skin) { Backdrop() }
+    LaunchedEffect(previewSize, skin, media, palette.background, settings.photoFrame, settings.bgDim, density) {
+        if (skin?.usesGlass == true && previewSize.width > 0 && previewSize.height > 0) {
+            val (bitmap, scale) = withContext(Dispatchers.Default) {
+                renderBackdrop(previewSize.width, previewSize.height, density, skin, palette.background,
+                    media, settings.photoFrame, settings.bgDim)
+            }
+            backdrop.bitmap = bitmap
+            backdrop.scale = scale
+        }
+    }
     val caches = remember(skin) { HashMap<Int, SkinKeyCache>() }
+    val textCache = remember(font, skin, settings.fontWeight, settings.keyLabelScale, density) { HashMap<Long, TextLayoutResult>() }
     val rects = remember { ArrayList<Pair<Int, Rect>>() }
     var pressedIdx by remember { mutableIntStateOf(-1) }
     val press = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
     val pressAnim = remember(skin, settings.animPress, settings.customAnims) { Anims.forKey(settings, skin?.styleFor(KeyType.CHARACTER, "a")) }
+    val accentSpec = remember(settings.shapePreset, settings.waveCount, settings.waveAmplitudePercent, settings.shapeAmount) {
+        settings.accentSpec().accent(settings)
+    }
+    val headerPath = remember { Path() }
+    val offscreenPaint = remember { Paint() }
     Canvas(
-        modifier.clip(RoundedCornerShape(18.dp))
+        modifier.clip(clipShape).onSizeChanged { previewSize = it }
             .then(
                 if (!interactive) Modifier else Modifier.pointerInput(skin) {
                     awaitEachGesture {
@@ -212,18 +253,93 @@ internal fun SkinMiniPreview(skin: KeyboardSkin?, settings: KeyboardSettings, mo
     ) {
         drawRect(palette.background)
         skin?.let { if (it.hasBackground) drawSkinBackground(it, size) }
-        val pad = 6.dp.toPx()
-        val gap = 4.dp.toPx()
-        val rowGap = 6.dp.toPx()
-        val rowH = (size.height - pad * 2 - rowGap * (rows.size - 1)) / rows.size
-        val corner = settings.cornerRadiusDp.dp.toPx()
+        if (media != null) {
+            drawKeyboardPhoto(media, size, settings.photoFrame, 1f - settings.bgTransparency)
+            if (settings.bgDim > 0f) drawRect(palette.background.copy(alpha = settings.bgDim))
+        }
+        val scale = if (compact) (size.width / 200.dp.toPx()).coerceIn(0.6f, 1.25f)
+            else (size.width / 380.dp.toPx()).coerceIn(0.42f, 1.15f)
+        val padX = (if (compact) 7.dp else 6.dp).toPx() * scale
+        val padY = (if (compact) 7.dp else 7.dp).toPx() * scale
+        val gap = (if (compact) 4.dp.toPx() * scale else (settings.keySpacingDp.dp.toPx() * scale).coerceIn(1.5.dp.toPx(), 5.dp.toPx()))
+        val rowGap = (if (compact) 5.dp.toPx() * scale else (settings.rowSpacingDp.dp.toPx() * scale).coerceIn(2.dp.toPx(), 6.5.dp.toPx()))
+        val headerH = if (showHeader && !compact) (28.dp.toPx() * scale).coerceIn(18.dp.toPx(), 30.dp.toPx()) else 0f
+        val headerGap = if (headerH > 0f) (6.dp.toPx() * scale).coerceAtLeast(3.dp.toPx()) else 0f
+        if (headerH > 0f) {
+            val cy = padY + headerH / 2f
+            val badgeR = headerH * 0.46f
+            val badgeCx = padX + badgeR
+            val pillBg = if (skin == null) palette.func.copy(alpha = 0.72f) else palette.panel.copy(alpha = 0.72f)
+            val pillDot = (if (skin == null) palette.onFunc else palette.onLetter).copy(alpha = 0.28f)
+            if (skin == null) {
+                buildWavyPath(accentSpec, badgeCx, cy, badgeR, headerPath)
+                drawPath(headerPath, palette.accent)
+            } else {
+                drawCircle(palette.accent, badgeR, Offset(badgeCx, cy))
+            }
+            val gridS = badgeR * 0.92f
+            inset(badgeCx - gridS / 2f, cy - gridS / 2f, size.width - (badgeCx + gridS / 2f), size.height - (cy + gridS / 2f)) {
+                drawGlyph(Glyph.GRID, palette.onAccent)
+            }
+            val hasMic = settings.showMicButton
+            val rightLimit = if (hasMic) size.width - padX - badgeR * 2f - gap * 2f else size.width - padX
+            val pillLeft = padX + badgeR * 2f + gap * 2f
+            val pillW = (rightLimit - pillLeft).coerceAtLeast(0f)
+            if (pillW > 24.dp.toPx()) {
+                val pillH = headerH * 0.72f
+                val pillY = cy - pillH / 2f
+                drawRoundRect(
+                    color = pillBg,
+                    topLeft = Offset(pillLeft, pillY),
+                    size = Size(pillW, pillH),
+                    cornerRadius = CornerRadius(pillH / 2f, pillH / 2f)
+                )
+                // аккуратные минималистичные точки-инструменты вместо фальшивых слов
+                val dotR = (pillH * 0.14f).coerceAtLeast(1.5f)
+                val dotSpan = min(pillW * 0.44f, 64.dp.toPx())
+                val startX = pillLeft + (pillW - dotSpan) / 2f
+                for (d in 0 until 4) {
+                    val dx = startX + dotSpan * (d / 3f)
+                    drawCircle(pillDot, dotR, Offset(dx, cy))
+                }
+            }
+            if (hasMic) {
+                val micCx = size.width - padX - badgeR
+                if (skin == null) {
+                    buildWavyPath(accentSpec, micCx, cy, badgeR, headerPath)
+                    drawPath(headerPath, palette.accent)
+                } else {
+                    drawCircle(palette.accent, badgeR, Offset(micCx, cy))
+                }
+                val rMic = badgeR * 0.24f
+                drawRoundRect(
+                    palette.onAccent,
+                    topLeft = Offset(micCx - rMic, cy - badgeR * 0.42f),
+                    size = Size(rMic * 2f, badgeR * 0.54f),
+                    cornerRadius = CornerRadius(rMic, rMic)
+                )
+                drawArc(
+                    palette.onAccent,
+                    startAngle = 15f,
+                    sweepAngle = 150f,
+                    useCenter = false,
+                    topLeft = Offset(micCx - badgeR * 0.42f, cy - badgeR * 0.28f),
+                    size = Size(badgeR * 0.84f, badgeR * 0.68f),
+                    style = Stroke(width = (1.4f * scale).coerceAtLeast(1f) * density.density, cap = StrokeCap.Round)
+                )
+            }
+        }
+        val keysTop = padY + headerH + headerGap
+        val availH = (size.height - keysTop - padY).coerceAtLeast(1f)
+        val rowH = (availH - rowGap * (rows.size - 1)) / rows.size
+        val corner = settings.cornerRadiusDp.dp.toPx() * scale
         rects.clear()
         var idx = 0
         rows.forEachIndexed { ri, row ->
             val total = row.sumOf { it.w.toDouble() }.toFloat()
-            val unit = (size.width - pad * 2 - gap * (row.size - 1)) / total
-            var x = pad
-            val y = pad + ri * (rowH + rowGap)
+            val unit = (size.width - padX * 2 - gap * (row.size - 1)) / total
+            var x = padX
+            val y = keysTop + ri * (rowH + rowGap)
             for (k in row) {
                 val w = unit * k.w
                 if (k.type == KeyType.SPACER) {
@@ -236,15 +352,15 @@ internal fun SkinMiniPreview(skin: KeyboardSkin?, settings: KeyboardSettings, mo
                 x += w + gap
                 val p = if (i == pressedIdx) press.value.coerceIn(0f, 1f) else 0f
                 val a = if (i == pressedIdx) press.value else 0f
-                val st = skin?.styleFor(k.type, k.label)
+                val stRaw = skin?.styleFor(k.type, k.label)
+                val st = if (!settings.keyBackground && k.type == KeyType.CHARACTER && p < 0.01f) stRaw?.withoutPlate() else stRaw
                 val colors = keyColors(k.type, ShiftState.OFF, palette)
                 val cache = caches.getOrPut(i) { SkinKeyCache() }
                 val center = rect.center
                 withTransform({
-                    // анимация нажатия — та же формула, что на клавиатуре
                     val k2 = a * settings.pressAnimation
                     scale(1f + (pressAnim.scaleX - 1f) * k2, 1f + (pressAnim.scaleY - 1f) * k2, center)
-                    translate(0f, pressAnim.lift * density.density * k2)
+                    translate(0f, pressAnim.lift * density.density * scale * k2)
                     rotate(pressAnim.rotate * k2, center)
                 }) {
                     inset(rect.left, rect.top, size.width - rect.right, size.height - rect.bottom) {
@@ -252,33 +368,90 @@ internal fun SkinMiniPreview(skin: KeyboardSkin?, settings: KeyboardSettings, mo
                         val fr = shapeFractions(k.type)
                         var rest = fr.first * m
                         if (k.type == KeyType.CHARACTER) rest = min(rest, corner)
-                        if (st != null) drawSkinKey(st, colors, p, rest, fr.second * m, cache, null) { null }
-                        else drawRoundRect(lerp(colors.bg, colors.activeBg, p), cornerRadius = CornerRadius(rest, rest))
-                        val fg = pressedLabelColor(st, colors, p > 0.5f)
-                        val textSize = when (k.type) {
-                            KeyType.SPACE, KeyType.MODE_SYMBOLS -> rowH * 0.26f
-                            else -> rowH * 0.42f * (st?.fontScale ?: 1f)
+                        val showPlate = settings.keyBackground || k.type != KeyType.CHARACTER || p > 0.01f
+                        if (st != null) {
+                            drawSkinKey(st, colors, p, rest, fr.second * m, cache, backdrop) { rect.topLeft }
+                        } else if (showPlate) {
+                            val r = rest + (fr.second * m - rest) * p
+                            drawRoundRect(lerp(colors.bg, colors.activeBg, p), cornerRadius = CornerRadius(r, r))
+                            if (settings.showKeyBorders) {
+                                drawRoundRect(
+                                    palette.outline.copy(alpha = 0.65f),
+                                    cornerRadius = CornerRadius(r, r),
+                                    style = Stroke((0.8f * scale).coerceAtLeast(0.6f) * density.density)
+                                )
+                            }
                         }
-                        val shadow = st?.textShadow?.takeIf { it.alpha > 0.01f }?.let { Shadow(it, Offset(1.2f * density.density, 1.2f * density.density), 0f) }
-                            ?: st?.textGlow?.let { Shadow(it, Offset.Zero, 12f) }
-                        val layout = measurer.measure(
-                            AnnotatedString(st?.label?.takeIf { k.type != KeyType.CHARACTER } ?: k.label),
-                            TextStyle(
-                                color = if (k.type == KeyType.SPACE) fg.copy(alpha = 0.72f) else fg,
-                                fontSize = with(density) { textSize.toSp() },
-                                fontFamily = font,
-                                fontWeight = FontWeight(st?.fontWeight ?: settings.fontWeight),
-                                fontStyle = if (st?.italic == true) FontStyle.Italic else null,
-                                shadow = shadow
-                            )
-                        )
-                        val tl = Offset((this.size.width - layout.size.width) / 2f, (this.size.height - layout.size.height) / 2f)
-                        if (st?.labelEffect == LabelEffect.DOTS) {
-                            drawIntoCanvas { it.saveLayer(Rect(Offset.Zero, this.size), Paint()) }
-                            drawText(layout, topLeft = tl)
-                            drawRect(PatternTiles.dotMask(1.7.dp.toPx()), blendMode = BlendMode.DstIn)
-                            drawIntoCanvas { it.restore() }
-                        } else drawText(layout, topLeft = tl)
+                        if (showLabels) {
+                            val fg = pressedLabelColor(st, colors, p > 0.5f)
+                            val customLabel = st?.label?.takeIf { k.type != KeyType.CHARACTER }
+                            val glyph: Glyph? = if (customLabel != null) null else when (k.type) {
+                                KeyType.SHIFT -> Glyph.SHIFT
+                                KeyType.BACKSPACE -> if (skin != null) Glyph.BACKSPACE_TAG else Glyph.BACKSPACE
+                                KeyType.ENTER -> if (skin != null) Glyph.RETURN else Glyph.ARROW
+                                KeyType.STICKERS -> Glyph.EMOJI
+                                KeyType.GLOBE -> Glyph.GLOBE
+                                else -> null
+                            }
+                            if (glyph != null) {
+                                val gs = (min(this.size.width, this.size.height) * 0.52f).coerceAtLeast(4f)
+                                val gx = (this.size.width - gs) / 2f
+                                val gy = (this.size.height - gs) / 2f
+                                if (glyph == Glyph.EMOJI) {
+                                    drawIntoCanvas { c ->
+                                        c.saveLayer(Rect(gx, gy, gx + gs, gy + gs), offscreenPaint)
+                                        inset(gx, gy, this.size.width - gx - gs, this.size.height - gy - gs) {
+                                            drawGlyph(glyph, fg)
+                                        }
+                                        c.restore()
+                                    }
+                                } else {
+                                    inset(gx, gy, this.size.width - gx - gs, this.size.height - gy - gs) {
+                                        drawGlyph(glyph, fg)
+                                    }
+                                }
+                            } else {
+                                val labelStr = customLabel ?: k.label
+                                if (labelStr.isNotBlank()) {
+                                    val maxByWidth = when (k.type) {
+                                        KeyType.SPACE, KeyType.MODE_SYMBOLS -> this.size.width * 0.34f
+                                        else -> this.size.width * 0.62f
+                                    }
+                                    val baseSize = when (k.type) {
+                                        KeyType.SPACE, KeyType.MODE_SYMBOLS -> rowH * 0.30f
+                                        else -> rowH * 0.45f * settings.keyLabelScale.coerceIn(0.8f, 1.25f) * (st?.fontScale ?: 1f)
+                                    }
+                                    val textSize = min(baseSize, maxByWidth).coerceAtLeast(4f)
+                                    val drawColor = if (k.type == KeyType.SPACE) fg.copy(alpha = 0.70f) else fg
+                                    val cacheKey = (labelStr.hashCode().toLong() shl 32) xor
+                                        ((textSize.roundToInt().toLong() and 0xFF) shl 24) xor
+                                        (drawColor.toArgb().toLong() and 0xFFFFFF)
+                                    val layout = textCache.getOrPut(cacheKey) {
+                                        val shadow = st?.textShadow?.takeIf { it.alpha > 0.01f }?.let { Shadow(it, Offset(1.2f * density.density * scale, 1.2f * density.density * scale), 0f) }
+                                            ?: st?.textGlow?.let { Shadow(it, Offset.Zero, 10f * scale) }
+                                        measurer.measure(
+                                            AnnotatedString(labelStr),
+                                            TextStyle(
+                                                color = drawColor,
+                                                fontSize = with(density) { textSize.toSp() },
+                                                fontFamily = font,
+                                                fontWeight = FontWeight(st?.fontWeight ?: settings.fontWeight),
+                                                fontStyle = if (st?.italic == true) FontStyle.Italic else null,
+                                                shadow = shadow
+                                            ),
+                                            maxLines = 1
+                                        )
+                                    }
+                                    val tl = Offset((this.size.width - layout.size.width) / 2f, (this.size.height - layout.size.height) / 2f)
+                                    if (st?.labelEffect == LabelEffect.DOTS) {
+                                        drawIntoCanvas { it.saveLayer(Rect(Offset.Zero, this.size), offscreenPaint) }
+                                        drawText(layout, topLeft = tl)
+                                        drawRect(PatternTiles.dotMask((1.6f * scale).coerceAtLeast(0.8f).dp.toPx()), blendMode = BlendMode.DstIn)
+                                        drawIntoCanvas { it.restore() }
+                                    } else drawText(layout, topLeft = tl)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -286,36 +459,83 @@ internal fun SkinMiniPreview(skin: KeyboardSkin?, settings: KeyboardSettings, mo
     }
 }
 
-/** Карточка темы в галерее. */
+/** Карточка темы в 2-колоночной галерее M3 Expressive: чистое превью с кольцом выбора и подписью снизу. */
 @Composable
-private fun ThemeCard(title: String, subtitle: String, selected: Boolean, skin: KeyboardSkin?, settings: KeyboardSettings, onClick: () -> Unit) {
+private fun ThemeCard(
+    title: String,
+    subtitle: String?,
+    selected: Boolean,
+    skin: KeyboardSkin?,
+    settings: KeyboardSettings,
+    media: ImageBitmap?,
+    onClick: () -> Unit
+) {
     val cs = MaterialTheme.colorScheme
-    val corner = animateDpAsState(if (selected) 28.dp else 18.dp, spring(dampingRatio = 0.6f, stiffness = 500f), label = "themeCorner")
-    val bg = animateColorAsState(if (selected) cs.primaryContainer else cs.surfaceContainerHigh, label = "themeBg")
-    val outline = cs.primary
-    // угол и цвет читаются при отрисовке: карточка с мини-клавиатурой не перестраивается на каждом кадре анимации
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val outerCorner by animateDpAsState(
+        targetValue = when {
+            pressed -> 18.dp
+            selected -> 24.dp
+            else -> 20.dp
+        },
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = 500f),
+        label = "themeCorner"
+    )
+    val ringPad by animateDpAsState(
+        targetValue = if (selected) 3.dp else 0.dp,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 500f),
+        label = "themeRingPad"
+    )
+    val safeRingPad = ringPad.coerceAtLeast(0.dp)
+    val borderColor by animateColorAsState(
+        targetValue = if (selected) cs.primary else cs.outlineVariant.copy(alpha = 0.28f),
+        label = "themeBorder"
+    )
     Column(
-        Modifier.fillMaxWidth().roundedLayer { corner.value }
-            .drawBehind {
-                drawRect(bg.value)
-                if (selected) {
-                    val r = corner.value.toPx()
-                    val w = 2.dp.toPx()
-                    drawRoundRect(outline, Offset(w / 2, w / 2), Size(size.width - w, size.height - w), CornerRadius(r - w / 2), style = Stroke(w))
+        modifier = Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(outerCorner))
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Box(
+            Modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(outerCorner))
+                .border(if (selected) 2.5.dp else 1.dp, borderColor, RoundedCornerShape(outerCorner))
+                .padding(safeRingPad)
+        ) {
+            SkinMiniPreview(
+                skin = skin,
+                settings = settings,
+                modifier = Modifier.fillMaxWidth().height(106.dp),
+                compact = true,
+                showLabels = false,
+                clipShape = RoundedCornerShape((outerCorner - safeRingPad).coerceAtLeast(14.dp)),
+                media = media
+            )
+            androidx.compose.animation.AnimatedVisibility(
+                visible = selected,
+                modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
+                enter = scaleIn(spring(dampingRatio = 0.55f, stiffness = 500f)) + fadeIn(),
+                exit = scaleOut() + fadeOut()
+            ) {
+                Box(
+                    Modifier.size(22.dp).clip(CircleShape).background(cs.primary),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.Check, tr("Выбрано"), tint = cs.onPrimary, modifier = Modifier.size(14.dp))
                 }
             }
-            .clickable(onClick = onClick).padding(10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        SkinMiniPreview(skin, settings, Modifier.fillMaxWidth().height(96.dp))
-        Text(tr(title), style = MaterialTheme.typography.titleSmall, color = if (selected) cs.onPrimaryContainer else cs.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (subtitle.isNotEmpty()) {
-            Text(
-                tr(subtitle), style = MaterialTheme.typography.bodySmall,
-                color = if (selected) cs.onPrimaryContainer.copy(alpha = 0.8f) else cs.onSurfaceVariant, maxLines = 2, minLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
         }
+        Text(
+            tr(title),
+            modifier = Modifier.padding(horizontal = 4.dp),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+            color = if (selected) cs.primary else cs.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -330,6 +550,7 @@ internal fun ThemesPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -
     val scope = rememberCoroutineScope()
     val dark = keyboardIsDark(settings)
     val plugins = PluginRepository.plugins
+    val media = rememberBackgroundBitmap(settings.bgImageVersion, settings.hasBackgroundVideo)
     var confirmDelete by remember { mutableStateOf<KeyboardPlugin?>(null) }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) scope.launch {
@@ -341,31 +562,38 @@ internal fun ThemesPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -
         }
     }
 
-    // галерея: готовые стили + темы из плагинов и свои
+    // галерея: готовые стили + темы из плагинов и свои (напрямую, без двойной вложенности карточек)
     val designSkins = DesignStyle.entries.map { it.skin }.toSet()
     val extra = plugins.filter { it.skin != null && it.id !in designSkins }
     SettingsSection(null) { ThemeModeItem(settings) }
-    SettingsSection("Темы") {
-        GroupItem {
-            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                val items = DesignStyle.entries.map { d -> Triple(d.title, d.subtitle, d.skin) } + extra.map { Triple(tr(it.name), if (it.builtIn) "" else tr("Своя тема"), it.id) }
-                items.chunked(2).forEach { pair ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        pair.forEach { (title, sub, skinId) ->
-                            val plugin = plugins.firstOrNull { it.id == skinId }
-                            val skin = remember(plugin, settings.skinOptions, settings.userAccent, settings.colorAccentText, settings.keyOpacity, dark) { previewSkin(plugin, settings, dark) }
-                            Box(Modifier.weight(1f)) {
-                                ThemeCard(title, sub, settings.skinPlugin == skinId, skin, settings) {
-                                    val d = DesignStyle.entries.firstOrNull { it.skin == skinId }
-                                    if (d != null) d.apply(context) else ThemeEditor.apply(context, skinId)
-                                }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val columns = if (maxWidth >= 560.dp) 3 else 2
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            val items = DesignStyle.entries.map { Triple(it.title, it.subtitle, it.skin) } +
+                extra.map { Triple(it.name, it.description, it.id) }
+            items.chunked(columns).forEach { pair ->
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    pair.forEach { (title, subtitle, skinId) ->
+                        val design = DesignStyle.entries.firstOrNull { it.skin == skinId }
+                        val previewSettings = remember(settings, design, skinId) {
+                            settings.copy(skinPlugin = skinId, designStyle = design?.id ?: DesignStyle.EXPRESSIVE.id,
+                                shapePreset = design?.shape?.id ?: settings.shapePreset,
+                                cornerRadiusDp = design?.corner ?: settings.cornerRadiusDp)
+                        }
+                        val plugin = plugins.firstOrNull { it.id == skinId }
+                        val skin = remember(plugin, previewSettings, dark) { previewSkin(plugin, previewSettings, dark) }
+                        Box(Modifier.weight(1f)) {
+                            ThemeCard(title, subtitle, settings.skinPlugin == skinId, skin, previewSettings, media) {
+                                if (design != null) design.apply(context) else ThemeEditor.apply(context, skinId)
                             }
                         }
-                        if (pair.size == 1) Spacer(Modifier.weight(1f))
                     }
+                    if (pair.size < columns) Spacer(Modifier.weight(1f))
                 }
             }
         }
+    }
+    SettingsSection(null) {
         ActionItem(Icons.Rounded.ColorLens, "Акцентный цвет и цвета клавиш", "Enter, Shift и подсветка в любой теме — в вашем цвете", onClick = {
             onNavigate(SettingsPage.COLORS)
         })
@@ -448,7 +676,6 @@ private fun ThemeOptionsSections(plugin: KeyboardPlugin, settings: KeyboardSetti
         runCatching { ThemeOptions.build(plugin, plugin.skin!!, live, settings, dark) }.getOrNull()
     }
     SettingsSection(tr("Настройки темы «{0}»", tr(plugin.name))) {
-        GroupItem { SkinMiniPreview(skin, settings, Modifier.fillMaxWidth().height(180.dp).padding(12.dp), interactive = true) }
         declared.forEach { OptionItem(plugin.id, it, values, settings) { id, v -> dragging = id to v } }
         if (declared.isEmpty()) {
             GroupItem {
@@ -707,17 +934,31 @@ internal fun ThemeEditorPage(settings: KeyboardSettings, onNavigate: (SettingsPa
     var keyInput by remember { mutableStateOf(false) }
     var section by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("base") }
 
-    GroupItem {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SkinMiniPreview(skin, settings, Modifier.fillMaxWidth().height(190.dp), interactive = true)
-            if (error != null) Text(error, color = cs.error, style = MaterialTheme.typography.bodySmall)
-            ButtonGroup(listOf("light" to "Светлая", "dark" to "Тёмная"), if (ThemeEditor.editDark) "dark" else "light") {
-                ThemeEditor.editDark = it == "dark"
-            }
-            Text(
-                tr(if (ThemeEditor.editDark) "Правки тёмной версии ложатся поверх светлой: что не задано, берётся из светлой." else "Светлая версия — основа темы."),
-                style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        color = cs.surfaceBright,
+        border = BorderStroke(1.dp, cs.outlineVariant.copy(alpha = 0.28f))
+    ) {
+        Column {
+            SkinMiniPreview(
+                skin = skin,
+                settings = settings,
+                modifier = Modifier.fillMaxWidth().height(if (settings.showHeader) 196.dp else 168.dp),
+                interactive = true,
+                showHeader = settings.showHeader,
+                clipShape = RectangleShape
             )
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (error != null) Text(error, color = cs.error, style = MaterialTheme.typography.bodySmall)
+                ButtonGroup(listOf("light" to "Светлая", "dark" to "Тёмная"), if (ThemeEditor.editDark) "dark" else "light") {
+                    ThemeEditor.editDark = it == "dark"
+                }
+                Text(
+                    tr(if (ThemeEditor.editDark) "Правки тёмной версии ложатся поверх светлой: что не задано, берётся из светлой." else "Светлая версия — основа темы."),
+                    style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant
+                )
+            }
         }
     }
     Button(

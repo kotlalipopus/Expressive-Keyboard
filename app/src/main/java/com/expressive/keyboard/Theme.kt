@@ -280,6 +280,15 @@ fun ExpressiveTheme(settings: KeyboardSettings, appUi: Boolean = false, content:
         if (appUi && settings.fontStyle != "ROUNDED" && settings.fontStyle != "SYSTEM") FontRepository.resolve(context, KeyboardSettings()) else font
     }
     val typography = remember(uiFont) { typographyWith(uiFont) }
+    if (appUi) {
+        val view = LocalView.current
+        SideEffect {
+            val window = (view.context as? android.app.Activity)?.window ?: return@SideEffect
+            val insets = WindowInsetsControllerCompat(window, view)
+            insets.isAppearanceLightStatusBars = !dark
+            insets.isAppearanceLightNavigationBars = !dark
+        }
+    }
     CompositionLocalProvider(LocalKeyFont provides font, LocalKeyWeight provides FontWeight(settings.fontWeight)) {
         // настоящая тема M3 Expressive: пружинные анимации MotionScheme.expressive() у всех компонентов material3
         MaterialExpressiveTheme(colorScheme = scheme, motionScheme = MotionScheme.expressive(), typography = typography, content = content)

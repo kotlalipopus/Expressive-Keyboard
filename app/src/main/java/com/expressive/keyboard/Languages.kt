@@ -113,6 +113,13 @@ object Languages {
     )
 
     private val QWERTY = listOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
+    private val BENGALI_ROWS = listOf(
+        "অ আ ই ঈ উ ঊ এ ঐ ও ঔ",
+        "ক খ গ ঘ ঙ চ ছ জ ঝ ঞ",
+        "ট ঠ ড ঢ ণ ত থ দ ধ ন",
+        "প ফ ব ভ ম য র ল শ ষ",
+        "স হ ড় ঢ় য় ৎ ং ঃ ঁ ্"
+    )
     private val ARABIC_ROWS = listOf(
         "ض ص ث ق ف غ ع ه خ ح ج د",
         "ش س ي ب ل ا ت ن م ك ط",
@@ -352,8 +359,8 @@ object Languages {
         // Америка
         L("qu", "QU", "Runa Simi", "Кечуа", "qu-PE", listOf("qwertyuiop", "asdfghjklñ", "zxcvbnm"), dict = null),
         L("gn", "GN", "Avañeʼẽ", "Гуарани", "gn-PY", listOf("qwertyuiop", "asdfghjklñ", "zxcvbnmʼ"), "aã eẽ iĩ oõ uũ yỹ", dict = null),
-        indic("bn", "BN", "বাংলা", "Бенгальский", "bn-IN", 0x80, "bn"),
-        indic("bn-bd", "BD", "বাংলা (বাংলাদেশ)", "Бенгальский (Бангладеш)", "bn-BD", 0x80, "bn"),
+        L("bn", "BN", "বাংলা", "Бенгальский", "bn-IN", BENGALI_ROWS, accents = "আা ইি ঈী উু ঊূ এে ঐৈ ওো ঔৌ", shift = "আা ইি ঈী উু ঊূ এে ঐৈ ওো ঔৌ", dict = "bn", hasCase = false),
+        L("bn-bd", "BD", "বাংলা (বাংলাদেশ)", "Бенгальский (Бангладеш)", "bn-BD", BENGALI_ROWS, accents = "আা ইি ঈী উু ঊূ এে ঐৈ ওো ঔৌ", shift = "আা ইি ঈী উু ঊূ এে ঐৈ ওো ঔৌ", dict = "bn", hasCase = false),
         indic("pa", "PA", "ਪੰਜਾਬੀ", "Панджаби", "pa-IN", 0x100, null),
         indic("gu", "GU", "ગુજરાતી", "Гуджарати", "gu-IN", 0x180, null),
         indic("or", "OR", "ଓଡ଼ିଆ", "Ория", "or-IN", 0x200, null),

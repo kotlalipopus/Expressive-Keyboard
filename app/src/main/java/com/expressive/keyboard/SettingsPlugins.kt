@@ -262,12 +262,6 @@ internal fun PluginsPage() {
     val user = plugins.filter { !it.builtIn }
     val builtIn = plugins.filter { it.builtIn }
     if (user.isNotEmpty()) {
-        SettingsSection("Доступ модов") {
-            ToggleItem(Icons.Rounded.Security, "Напоминать о доступе модов", "Показывать индикатор и периодическое напоминание",
-                appSettings.pluginAccessReminder) {
-                KeyboardPrefs.edit(context) { putBoolean("plugin_access_reminder", it) }
-            }
-        }
         SettingsSection("Мои плагины") {
             user.forEach { p ->
                 PluginCard(p, expanded == p.id, onExpand = { expanded = if (expanded == p.id) null else p.id }, onDelete = { confirmDelete = p })

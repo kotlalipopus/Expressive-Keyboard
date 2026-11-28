@@ -333,12 +333,11 @@ private fun OnbCheckItem(n: Int, title: String, subtitle: String, done: Boolean,
 
 @Composable
 private fun ThemeStep(settings: KeyboardSettings) {
-    StepTitle("Какая тема?", "Нажмите на карточку — клавиатура сразу перекрасится. Ниже видно, как она выглядит на самом деле.")
+    StepTitle("Какая тема?", "Нажмите на карточку — клавиатура сразу перекрасится.")
     SettingsSection(null) { ThemeModeItem(settings) }
-    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(MaterialTheme.colorScheme.surfaceBright)) {
+    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(MaterialTheme.colorScheme.surfaceBright)) {
         DesignPicker(settings)
     }
-    PreviewSection(settings)
 }
 
 @Composable
@@ -348,7 +347,6 @@ private fun ShapesStep(settings: KeyboardSettings) {
         "В Material 3 Expressive много выразительных форм: «печеньки», цветы, клевер. Если для вас это перебор, выберите, сколько оставить."
     )
     ShapeAmountPicker(settings)
-    PreviewSection(settings)
 }
 
 /** Функции на панели над клавиатурой, которые новичку не нужны с первого дня. */

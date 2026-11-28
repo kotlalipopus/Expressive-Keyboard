@@ -199,6 +199,9 @@ class PopupController {
 /** Чем закончилось касание буквы до выбора варианта. */
 internal enum class KeyGesture { RELEASED, CANCELED, HOLD, SLIDE, GLIDE, SWIPE_UP }
 
+internal fun isIntentionalUpFlick(dx: Float, dy: Float, minDistance: Float, elapsedMs: Long): Boolean =
+    elapsedMs >= 65L && dy < -minDistance && kotlin.math.abs(dx) < -dy * 0.7f
+
 internal suspend fun AwaitPointerEventScope.awaitPressEnd(id: PointerId): Boolean {
     while (true) {
         val change = awaitPointerEvent().changes.firstOrNull { it.id == id } ?: return false
@@ -395,7 +398,6 @@ internal fun KeyView(
                 val slop = 12.dp.toPx()
                 val step = 44.dp.toPx()
                 val swipe = 56.dp.toPx()
-                val cursorStep = 14.dp.toPx()
                 val wordStep = 36.dp.toPx()
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -448,6 +450,7 @@ internal fun KeyView(
                                 // свайп влево сначала выделяет слова (вправо — отпускает их обратно), а стирает
                                 // только по отпусканию: случайный мазок больше не съедает текст
                                 var words = 0
+                                var repeatCount = 0
                                 var released = false
                                 if (deferFirst) Rollover.press(holder) {
                                     if (!deleted) act.commitKey(k, "")
@@ -467,10 +470,22 @@ internal fun KeyView(
                                             if (rolled) continue
                                             if (!wordMode) {
                                                 if (deleted) act.keyTick()
-                                                act.commitKey(k, "")
+                                                repeatCount++
+                                                if (cSettings.fastBackspaceRepeat && repeatCount >= 22) {
+                                                    act.backspaceSelect(1)
+                                                    act.backspaceSelectDone(true)
+                                                } else {
+                                                    act.commitKey(k, "")
+                                                }
                                                 deleted = true
                                             }
-                                            deadline = SystemClock.uptimeMillis() + 55L
+                                            val delayMs = when {
+                                                !cSettings.fastBackspaceRepeat -> 55L
+                                                repeatCount >= 22 -> 95L
+                                                repeatCount >= 10 -> 28L
+                                                else -> 55L
+                                            }
+                                            deadline = SystemClock.uptimeMillis() + delayMs
                                             continue
                                         }
                                         val ch = ev.changes.firstOrNull { it.id == id } ?: break
@@ -517,6 +532,11 @@ internal fun KeyView(
                                 var picker = false
                                 var rolled = false
                                 var lastX = down.position.x
+                                var lastY = down.position.y
+                                val verticalMode = if (inTranslator) "OFF" else cSettings.spaceSwipeVertical
+                                var vertical = false
+                                var horizontal = false
+                                var verticalLanguageDone = false
                                 var cursorMode = false
                                 var langIntent = false
                                 Rollover.press(holder) {
@@ -556,6 +576,31 @@ internal fun KeyView(
                                     }
                                     if (picker || rolled) continue
                                     val dx = ch.position.x - down.position.x
+                                    val dy = ch.position.y - down.position.y
+                                    if (!swiped && !horizontal && verticalMode != "OFF" && abs(dy) > slop && abs(dy) > abs(dx)) {
+                                        vertical = true
+                                        swiped = true
+                                        Rollover.done(holder)
+                                    }
+                                    if (vertical) {
+                                        ch.consume()
+                                        if (verticalMode == "LANGUAGE") {
+                                            if (!verticalLanguageDone && abs(dy) > swipe) {
+                                                act.swipeSpaceVertical(if (dy > 0) 1 else -1)
+                                                verticalLanguageDone = true
+                                            }
+                                        } else {
+                                            val verticalStep = 32.dp.toPx() / cSettings.spaceVerticalSpeed.coerceIn(0.25f, 4f)
+                                            val stepsY = ((ch.position.y - lastY) / verticalStep).toInt()
+                                            if (stepsY != 0) {
+                                                lastY += stepsY * verticalStep
+                                                act.spaceCursorVertical(stepsY)
+                                            }
+                                        }
+                                        continue
+                                    }
+                                    if (!swiped && abs(dx) > slop && abs(dx) >= abs(dy)) horizontal = true
+                                    val cursorStep = 18.dp.toPx() / cSettings.spaceCursorSpeed.coerceIn(0.25f, 4f)
                                     when (mode) {
                                         // быстрый свайп — язык; задержал палец и повёл — курсор (без ожидания удержания
                                         // для смены языка: решает, сколько палец простоял до начала движения)
@@ -570,13 +615,11 @@ internal fun KeyView(
                                                 lastX = ch.position.x
                                             } else if (!swiped && abs(dx) > slop) langIntent = true
                                             if (cursorMode) {
-                                                while (ch.position.x - lastX > cursorStep) {
-                                                    lastX += cursorStep
-                                                    act.spaceCursor(1)
-                                                }
-                                                while (lastX - ch.position.x > cursorStep) {
-                                                    lastX -= cursorStep
-                                                    act.spaceCursor(-1)
+                                                ch.consume()
+                                                val stepsX = ((ch.position.x - lastX) / cursorStep).toInt()
+                                                if (stepsX != 0) {
+                                                    lastX += stepsX * cursorStep
+                                                    act.spaceCursor(stepsX)
                                                 }
                                             } else if (!swiped && langIntent && abs(dx) > swipe) {
                                                 swiped = true
@@ -593,15 +636,15 @@ internal fun KeyView(
                                             if (!swiped && abs(dx) > slop) {
                                                 swiped = true
                                                 Rollover.done(holder)
+                                                lastX = ch.position.x
+                                                act.spaceCursor(if (dx > 0) 1 else -1)
                                             }
                                             if (swiped) {
-                                                while (ch.position.x - lastX > cursorStep) {
-                                                    lastX += cursorStep
-                                                    act.spaceCursor(1)
-                                                }
-                                                while (lastX - ch.position.x > cursorStep) {
-                                                    lastX -= cursorStep
-                                                    act.spaceCursor(-1)
+                                                ch.consume()
+                                                val stepsX = ((ch.position.x - lastX) / cursorStep).toInt()
+                                                if (stepsX != 0) {
+                                                    lastX += stepsX * cursorStep
+                                                    act.spaceCursor(stepsX)
                                                 }
                                             }
                                         }
@@ -672,6 +715,7 @@ internal fun KeyView(
                                 var gesture = KeyGesture.CANCELED
                                 var last = down.position
                                 var lastT = down.uptimeMillis
+                                var flickArmed = false
                                 // куда «перепрыгнул» палец: на старых экранах отпускание пальца иногда теряется, и
                                 // следующее нажатие приходит тем же касанием — скачком через клавиатуру. Это два
                                 // нажатия, а не росчерк: раньше из него угадывалось слово, и «При» становилось
@@ -688,6 +732,7 @@ internal fun KeyView(
                                     }
                                     val ch = ev.changes.firstOrNull { it.id == id } ?: break
                                     val d = ch.position - down.position
+                                    if (ch.pressed && isIntentionalUpFlick(d.x, d.y, upDist, ch.uptimeMillis - down.uptimeMillis)) flickArmed = true
                                     val prev = last
                                     last = ch.position
                                     lastT = ch.uptimeMillis
@@ -712,7 +757,7 @@ internal fun KeyView(
                                         continue
                                     }
                                     if (!ch.pressed) {
-                                        gesture = if (upSymbol != null && d.y < -upDist && abs(d.x) < -d.y * 0.7f) {
+                                        gesture = if (upSymbol != null && flickArmed && isIntentionalUpFlick(d.x, d.y, upDist, ch.uptimeMillis - down.uptimeMillis)) {
                                             KeyGesture.SWIPE_UP
                                         } else KeyGesture.RELEASED
                                         break
@@ -829,6 +874,8 @@ internal fun KeyView(
                                         while (true) {
                                             val ch = awaitPointerEvent().changes.firstOrNull { it.id == id } ?: break
                                             // промежуточные точки между кадрами: без них быстрый росчерк срезал углы
+                                            val movement = ch.position - down.position
+                                            if (ch.pressed && isIntentionalUpFlick(movement.x, movement.y, upDist, ch.uptimeMillis - down.uptimeMillis)) flickArmed = true
                                             for (h in ch.historical) glide.trail.add(o + h.position)
                                             glide.trail.add(o + ch.position)
                                             if (!ch.pressed) {
@@ -845,7 +892,7 @@ internal fun KeyView(
                                             var len = 0f
                                             for (i in 1 until pts.size) len += (pts[i] - pts[i - 1]).getDistance()
                                             val snap = layer.coords?.let { glide.snapshot(it) }
-                                            if (upSymbol != null && net.y < -upDist && abs(net.x) < abs(net.y) * 0.7f && len < iw * 2.2f) {
+                                            if (upSymbol != null && flickArmed && isIntentionalUpFlick(net.x, net.y, upDist, lastT - down.uptimeMillis) && len < iw * 2.2f) {
                                                 if (instant) act.replaceLast(tapOut, upSymbol) else act.commitKey(k, upSymbol)
                                             } else if (snap == null || len < iw * 1.25f || !looksLikeGlide(pts, snap.first, iw, lastT - down.uptimeMillis)) {
                                                 // короткий или слишком быстрый мазок при быстром наборе — это нажатие, а не слово:

@@ -1,6 +1,8 @@
 package com.expressive.keyboard
 
 import android.content.Context
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -9,10 +11,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -90,81 +92,118 @@ object UserVariants {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun LongPressPage(settings: KeyboardSettings) {
     val context = LocalContext.current
-    val cs = MaterialTheme.colorScheme
+    val colors = MaterialTheme.colorScheme
     val current = remember(settings.keyVariants) { UserVariants.parse(settings.keyVariants) }
-    var key by remember { mutableStateOf("") }
-    var symbols by remember { mutableStateOf("") }
-    SettingsSection("Свои символы") {
-        InfoCard(
-            Icons.Rounded.TouchApp,
-            "Задайте, что всплывает при удержании любой клавиши. Первый символ — главный: он подписан на клавише и вводится удержанием без сдвига. Работает во всех раскладках"
-        )
+    var editing by rememberSaveable { mutableStateOf<String?>(null) }
+    var confirmReset by rememberSaveable { mutableStateOf(false) }
+
+    SettingsSection(null) {
+        GroupItem {
+            Row(
+                Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(tr("Свои символы"), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                FilledTonalButton(onClick = { editing = "" }) {
+                    Icon(Icons.Rounded.Add, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(tr("Добавить"))
+                }
+            }
+        }
         if (current.isEmpty()) {
             GroupItem {
-                Text(
-                    tr("Пока своих символов нет — стоят стандартные"), Modifier.padding(16.dp),
-                    style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant
-                )
+                Text(tr("Пока своих символов нет — стоят стандартные"), Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
             }
         }
-        current.forEach { (k, v) ->
-            GroupItem {
+        current.entries.sortedBy { it.key }.forEach { (key, variants) ->
+            GroupItem(onClick = { editing = key }) {
                 Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    Modifier.fillMaxWidth().padding(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(k, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = cs.primary, modifier = Modifier.widthIn(min = 32.dp))
-                    Text(v.joinToString("  "), fontSize = 20.sp, modifier = Modifier.weight(1f))
-                    IconButton(onClick = { key = k; symbols = v.joinToString(" ") }) { Icon(Icons.Rounded.Edit, tr("Изменить")) }
-                    IconButton(onClick = { UserVariants.save(context, current - k) }) {
-                        Icon(Icons.Rounded.DeleteOutline, tr("Удалить"), tint = cs.error)
+                    Surface(shape = RoundedCornerShape(16.dp), color = colors.primaryContainer) {
+                        Box(Modifier.sizeIn(minWidth = 44.dp, minHeight = 44.dp).widthIn(max = 72.dp)
+                            .padding(6.dp), contentAlignment = Alignment.Center) {
+                            Text(key, style = MaterialTheme.typography.titleLarge, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis)
+                        }
                     }
+                    FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        variants.forEachIndexed { index, variant ->
+                            Surface(shape = RoundedCornerShape(10.dp),
+                                color = if (index == 0) colors.secondaryContainer else colors.surfaceContainerHighest) {
+                                Text(variant, Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                    style = MaterialTheme.typography.bodyLarge)
+                            }
+                        }
+                    }
+                    Icon(Icons.Rounded.Edit, tr("Изменить"), tint = colors.onSurfaceVariant)
                 }
             }
         }
-    }
-    SettingsSection("Добавить или изменить") {
-        GroupItem {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = key, onValueChange = { key = it.trim().take(4) },
-                        modifier = Modifier.width(96.dp), shape = RoundedCornerShape(20.dp),
-                        label = { Text(tr("Клавиша")) }, placeholder = { Text("г") }, singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = symbols, onValueChange = { symbols = it.take(80) },
-                        modifier = Modifier.weight(1f), shape = RoundedCornerShape(20.dp),
-                        label = { Text(tr("Символы")) }, placeholder = { Text("ғ г") }, singleLine = true
-                    )
-                }
-                val list = UserVariants.split(symbols)
-                val k = key.lowercase()
-                Button(
-                    onClick = {
-                        UserVariants.save(context, current + (k to list))
-                        key = ""
-                        symbols = ""
-                    },
-                    enabled = k.isNotEmpty() && list.isNotEmpty()
-                ) {
-                    Icon(Icons.Rounded.Check, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(tr("Сохранить"))
-                }
-            }
-        }
-        InfoCard(Icons.Rounded.Lightbulb, "Символы можно писать через пробел («$ ₽ €») или слитно («$₽€»). Казахский: клавиша «г», символы «ғ»")
     }
     if (current.isNotEmpty()) {
-        SettingsSection("Сброс") {
-            ActionItem(Icons.Rounded.RestartAlt, "Вернуть стандартные символы", "Удалить все свои наборы", onClick = {
-                UserVariants.save(context, emptyMap())
-            })
+        SettingsSection(null) {
+            ActionItem(Icons.Rounded.RestartAlt, "Вернуть стандартные символы", null,
+                onClick = { confirmReset = true })
         }
+    }
+    if (confirmReset) {
+        AlertDialog(
+            onDismissRequest = { confirmReset = false },
+            title = { Text(tr("Вернуть стандартные символы")) },
+            text = { Text(tr("Удалить все свои наборы")) },
+            confirmButton = {
+                TextButton(onClick = {
+                    UserVariants.save(context, emptyMap())
+                    confirmReset = false
+                }) { Text(tr("Сброс")) }
+            },
+            dismissButton = { TextButton(onClick = { confirmReset = false }) { Text(tr("Отмена")) } }
+        )
+    }
+    editing?.let { original ->
+        var label by rememberSaveable(original) { mutableStateOf(original) }
+        val saved = current[original].orEmpty()
+        val initialSymbols = if (saved == listOf(",")) "," else saved.joinToString(" ")
+        var symbols by rememberSaveable(original) { mutableStateOf(initialSymbols) }
+        val variants = if (symbols == initialSymbols) saved else UserVariants.split(symbols)
+        val key = label.lowercase()
+        AlertDialog(
+            onDismissRequest = { editing = null },
+            title = { Text(tr(if (original.isEmpty()) "Добавить" else "Изменить")) },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(label, { label = it.trim().take(4) }, Modifier.fillMaxWidth(),
+                        label = { Text(tr("Клавиша")) }, singleLine = true, placeholder = { Text("г") })
+                    OutlinedTextField(symbols, { symbols = it.take(80) }, Modifier.fillMaxWidth(),
+                        label = { Text(tr("Символы")) }, placeholder = { Text("ғ г") })
+                    Text(tr("Первый символ вводится при удержании без сдвига."),
+                        style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                    if (original.isNotEmpty()) {
+                        TextButton(onClick = {
+                            UserVariants.save(context, current - original)
+                            editing = null
+                        }) { Text(tr("Удалить"), color = colors.error) }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    UserVariants.save(context, current - original + (key to variants))
+                    editing = null
+                }, enabled = key.isNotEmpty() && variants.isNotEmpty()) { Text(tr("Сохранить")) }
+            },
+            dismissButton = { TextButton(onClick = { editing = null }) { Text(tr("Отмена")) } }
+        )
     }
 }

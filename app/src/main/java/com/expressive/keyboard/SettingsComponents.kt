@@ -295,18 +295,18 @@ internal fun PillField(
 /** Группа в стиле Android 16: общие крупные скругления снаружи, мелкие между пунктами. */
 @Composable
 internal fun SettingsSection(title: String?, content: @Composable ColumnScope.() -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (title != null) {
             Text(
                 tr(title),
                 modifier = Modifier.padding(start = 16.dp),
-                style = MaterialTheme.typography.titleSmall,
+                style = MaterialTheme.typography.titleSmall.copy(letterSpacing = 0.15.sp),
                 fontWeight = FontWeight.ExtraBold,
                 color = MaterialTheme.colorScheme.primary
             )
         }
         Column(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)),
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)),
             verticalArrangement = Arrangement.spacedBy(2.dp),
             content = content
         )
@@ -419,7 +419,11 @@ internal fun SliderItem(
                 Box(
                     Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer).padding(horizontal = 12.dp, vertical = 4.dp)
                 ) {
-                    Text(format(local), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    Text(
+                        format(local),
+                        style = MaterialTheme.typography.labelLarge.copy(fontFeatureSettings = "tnum"),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
                 }
             }
             Slider(
@@ -614,7 +618,7 @@ internal fun StylePreview(settings: KeyboardSettings, spec: WavySpec) {
 
 /** Плитка категории на главном экране: иконка в фигуре Expressive своего цвета. */
 @Composable
-internal fun CategoryTile(page: SettingsPage, index: Int, selected: Boolean, expressive: Boolean, onClick: () -> Unit) {
+internal fun CategoryTile(page: SettingsPage, index: Int, selected: Boolean, expressive: Boolean, subtitle: String = page.subtitle, onClick: () -> Unit) {
     val cs = MaterialTheme.colorScheme
     val (bg, fg) = when (index % 3) {
         0 -> cs.primaryContainer to cs.onPrimaryContainer
@@ -631,18 +635,18 @@ internal fun CategoryTile(page: SettingsPage, index: Int, selected: Boolean, exp
     Row(
         Modifier.fillMaxWidth().roundedLayer { corner.value }.drawBehind { drawRect(tileBg.value) }
             .clickable(interactionSource = interaction, indication = LocalIndication.current, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .padding(horizontal = 16.dp, vertical = 15.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Box(Modifier.size(48.dp).wavyBackground(spec, bg) { rot }, contentAlignment = Alignment.Center) {
-            Icon(page.icon, null, tint = fg, modifier = Modifier.size(24.dp))
+        Box(Modifier.size(46.dp).wavyBackground(spec, bg) { rot }, contentAlignment = Alignment.Center) {
+            Icon(page.icon, null, tint = fg, modifier = Modifier.size(22.dp))
         }
-        Column(Modifier.weight(1f)) {
-            Text(tr(page.title), style = MaterialTheme.typography.titleMedium, color = cs.onSurface)
-            Text(tr(page.subtitle), style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(tr(page.title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = cs.onSurface)
+            Text(tr(subtitle), style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
-        Icon(Icons.Rounded.ChevronRight, null, tint = cs.onSurfaceVariant)
+        Icon(Icons.Rounded.ChevronRight, null, tint = cs.onSurfaceVariant.copy(alpha = 0.75f))
     }
 }
 
@@ -846,11 +850,17 @@ internal fun TextInputDialog(title: String, initial: String, hint: String, onDis
 internal fun InfoCard(icon: ImageVector, text: String) {
     val cs = MaterialTheme.colorScheme
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(cs.secondaryContainer).padding(16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(cs.secondaryContainer.copy(alpha = 0.75f))
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, null, tint = cs.onSecondaryContainer)
+        Box(
+            Modifier.size(36.dp).clip(CircleShape).background(cs.secondary.copy(alpha = 0.16f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, null, tint = cs.onSecondaryContainer, modifier = Modifier.size(20.dp))
+        }
         Text(tr(text), style = MaterialTheme.typography.bodyMedium, color = cs.onSecondaryContainer)
     }
 }

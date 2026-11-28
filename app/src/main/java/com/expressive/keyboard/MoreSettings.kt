@@ -361,24 +361,9 @@ internal fun DefaultSlotIcon(slot: String, tint: Color, size: Dp) {
 }
 
 @Composable
-internal fun IconsPage(settings: KeyboardSettings) {
+internal fun EmojiSettings(settings: KeyboardSettings) {
     val context = LocalContext.current
-    val cs = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
-    var target by remember { mutableStateOf<IconSlot?>(null) }
-    var textFor by remember { mutableStateOf<IconSlot?>(null) }
-    var menuFor by remember { mutableStateOf<IconSlot?>(null) }
-    var confirmReset by remember { mutableStateOf(false) }
-    // список из трёх десятков иконок нужен редко — раскрывается по нажатию
-    var showIcons by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
-    val imageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        val slot = target
-        if (uri != null && slot != null) scope.launch {
-            val ok = withContext(Dispatchers.IO) { IconStore.setImage(context, slot.id, uri) }
-            if (!ok) Toast.makeText(context, tr("Не удалось открыть картинку"), Toast.LENGTH_LONG).show()
-        }
-        target = null
-    }
     val emojiFontLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) scope.launch {
             val ok = withContext(Dispatchers.IO) {
@@ -396,6 +381,7 @@ internal fun IconsPage(settings: KeyboardSettings) {
     }
 
     SettingsSection("Стиль эмодзи") {
+        EmojiSizeItem(settings)
         GroupItem { EmojiStylePicker(settings) { emojiFontLauncher.launch("*/*") } }
         ToggleItem(
             Icons.Rounded.Keyboard, "Возврат к буквам после эмодзи",
@@ -408,6 +394,27 @@ internal fun IconsPage(settings: KeyboardSettings) {
                 onClick = { KeyboardPrefs.resetEmojiFont(context) }
             )
         }
+    }
+}
+
+@Composable
+internal fun IconsPage(settings: KeyboardSettings) {
+    val context = LocalContext.current
+    val cs = MaterialTheme.colorScheme
+    val scope = rememberCoroutineScope()
+    var target by remember { mutableStateOf<IconSlot?>(null) }
+    var textFor by remember { mutableStateOf<IconSlot?>(null) }
+    var menuFor by remember { mutableStateOf<IconSlot?>(null) }
+    var confirmReset by remember { mutableStateOf(false) }
+    // список из трёх десятков иконок нужен редко — раскрывается по нажатию
+    var showIcons by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    val imageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        val slot = target
+        if (uri != null && slot != null) scope.launch {
+            val ok = withContext(Dispatchers.IO) { IconStore.setImage(context, slot.id, uri) }
+            if (!ok) Toast.makeText(context, tr("Не удалось открыть картинку"), Toast.LENGTH_LONG).show()
+        }
+        target = null
     }
     SettingsSection("Свои иконки") {
         ActionItem(

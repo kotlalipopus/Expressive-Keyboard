@@ -205,7 +205,6 @@ data class KeyboardSettings(
     val bgTransparency: Float = 0f,
     // --- фон ---
     val bgImageVersion: Long = 0L,
-    val pluginAccessReminder: Boolean = true,
     val bgIsVideo: Boolean = false,
     val bgDim: Float = 0.35f,
     val photoFrame: PhotoFrame = PhotoFrame(),
@@ -278,6 +277,9 @@ data class KeyboardSettings(
     val customAnims: String = "",
     // --- ввод ---
     val spaceSwipe: String = "CURSOR",            // CURSOR | LANGUAGE | OFF
+    val spaceSwipeVertical: String = "OFF",
+    val spaceCursorSpeed: Float = 1f,
+    val spaceVerticalSpeed: Float = 1f,
     /** Удержание кнопки языка: LANGUAGES | SYSTEM | EMOJI | CLIPBOARD | VOICE | SETTINGS | ONE_HANDED | OFF */
     val globeLongPress: String = "LANGUAGES",
     /** Панель редактирования над клавиатурой: курсор, выделение, копировать/вставить. */
@@ -292,10 +294,17 @@ data class KeyboardSettings(
     val enterWidth: Float = 1f,                   // множитель ширины клавиши ввода
     val numberRowScale: Float = 0.78f,            // высота ряда цифр относительно ряда букв
     val backspaceSwipe: Boolean = true,           // свайп влево по ⌫ удаляет слово
+    val fastBackspaceRepeat: Boolean = true,      // ускорение удаления при долгом удержании ⌫
     val clipboardHistory: Boolean = true,
     val clipboardSize: Int = 50,
     /** Сколько хранить записи буфера: 1H | 1D | 7D | 30D | FOREVER. */
     val clipboardKeep: String = "FOREVER",
+    val clipboardOfferPosition: String = "ABOVE",
+    val clipboardSpaceAfterPaste: Boolean = true,
+    val clipboardCompactOffer: String = "OFF",
+    val clipboardPinnedTop: Boolean = true,
+    val clipboardHideOnType: Boolean = false,
+    val classicSettingsUi: Boolean = false,
     /** Новые скриншоты сами попадают в буфер (нужен доступ к фото). */
     val clipScreenshots: Boolean = true,
     val soundVolume: Float = 0.6f,
@@ -566,7 +575,6 @@ object KeyboardPrefs {
             keyBackground = p.getBoolean("key_background", true),
             bgTransparency = p.getFloat("bg_transparency", 0f).coerceIn(0f, 1f),
             bgImageVersion = p.getLong("bg_image_version", 0L),
-            pluginAccessReminder = p.getBoolean("plugin_access_reminder", true),
             bgIsVideo = p.getBoolean("bg_is_video", false),
             bgDim = p.getFloat("bg_dim", 0.35f).coerceIn(0f, 0.9f),
             photoFrame = PhotoFrame(
@@ -624,12 +632,16 @@ object KeyboardPrefs {
             animPanel = p.getString("anim_panel", "WAVE") ?: "WAVE",
             customAnims = p.getString("custom_anims", "") ?: "",
             spaceSwipe = p.getString("space_swipe", "CURSOR") ?: "CURSOR",
+            spaceSwipeVertical = p.getString("space_swipe_vertical", "OFF") ?: "OFF",
+            spaceCursorSpeed = p.getFloat("space_cursor_speed", 1f).coerceIn(0.25f, 4f),
+            spaceVerticalSpeed = p.getFloat("space_vertical_speed", 1f).coerceIn(0.25f, 4f),
             globeLongPress = p.getString("globe_long_press", "LANGUAGES") ?: "LANGUAGES",
             editBar = p.getBoolean("edit_bar", false),
             toolsLongPress = p.getString("tools_long_press", "PIN") ?: "PIN",
             windowBlur = p.getString("window_blur", "OFF") ?: "OFF",
             windowBlurDp = p.getFloat("window_blur_dp", 32f).coerceIn(4f, 100f),
             backspaceSwipe = p.getBoolean("backspace_swipe", true),
+            fastBackspaceRepeat = p.getBoolean("fast_backspace_repeat", true),
             swipeDownHide = p.getBoolean("swipe_down_hide", true),
             enterWidth = p.getFloat("enter_width", 1f).coerceIn(1f, 1.8f),
             numberRowScale = p.getFloat("number_row_scale", 0.78f).coerceIn(0.6f, 1.1f),
@@ -637,6 +649,12 @@ object KeyboardPrefs {
             // 0 — без ограничения числа записей
             clipboardSize = p.getInt("clipboard_size", 50).let { if (it <= 0) Int.MAX_VALUE else it.coerceIn(5, 5000) },
             clipboardKeep = p.getString("clipboard_keep", "FOREVER") ?: "FOREVER",
+            clipboardOfferPosition = p.getString("clipboard_offer_position", "ABOVE") ?: "ABOVE",
+            clipboardSpaceAfterPaste = p.getBoolean("clipboard_space_after_paste", true),
+            clipboardCompactOffer = p.getString("clipboard_compact_offer", "OFF") ?: "OFF",
+            clipboardPinnedTop = p.getBoolean("clipboard_pinned_top", true),
+            clipboardHideOnType = p.getBoolean("clipboard_hide_on_type", false),
+            classicSettingsUi = p.getBoolean("classic_settings_ui", false),
             clipScreenshots = p.getBoolean("clip_screenshots", true),
             soundVolume = p.getFloat("sound_volume", 0.6f).coerceIn(0.05f, 1f),
             giphyKey = SecretBox.decrypt(p.getString("giphy_key", "") ?: ""),
@@ -720,7 +738,7 @@ object KeyboardPrefs {
         listOf(
             "key_height_dp", "header_height_dp", "landscape_scale", "corner_radius_dp", "key_spacing_dp", "row_spacing_dp", "bottom_offset_dp", "emoji_size_dp",
             "wave_amplitude_percent", "vibration_ms", "vibration_amplitude", "long_press_ms", "enter_hold_ms", "key_opacity", "bg_transparency", "bg_dim",
-            "photo_zoom", "photo_width", "photo_height", "photo_x", "photo_y",
+            "photo_zoom", "photo_width", "photo_height", "photo_x", "photo_y", "space_cursor_speed", "space_vertical_speed",
             "bg_blur_dp", "window_blur_dp", "key_label_scale", "side_padding_dp", "one_handed_w", "float_width", "float_key_height_dp", "flick_sensitivity", "enter_width", "number_row_scale", "press_animation", "sound_volume", "anim_speed", "press_anim_speed", "panel_anim_speed"
         ).forEach { put(it, 'f') }
         listOf(
@@ -731,12 +749,12 @@ object KeyboardPrefs {
             "show_number_row", "show_key_borders", "key_preview", "key_background", "emoji_return_keyboard", "auto_capitalize", "auto_correct_enabled",
             "double_space_period", "haptics_enabled", "vibrate_on_release", "strong_special_keys", "sound_enabled",
             "show_hints", "show_header", "number_pad", "floating_keyboard", "liquid_glass", "glass_merge", "myanmar_visual", "show_suggestions", "inline_calculator", "enter_hold_send", "show_mic_button", "suggestions_full_width", "show_emoji_key", "show_globe_key", "panel_animations",
-            "backspace_swipe", "swipe_down_hide", "clipboard_history", "instant_input", "glide_typing", "glide_trail", "swipe_up_hint",
+            "backspace_swipe", "fast_backspace_repeat", "swipe_down_hide", "clipboard_history", "clipboard_space_after_paste", "clipboard_pinned_top", "clipboard_hide_on_type", "classic_settings_ui", "instant_input", "glide_typing", "glide_trail", "swipe_up_hint",
             "space_long_press", "auto_pair", "incognito", "dict_auto_download", "punctuation_keys", "smart_punctuation", "static_photo_blur", "dynamic_shadows",
             "system_spellcheck", "edit_bar", "auto_space_punct", "eco_mode", "eco_press", "eco_panels", "eco_blur", "eco_trail", "eco_preview", "eco_haptics", "eco_sound", "eco_suggestions", "dash_merge", "clip_screenshots", "correct_everywhere", "dynamic_zones", "ai_voice_cleanup", "tools_button", "pinned_tools", "landscape_split"
         ).forEach { put(it, 'b') }
         listOf(
-            "theme_mode", "accent_shape_preset", "haptic_mode", "font_style", "color_source", "one_handed", "space_swipe", "photo_fit",
+            "theme_mode", "accent_shape_preset", "haptic_mode", "font_style", "color_source", "one_handed", "space_swipe", "space_swipe_vertical", "clipboard_offer_position", "clipboard_compact_offer", "photo_fit",
             "eco_when", "globe_long_press", "tools_long_press", "window_blur", "hold_mode", "ai_provider", "space_long_action", "languages", "auto_correct_strength", "translate_target", "gemini_model", "anthropic_model", "openai_model", "groq_model", "openrouter_model", "toolbar_order", "toolbar_hidden", "user_layouts",
             "space_left_key", "space_right_key", "mic_action", "popup_style", "key_variants", "sound_style", "emoji_style", "clipboard_keep", "app_language", "design_style", "shape_amount", "skin_options", "anim_press", "anim_popup", "anim_panel", "custom_anims", "lang_layouts"
         ).forEach { put(it, 's') }

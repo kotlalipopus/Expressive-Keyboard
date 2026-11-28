@@ -775,17 +775,45 @@ internal fun GifPanel(state: KeyboardState, actions: KeyboardActions, settings: 
 
 /** Нажатие — вставить, ✕ — удалить запись, 📌 (или долгое нажатие) — закрепить: закреплённые не стираются «Очистить». */
 @Composable
-internal fun ClipboardPanel(state: KeyboardState, actions: KeyboardActions, palette: KeyPalette, font: FontFamily) {
+internal fun ClipboardPanel(state: KeyboardState, actions: KeyboardActions, settings: KeyboardSettings, palette: KeyPalette, font: FontFamily) {
     val pinned = state.pinnedClips.toList()
-    val items = pinned + state.clipboard.filter { it !in pinned }
+    var onlyPinned by remember { mutableStateOf(false) }
+    val activeOnlyPinned = onlyPinned && pinned.isNotEmpty()
+    val unpinned = state.clipboard.filter { it !in pinned }
+    val items = when {
+        activeOnlyPinned -> pinned
+        settings.clipboardPinnedTop -> pinned + unpinned
+        else -> unpinned + pinned
+    }
     Column(
         modifier = Modifier.fillMaxSize().panelSurface(palette).padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         // высота шапки постоянная — записи не прыгают, когда «Очистить» пропадает
-        Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.fillMaxWidth().height(44.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
             Text(tr("Буфер обмена"), Modifier.weight(1f), color = palette.onLetter, fontFamily = font, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
-            if (items.size > pinned.size) PillButton(tr("Очистить"), palette.func, palette.onFunc, font) { actions.clearClipboard() }
+            if (pinned.isNotEmpty()) {
+                Box(
+                    Modifier.size(36.dp).clip(CircleShape)
+                        .background(if (activeOnlyPinned) palette.accent else palette.func)
+                        .clickable { onlyPinned = !onlyPinned },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        if (activeOnlyPinned) Icons.Rounded.PushPin else Icons.Outlined.PushPin,
+                        tr("Закреплённые"),
+                        tint = if (activeOnlyPinned) palette.onAccent else palette.onFunc,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+            if (!activeOnlyPinned && items.size > pinned.size) {
+                PillButton(tr("Очистить"), palette.func, palette.onFunc, font) { actions.clearClipboard() }
+            }
         }
         if (items.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
